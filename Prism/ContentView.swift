@@ -24,49 +24,48 @@ struct ContentView: View {
                 .frame(height: 150)
                 .padding()
 
-            VStack(spacing: 4) {
+            VStack(spacing: 12) {
                 if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                    Text(track)
-                        .font(.headline)
-                    Text(artist)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if let source = nowPlaying.sourceApp {
-                        Text("via \(source)")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                    if let artwork = nowPlaying.artwork {
+                        Image(nsImage: artwork)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 200, height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .shadow(radius: 6)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.quaternary)
+                            .frame(width: 200, height: 200)
+                            .overlay {
+                                Image(systemName: "music.note")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.secondary)
+                            }
+                    }
+
+                    VStack(spacing: 4) {
+                        Text(track)
+                            .font(.headline)
+                        Text(artist)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if let album = nowPlaying.albumName {
+                            Text(album)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let source = nowPlaying.sourceApp {
+                            Text("via \(source)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 } else {
                     Text("Not Playing")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-            }
-
-            // Permissions Status & Triggers
-            VStack(spacing: 12) {
-                Text("System Permissions")
-                    .font(.headline)
-
-                HStack {
-                    Circle()
-                        .fill(permissions.hasAudioPermission ? Color.green : Color.red)
-                        .frame(width: 10, height: 10)
-                    Text("Screen Recording (ScreenCaptureKit only)")
-                }
-
-                HStack {
-                    Circle()
-                        .fill(permissions.hasAutomationPermission ? Color.green : Color.red)
-                        .frame(width: 10, height: 10)
-                    Text("Media Metadata (Apple Events)")
-                }
-
-                Button("Request Permissions") {
-                    permissions.checkAndRequestPermissions()
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 10)
             }
         }
         .padding(40)
