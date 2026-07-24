@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BE0D51E03013C06900F41558 /* TO DO.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0D51DF3013C06900F41558 /* TO DO.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		BEAB8FED3012B50C005F68B6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		BE0D51DF3013C06900F41558 /* TO DO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TO DO.md"; sourceTree = "<group>"; };
 		BEAB8FDD3012B50A005F68B6 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -88,6 +93,7 @@
 		BEAB8FD43012B50A005F68B6 = {
 			isa = PBXGroup;
 			children = (
+				BE0D51DF3013C06900F41558 /* TO DO.md */,
 				BEAB8FDF3012B50A005F68B6 /* Prism */,
 				BEAB8FEF3012B50C005F68B6 /* PrismTests */,
 				BEAB8FF93012B50C005F68B6 /* PrismUITests */,
@@ -225,6 +231,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BE0D51E03013C06900F41558 /* TO DO.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
