@@ -27,37 +27,40 @@ struct ContentView: View {
             
             // The album art
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                if let artwork = nowPlaying.artwork {
-                    Image(nsImage: artwork)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 200, height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        //.shadow(color: fgColor, radius: 6)
-                } else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.quaternary)
-                        .frame(width: 200, height: 200)
-                        .overlay {
-                            Image(systemName: "music.note")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
-                        }
-                }
                 
                 // Text pinned to the bottom
                 VStack {
                     Spacer()
                     
+                    if let artwork = nowPlaying.artwork {
+                        Image(nsImage: artwork)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 250, height: 250)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            //.shadow(color: fgColor, radius: 6)
+                    } else {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(.quaternary)
+                            .frame(width: 250, height: 250)
+                            .overlay {
+                                Image(systemName: "music.note")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.secondary)
+                            }
+                    }
+                    
+                    Spacer()
+                    
                     HStack {
                         Text(track)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(fgColor)
                         
                         Spacer()
                         
                         Text(artist)
-                            .font(.system(size: 22, weight: .regular))
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(fgColor.opacity(0.8))
                     }
                     .padding()

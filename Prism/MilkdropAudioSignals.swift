@@ -52,7 +52,20 @@ final class MilkdropSignalAnalyzer {
     private var imm: [Float] = [0, 0, 0]
     private var avg: [Float] = [1, 1, 1]
     private var longAvg: [Float] = [1, 1, 1]
+
+    // Scratch buffers, reused every call instead of allocated fresh. `process` runs on the main
+    // thread inside Canvas's content closure — up to 120x/sec on a ProMotion display — so the ~9
+    // heap allocations this used to do per call were pure avoidable churn. `fftBuffer` is sized to
+    // the full FFT length but only its first `sampleCount` entries are ever written (the windowed
+    // signal); the zero-padded tail is zeroed once at init and, since nothing else ever touches it,
+    // stays zero for the object's whole lifetime — that's what makes the zero-padding "free".
     private var lastMono: [Float]
+    private var monoBuf: [Float]
+    private var dampedBuf: [Float]
+    private var fftBuffer: [Float]
+    private var realBuf: [Float]
+    private var imagBuf: [Float]
+    private var magBuf: [Float]
 
     init() {
         self.fftSize = 1 << Int(log2n)
@@ -61,6 +74,12 @@ final class MilkdropSignalAnalyzer {
         vDSP_hann_window(&win, vDSP_Length(sampleCount), Int32(vDSP_HANN_NORM))
         self.envelope = win
         self.lastMono = [Float](repeating: 0, count: sampleCount)
+        self.monoBuf = [Float](repeating: 0, count: sampleCount)
+        self.dampedBuf = [Float](repeating: 0, count: sampleCount)
+        self.fftBuffer = [Float](repeating: 0, count: fftSize)
+        self.realBuf = [Float](repeating: 0, count: fftSize / 2)
+        self.imagBuf = [Float](repeating: 0, count: fftSize / 2)
+        self.magBuf = [Float](repeating: 0, count: fftSize / 2)
     }
 
     deinit {
@@ -78,41 +97,39 @@ final class MilkdropSignalAnalyzer {
 
         // Downmix to mono, matching the (left+right)/2 spirit MilkDrop's preset engine expects
         // for a single bass/mid/treb signal (the original keeps L/R separate only for waveform
-        // drawing, not for the preset-facing bands).
-        var mono = [Float](repeating: 0, count: sampleCount)
-        let lTail = Array(left.suffix(sampleCount))
-        let rTail = Array(right.suffix(sampleCount))
-        for i in 0..<sampleCount { mono[i] = 0.5 * (lTail[i] + rTail[i]) }
+        // drawing, not for the preset-facing bands). Indexed directly off the tail of left/right
+        // rather than via `.suffix(...)` + `Array(...)`, which would allocate two throwaway arrays.
+        let lOffset = left.count - sampleCount
+        let rOffset = right.count - sampleCount
+        for i in 0..<sampleCount {
+            monoBuf[i] = 0.5 * (left[lOffset + i] + right[rOffset + i])
+        }
 
         // 2-tap damp: temp[i] = 0.5*(mono[i] + mono[i-1]), continuous across calls via lastMono.
-        var damped = [Float](repeating: 0, count: sampleCount)
-        damped[0] = 0.5 * (mono[0] + lastMono[sampleCount - 1])
-        for i in 1..<sampleCount { damped[i] = 0.5 * (mono[i] + mono[i - 1]) }
-        lastMono = mono
+        dampedBuf[0] = 0.5 * (monoBuf[0] + lastMono[sampleCount - 1])
+        for i in 1..<sampleCount {
+            dampedBuf[i] = 0.5 * (monoBuf[i] + monoBuf[i - 1])
+        }
+        for i in 0..<sampleCount { lastMono[i] = monoBuf[i] }
 
-        // Window + zero-pad to the FFT size, then real FFT -> magnitude spectrum (0...nyquist/2 bins).
-        var windowed = damped
-        vDSP_vmul(windowed, 1, envelope, 1, &windowed, 1, vDSP_Length(sampleCount))
-        var padded = windowed + [Float](repeating: 0, count: fftSize - sampleCount)
+        // Window straight into fftBuffer's first `sampleCount` slots; its zero-padded tail was
+        // zeroed once at init and is never written anywhere else, so it's already correct here.
+        vDSP_vmul(dampedBuf, 1, envelope, 1, &fftBuffer, 1, vDSP_Length(sampleCount))
 
-        var real = [Float](repeating: 0, count: fftSize / 2)
-        var imag = [Float](repeating: 0, count: fftSize / 2)
-        var magnitudes = [Float](repeating: 0, count: fftSize / 2)
-
-        real.withUnsafeMutableBufferPointer { realPtr in
-            imag.withUnsafeMutableBufferPointer { imagPtr in
+        realBuf.withUnsafeMutableBufferPointer { realPtr in
+            imagBuf.withUnsafeMutableBufferPointer { imagPtr in
                 var split = DSPSplitComplex(realp: realPtr.baseAddress!, imagp: imagPtr.baseAddress!)
-                padded.withUnsafeMutableBufferPointer { paddedPtr in
-                    paddedPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
+                fftBuffer.withUnsafeMutableBufferPointer { fftPtr in
+                    fftPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPtr in
                         vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(fftSize / 2))
                     }
                 }
                 vDSP_fft_zrip(fftSetup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
-                vDSP_zvabs(&split, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+                vDSP_zvabs(&split, 1, &magBuf, 1, vDSP_Length(fftSize / 2))
             }
         }
 
-        let n = magnitudes.count
+        let n = magBuf.count
         let nyquist = sampleRate / 2.0
         let maxFreq = min(maxFreqRef, nyquist)
         let netOctaves = log2(maxFreq / minFreq)
@@ -126,7 +143,7 @@ final class MilkdropSignalAnalyzer {
             let end = max(start + 1, min(n, Int(Float(n) * endFreq / maxFreqRef)))
 
             var sum: Float = 0
-            for i in start..<end { sum += magnitudes[i] }
+            for i in start..<end { sum += magBuf[i] }
             var level = sum / Float(end - start)
             level /= bandNormalization[band]
             imm[band] = level
