@@ -2,10 +2,7 @@
 //  CoreAudioTapEngine.swift
 //  Prism
 //
-//  Audio capture via Core Audio Process Taps (macOS 14.4+): taps the system's mixed audio
-//  output directly through CoreAudio, without going through ScreenCaptureKit at all. Gated
-//  by a lighter audio-recording TCC permission instead of full Screen Recording, and has no
-//  video-capture overhead. See AudioCaptureEngine.swift for the ScreenCaptureKit alternative.
+//  Created by Sawyer Christensen on 7/23/26.
 //
 
 import Foundation
@@ -162,7 +159,7 @@ final class CoreAudioTapEngine: NSObject {
         let samples = Array(UnsafeBufferPointer(start: mData.bindMemory(to: Float.self, capacity: frameCount), count: frameCount))
 
         debugFrameCounter += 1
-        let shouldLog = debugFrameCounter % 50 == 0
+        let shouldLog = PrismDebug.verboseLogging && debugFrameCounter % 50 == 0
         if shouldLog {
             let rms = sqrt(samples.reduce(Float(0)) { $0 + $1 * $1 } / Float(samples.count))
             logger.debug("buffer #\(self.debugFrameCounter, privacy: .public) — \(samples.count, privacy: .public) samples, rms=\(rms, privacy: .public)")

@@ -69,7 +69,7 @@ final class AudioCaptureEngine: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
         debugFrameCounter += 1
-        let shouldLog = debugFrameCounter % 50 == 0
+        let shouldLog = PrismDebug.verboseLogging && debugFrameCounter % 50 == 0
 
         guard sampleBuffer.isValid else {
             if shouldLog { logger.debug("received invalid sample buffer") }

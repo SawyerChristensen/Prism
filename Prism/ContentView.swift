@@ -8,23 +8,22 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var permissions = PermissionsManager()
-    @State private var nowPlaying = NowPlayingManager()
-
-    // --- Audio engine A/B toggle ---
-    // Active: Core Audio Process Taps (lighter permission, no Screen Recording prompt, macOS 14.4+).
     @State private var audioEngine = CoreAudioTapEngine()
-    // Alternative: ScreenCaptureKit-based capture (needs Screen Recording permission).
-    // Swap the line above for this one to compare — nothing else in this file needs to change.
-    // @State private var audioEngine = AudioCaptureEngine()
+    @State private var nowPlaying = NowPlayingManager()
+    @State private var permissions = PermissionsManager()
 
     var body: some View {
+        let bgColor = nowPlaying.albumBackgroundColor.map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
+        let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
+        
         VStack(spacing: 30) {
-            WaveformView(levels: audioEngine.levels)
+            WaveformView(levels: audioEngine.levels, color: fgColor)
                 .frame(height: 150)
-                .padding()
+            
+            Spacer()
+            Spacer()
 
-            VStack(spacing: 12) {
+            VStack {
                 if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                     if let artwork = nowPlaying.artwork {
                         Image(nsImage: artwork)
@@ -32,7 +31,7 @@ struct ContentView: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 200, height: 200)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .shadow(radius: 6)
+                            //.shadow(color: fgColor, radius: 6)
                     } else {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(.quaternary)
@@ -43,42 +42,36 @@ struct ContentView: View {
                                     .foregroundStyle(.secondary)
                             }
                     }
+                    
+                    Spacer()
 
-                    VStack(spacing: 4) {
+                    HStack() {
                         Text(track)
                             .font(.headline)
+                            .foregroundStyle(fgColor)
+                        
+                        Spacer()
+                        
                         Text(artist)
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        if let album = nowPlaying.albumName {
-                            Text(album)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if let source = nowPlaying.sourceApp {
-                            Text("via \(source)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
+                            .foregroundStyle(fgColor.opacity(0.8))
                     }
                 } else {
-                    Text("Not Playing")
+                    Text("") //do we need this?
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(40)
-        .frame(minWidth: 400, minHeight: 400)
+        .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
+        .background(bgColor)
+        .animation(.easeInOut(duration: 0.5), value: bgColor)
         .onAppear {
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
         }
         .task {
-            // Each engine gates on its own TCC permission internally (Screen Recording for
-            // ScreenCaptureKit, a lighter audio-recording permission for Core Audio Taps), so
-            // capture is simply attempted on appear rather than gated on `permissions.hasAudioPermission`
-            // (which specifically tracks the ScreenCaptureKit/Screen Recording permission).
             await audioEngine.start()
         }
     }
@@ -87,16 +80,13 @@ struct ContentView: View {
 // Renders live frequency-band levels produced by AudioCaptureEngine's FFT.
 struct WaveformView: View {
     let levels: [CGFloat]
+    let color: Color
 
     var body: some View {
         HStack(spacing: 4) {
             ForEach(levels.indices, id: \.self) { index in
                 Capsule()
-                    .fill(LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .bottom,
-                        endPoint: .top
-                    ))
+                    .fill(color)
                     .frame(height: max(4, levels[index] * 150))
                     .animation(.spring(response: 0.15, dampingFraction: 0.7), value: levels[index])
             }

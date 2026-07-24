@@ -18,8 +18,11 @@ final class NowPlayingManager {
     private(set) var trackName: String?
     private(set) var artistName: String?
     private(set) var albumName: String?
-    private(set) var sourceApp: String?
     private(set) var artwork: NSImage?
+    private(set) var genre: String?
+    private(set) var sourceApp: String?
+    private(set) var albumBackgroundColor: NSColor?
+    private(set) var albumForegroundColor: NSColor?
 
     private var timer: Timer?
 
@@ -67,6 +70,9 @@ final class NowPlayingManager {
         albumName = nil
         sourceApp = nil
         artwork = nil
+        genre = nil
+        albumBackgroundColor = nil
+        albumForegroundColor = nil
         currentTrackKey = nil
     }
 
@@ -92,10 +98,14 @@ final class NowPlayingManager {
         guard let result = runScript(script, appName: app.name) else { return nil }
 
         let value = result.stringValue ?? ""
-        logger.debug("raw result for \(app.name, privacy: .public): \"\(value, privacy: .public)\"")
+        if PrismDebug.verboseLogging {
+            logger.debug("raw result for \(app.name, privacy: .public): \"\(value, privacy: .public)\"")
+        }
         let parts = value.components(separatedBy: "\u{241F}")
         guard parts.count == 3, !parts[0].isEmpty else { return nil }
-        logger.debug("now playing via \(app.name, privacy: .public): \(parts[0], privacy: .public) — \(parts[1], privacy: .public) — \(parts[2], privacy: .public)")
+        if PrismDebug.verboseLogging {
+            logger.debug("now playing via \(app.name, privacy: .public): \(parts[0], privacy: .public) — \(parts[1], privacy: .public) — \(parts[2], privacy: .public)")
+        }
         return (track: parts[0], artist: parts[1], album: parts[2])
     }
 
@@ -103,13 +113,14 @@ final class NowPlayingManager {
 
     private func loadArtwork(app: (name: String, bundleID: String), artist: String, album: String) {
         artwork = nil
+        genre = nil // Reset genre here too
+        
         switch app.bundleID {
         case "com.spotify.client":
             loadSpotifyArtwork()
+            // 💡 Call iTunes API anyway just to fetch the genre for Spotify tracks
+            loadArtworkFromiTunes(artist: artist, album: album)
         case "com.apple.Music":
-            // App Sandbox blocks reading Music's embedded artwork via Apple Events (every
-            // artwork property raises a -10004 privilege violation), so look the album art up
-            // by artist + album through the public iTunes Search API instead.
             loadArtworkFromiTunes(artist: artist, album: album)
         default:
             break
@@ -137,7 +148,15 @@ final class NowPlayingManager {
                   let image = NSImage(data: data) else {
                 return
             }
-            await MainActor.run { self?.artwork = image }
+            
+            // 💡 Extract colors off the main thread
+            let colors = image.extractColors()
+            
+            await MainActor.run {
+                self?.artwork = image
+                self?.albumBackgroundColor = colors?.background
+                self?.albumForegroundColor = colors?.foreground
+            }
         }
     }
 
@@ -145,6 +164,7 @@ final class NowPlayingManager {
     private struct iTunesSearchResponse: Decodable {
         struct Result: Decodable {
             let artworkUrl100: String?
+            let primaryGenreName: String?
         }
         let results: [Result]
     }
@@ -165,18 +185,30 @@ final class NowPlayingManager {
         Task { [weak self] in
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let response = try? JSONDecoder().decode(iTunesSearchResponse.self, from: data),
-                  let thumbURL = response.results.first?.artworkUrl100 else {
+                  let firstResult = response.results.first, // 👈 Grab the whole result first
+                  let thumbURL = firstResult.artworkUrl100 else {
                 return
             }
 
-            // The API returns a 100×100 thumbnail URL; request a larger rendition instead.
+            let fetchedGenre = firstResult.primaryGenreName // 👈 Extract the genre
+
+            // The API returns a 100x100 thumbnail URL; request a larger rendition instead.
             let highResURL = thumbURL.replacingOccurrences(of: "100x100bb", with: "600x600bb")
             guard let artURL = URL(string: highResURL),
                   let (imageData, _) = try? await URLSession.shared.data(from: artURL),
                   let image = NSImage(data: imageData) else {
                 return
             }
-            await MainActor.run { self?.artwork = image }
+            
+            // 💡 Extract colors off the main thread
+            let colors = image.extractColors()
+            
+            await MainActor.run {
+                self?.artwork = image
+                self?.genre = fetchedGenre
+                self?.albumBackgroundColor = colors?.background
+                self?.albumForegroundColor = colors?.foreground
+            }
         }
     }
 

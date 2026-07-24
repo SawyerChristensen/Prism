@@ -12,18 +12,26 @@ import os
 
 private let logger = Logger(subsystem: "com.prism.app", category: "SpectrumAnalyzer")
 
+import Accelerate
+import CoreGraphics
+import os
+
 final class SpectrumAnalyzer {
     let bandCount: Int
     private let log2n: vDSP_Length
     private let fftSize: Int
     private let fftSetup: FFTSetup?
     private let hannWindow: [Float]
-
-    // Adaptive normalization state: since vDSP's FFT output is unnormalized (its absolute
-    // scale isn't a fixed, known constant), we track a slowly-decaying peak and normalize
-    // each band relative to it, rather than mapping onto a hand-picked dB range that would
-    // either clip everything to the ceiling or amplify silence into visual noise.
-    private var runningPeak: Float = 0.001
+    
+    // Configurable audio parameters
+    private let sampleRate: Float = 44100.0 // Change this if your audio session differs
+    private let minFrequency: Float = 60.0  // Skip sub-bass rumble
+    private let maxFrequency: Float = 10000.0 // Skip inaudible high-end hiss
+    
+    // Dynamic range in decibels (dB)
+    private let minDB: Float = -65.0
+    private let maxDB: Float = 0.0
+    
     private var smoothedLevels: [Float]
 
     init(bandCount: Int = 40, log2n: vDSP_Length = 11) {
@@ -51,8 +59,6 @@ final class SpectrumAnalyzer {
             ? Array(samples.prefix(fftSize))
             : samples + Array(repeating: 0, count: fftSize - samples.count)
 
-        // Taper the edges of the chunk so it isn't treated as periodic, which otherwise
-        // smears energy across unrelated bins (spectral leakage) and reads as noise.
         vDSP_vmul(window, 1, hannWindow, 1, &window, 1, vDSP_Length(fftSize))
 
         var real = [Float](repeating: 0, count: fftSize / 2)
@@ -70,41 +76,62 @@ final class SpectrumAnalyzer {
                 }
 
                 vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
-                vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
+                
+                // FIXED: Use zvabs for linear magnitudes instead of squared magnitudes
+                vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize / 2))
             }
         }
 
-        let usableBins = magnitudes.count / 2 // ignore the top half, mostly inaudible/noise-dominated
-        let binsPerBand = max(1, usableBins / bandCount)
-
-        var rawBands = [Float](repeating: 0, count: bandCount)
-        for i in 0..<bandCount {
-            let start = i * binsPerBand
-            let end = min(start + binsPerBand, usableBins)
-            guard start < end else { continue }
-            let slice = magnitudes[start..<end]
-            rawBands[i] = slice.reduce(0, +) / Float(slice.count)
+        // FIXED: Normalize the magnitudes so a full-volume wave equals 1.0
+        var scalingFactor = Float(2.0 / Float(fftSize))
+        magnitudes.withUnsafeMutableBufferPointer { magPtr in
+            vDSP_vsmul(magPtr.baseAddress!, 1, &scalingFactor, magPtr.baseAddress!, 1, vDSP_Length(fftSize / 2))
         }
 
-        // Normalize against a slowly-decaying peak so bars track relative loudness regardless
-        // of the FFT's absolute scale, then apply an attack/decay envelope: snap up instantly
-        // on transients, ease down otherwise, so it reads as music rather than raw per-frame jitter.
-        let framePeak = rawBands.max() ?? 0
-        runningPeak = max(framePeak, runningPeak * 0.985)
-        runningPeak = max(runningPeak, 0.001)
-
-        if shouldLog {
-            logger.debug("framePeak=\(framePeak, privacy: .public), runningPeak=\(self.runningPeak, privacy: .public)")
-        }
+        let nyquist = sampleRate / 2.0
+        let binSize = nyquist / Float(magnitudes.count)
+        
+        let minBin = max(1, Int(minFrequency / binSize))
+        let maxBin = min(magnitudes.count - 1, Int(maxFrequency / binSize))
+        
+        let logMin = log2(Double(minBin))
+        let logMax = log2(Double(maxBin))
+        let logRange = logMax - logMin
 
         var bars = [CGFloat](repeating: 0.02, count: bandCount)
+
         for i in 0..<bandCount {
-            let target = sqrt(min(1, rawBands[i] / runningPeak))
-            smoothedLevels[i] = target > smoothedLevels[i]
-                ? target
-                : smoothedLevels[i] * 0.75 + target * 0.25
-            bars[i] = CGFloat(max(0.02, min(1, smoothedLevels[i])))
+            let startLog = logMin + (Double(i) / Double(bandCount)) * logRange
+            let endLog = logMin + (Double(i + 1) / Double(bandCount)) * logRange
+
+            let actualStart = Int(pow(2, startLog))
+            let actualEnd = max(actualStart + 1, Int(pow(2, endLog)))
+            
+            let safeStart = min(magnitudes.count - 1, max(1, actualStart))
+            let safeEnd = min(magnitudes.count, max(safeStart + 1, actualEnd))
+
+            let slice = magnitudes[safeStart..<safeEnd]
+            
+            let amplitude = slice.max() ?? 0.0
+
+            // FIXED: Use 20 * log10 for linear amplitude to dBFS
+            let decibels = amplitude > 0 ? 20.0 * log10(amplitude) : -100.0
+
+            var target = (decibels - minDB) / (maxDB - minDB)
+            target = max(0.0, min(1.0, target))
+
+            let highFreqBoost = 1.0 + (Float(i) / Float(bandCount)) * 0.5
+            target = min(1.0, target * highFreqBoost)
+
+            if target > smoothedLevels[i] {
+                smoothedLevels[i] = target
+            } else {
+                smoothedLevels[i] = smoothedLevels[i] * 0.85 + target * 0.15
+            }
+
+            bars[i] = CGFloat(max(0.02, smoothedLevels[i]))
         }
+        
         return bars
     }
 }
