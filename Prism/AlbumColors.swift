@@ -8,8 +8,10 @@
 import AppKit
 
 extension NSImage {
-    /// Extracts a dominant background color and a contrasting foreground color.
-    func extractColors() -> (background: NSColor, foreground: NSColor)? {
+    /// Extracts a dominant background color and a contrasting foreground color. Pure pixel
+    /// crunching, no UI state — `nonisolated` so callers can run it off the main actor (it's
+    /// called from a background task after each artwork fetch).
+    nonisolated func extractColors() -> (background: NSColor, foreground: NSColor)? {
         guard let cgImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         
         let size = 20
@@ -63,19 +65,19 @@ extension NSImage {
 }
 
 extension NSColor {
-    var luminance: CGFloat {
+    nonisolated var luminance: CGFloat {
         guard let rgb = usingColorSpace(.deviceRGB) else { return 0.5 }
         let r = rgb.redComponent <= 0.03928 ? rgb.redComponent / 12.92 : pow((rgb.redComponent + 0.055) / 1.055, 2.4)
         let g = rgb.greenComponent <= 0.03928 ? rgb.greenComponent / 12.92 : pow((rgb.greenComponent + 0.055) / 1.055, 2.4)
         let b = rgb.blueComponent <= 0.03928 ? rgb.blueComponent / 12.92 : pow((rgb.blueComponent + 0.055) / 1.055, 2.4)
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
     }
-    
-    var isDark: Bool {
+
+    nonisolated var isDark: Bool {
         return luminance < 0.5
     }
-    
-    func hasSufficientContrast(with color: NSColor) -> Bool {
+
+    nonisolated func hasSufficientContrast(with color: NSColor) -> Bool {
         let l1 = max(self.luminance, color.luminance)
         let l2 = min(self.luminance, color.luminance)
         let ratio = (l1 + 0.05) / (l2 + 0.05)

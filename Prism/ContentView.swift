@@ -16,84 +16,65 @@ struct ContentView: View {
         let bgColor = nowPlaying.albumBackgroundColor.map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
         let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
         
-        VStack(spacing: 30) {
-            WaveformView(levels: audioEngine.levels, color: fgColor)
+        let bassEnergy = audioEngine.levels.prefix(4).reduce(0, +) / 4
+
+        ZStack {
+            // The wave
+            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy)
                 .frame(height: 150)
             
-            Spacer()
-            Spacer()
-
-            VStack {
-                if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                    if let artwork = nowPlaying.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            //.shadow(color: fgColor, radius: 6)
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.quaternary)
-                            .frame(width: 200, height: 200)
-                            .overlay {
-                                Image(systemName: "music.note")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.secondary)
-                            }
-                    }
-                    
+            // The album art
+            if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
+                if let artwork = nowPlaying.artwork {
+                    Image(nsImage: artwork)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 200, height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        //.shadow(color: fgColor, radius: 6)
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.quaternary)
+                        .frame(width: 200, height: 200)
+                        .overlay {
+                            Image(systemName: "music.note")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                        }
+                }
+                
+                // Text pinned to the bottom
+                VStack {
                     Spacer()
-
-                    HStack() {
+                    
+                    HStack {
                         Text(track)
-                            .font(.headline)
+                            .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(fgColor)
                         
                         Spacer()
                         
                         Text(artist)
-                            .font(.subheadline)
+                            .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(fgColor.opacity(0.8))
                     }
-                } else {
-                    Text("") //do we need this?
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    .padding()
                 }
             }
         }
-        .padding(40)
         .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
         .background(bgColor)
         .animation(.easeInOut(duration: 0.5), value: bgColor)
         .onAppear {
+            PrismDebug.trace("ContentView.onAppear")
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
+            PrismDebug.trace("ContentView.onAppear returned (both calls are async/backgrounded)")
         }
         .task {
+            PrismDebug.trace("ContentView.task -> audioEngine.start() awaiting")
             await audioEngine.start()
+            PrismDebug.trace("ContentView.task -> audioEngine.start() returned")
         }
     }
-}
-
-// Renders live frequency-band levels produced by AudioCaptureEngine's FFT.
-struct WaveformView: View {
-    let levels: [CGFloat]
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(levels.indices, id: \.self) { index in
-                Capsule()
-                    .fill(color)
-                    .frame(height: max(4, levels[index] * 150))
-                    .animation(.spring(response: 0.15, dampingFraction: 0.7), value: levels[index])
-            }
-        }
-    }
-}
-
-#Preview {
-    ContentView()
 }

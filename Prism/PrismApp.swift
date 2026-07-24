@@ -13,6 +13,6 @@ struct PrismApp: App {
         WindowGroup {
             ContentView()
         }
-        // SwiftData modifiers removed
+        .windowStyle(.hiddenTitleBar)
     }
 }
