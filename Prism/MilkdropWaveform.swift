@@ -13,11 +13,14 @@
 import Foundation
 
 enum MilkdropWaveMode: Int, CaseIterable {
-    case line       // MilkDrop mode 6: single channel, angle-adjustable, full-width
-    case dualLine   // MilkDrop mode 7: L/R drawn as two separated lines
-    case circular   // MilkDrop mode 0: wrapped into a ring
-    case spiral     // MilkDrop mode 1: x/y oscilloscope spiraling over time
-    case spiro      // MilkDrop mode 2/3: L vs R plotted against each other (Lissajous)
+    case line          // MilkDrop mode 6: single channel, angle-adjustable, full-width
+    case dualLine      // MilkDrop mode 7: L/R drawn as two separated lines
+    case circular      // MilkDrop mode 0: wrapped into a ring
+    case spiral        // MilkDrop mode 1: x/y oscilloscope spiraling over time
+    case spiro         // MilkDrop mode 2/3: L vs R plotted against each other (Lissajous)
+    case spectrumBars   // Classic bar-spectrum EQ display, drawn from SpectrumAnalyzer's bands
+                        // rather than the point-based waveform pipeline below (see
+                        // MilkdropVisualizerView, which special-cases this mode).
 
     var label: String {
         switch self {
@@ -26,6 +29,7 @@ enum MilkdropWaveMode: Int, CaseIterable {
         case .circular: return "Circular"
         case .spiral: return "Spiral"
         case .spiro: return "Spiro"
+        case .spectrumBars: return "Spectrum"
         }
     }
 }
@@ -207,6 +211,11 @@ enum MilkdropWaveform {
                 WavePoint(x: right[i] * aspect, y: left[i + 32])
             }
             return (pts, nil)
+
+        case .spectrumBars:
+            // Drawn separately in MilkdropVisualizerView from the FFT band levels, not from
+            // point data — nothing to tessellate here.
+            return ([], nil)
         }
     }
 }

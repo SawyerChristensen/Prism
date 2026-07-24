@@ -8,6 +8,10 @@
 //  that gives MilkDrop its signature drifting, breathing look, without pulling in the full
 //  NS-EEL per-pixel warp-mesh engine.
 //
+//  The trail's zoom/rotation gets a momentary kick from MilkdropBeatState below, driven by
+//  MilkdropAudioSignals.swift's port of MilkDrop's real bass/mid/treb signal — the same "hard
+//  cut" pulse presets get from a `bass_att`-driven zoom, without needing the preset engine itself.
+//
 
 import SwiftUI
 import AppKit
@@ -76,14 +80,46 @@ private final class WaveformTrailBuffer {
     }
 }
 
+/// Drives MilkdropSignalAnalyzer frame-to-frame and turns its `bass` (imm_rel) signal into a
+/// decaying "punch" value: a bass onset well above the long-term baseline snaps punch to 1, then
+/// it decays exponentially until the next onset can retrigger it. Plain class in `@State`, mutated
+/// in place — same pattern as WaveformTrailBuffer above, and for the same reason (Canvas's content
+/// closure runs during rendering, where reassigning @State outright is unsafe).
+private final class MilkdropBeatState {
+    private let analyzer = MilkdropSignalAnalyzer()
+    private var lastFrameDate: Date?
+    private(set) var punch: CGFloat = 0
+
+    func update(left: [Float], right: [Float], sampleRate: Float, now: Date) -> Float {
+        let dt = lastFrameDate.map { now.timeIntervalSince($0) } ?? (1.0 / 60.0)
+        lastFrameDate = now
+        let fps = dt > 0 ? min(240.0, max(1.0, 1.0 / dt)) : 60.0
+
+        let energy = analyzer.process(left: left, right: right, sampleRate: sampleRate, fps: fps)
+
+        // MilkDrop's `bass` (imm_rel) sits near 1.0 on average by construction (it's normalized
+        // against its own long-term average) and spikes well above it on a hit. 0.15 as the
+        // re-arm floor keeps a sustained loud passage from retriggering every single frame.
+        if energy.bass > 1.6 && punch < 0.15 {
+            punch = 1.0
+        } else {
+            punch *= 0.85
+        }
+        return energy.bass
+    }
+}
+
 struct MilkdropVisualizerView: View {
     let audioEngine: CoreAudioTapEngine
     var color: Color
     /// 0...1 bass energy, used to thicken the line the way MilkDrop's mod-alpha-by-volume does.
     var bassEnergy: CGFloat = 0
+    /// Owned by the caller (ContentView) so a keyboard shortcut can drive mode-cycling too, not
+    /// just the tap gesture below.
+    var model: MilkdropVisualizerModel
 
-    @State private var model = MilkdropVisualizerModel()
     @State private var trail = WaveformTrailBuffer()
+    @State private var beat = MilkdropBeatState()
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
@@ -92,6 +128,11 @@ struct MilkdropVisualizerView: View {
                 let (left, right) = audioEngine.snapshotWaveform()
                 let scaledLeft = MilkdropWaveform.smoothed(left, scale: model.params.scale, smoothing: model.params.smoothing)
                 let scaledRight = MilkdropWaveform.smoothed(right, scale: model.params.scale, smoothing: model.params.smoothing)
+
+                // CoreAudioTapEngine taps the system default output device, so 44.1kHz is the
+                // common case; SpectrumAnalyzer makes the same assumption.
+                _ = beat.update(left: left, right: right, sampleRate: 44100, now: timeline.date)
+                let punch = beat.punch
 
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let aspect = size.width > 0 ? Float(size.height / size.width) : 1
@@ -102,20 +143,25 @@ struct MilkdropVisualizerView: View {
                 let (tessPoints, tessBreak) = MilkdropWaveform.tessellated(rawPoints, segmentBreak: rawBreak)
 
                 let nsColor = NSColor(color)
-                let lineWidth: CGFloat = 1.6 + bassEnergy * 2.2
+                let lineWidth: CGFloat = 1.6 + bassEnergy * 2.2 + punch * 1.4
+                let bands = audioEngine.levels
 
                 guard let image = trail.render(
                     viewSize: size,
                     displayScale: displayScale,
                     decay: 0.90,
-                    zoom: 1.006,
-                    rotation: 0.0025,
+                    zoom: 1.006 + punch * 0.035,
+                    rotation: 0.0025 + punch * 0.01,
                     drawStroke: { cgContext, pixelSize in
-                        Self.strokeWaveform(
-                            into: cgContext, pixelSize: pixelSize,
-                            points: tessPoints, segmentBreak: tessBreak,
-                            color: nsColor, lineWidth: lineWidth * displayScale
-                        )
+                        if model.mode == .spectrumBars {
+                            Self.strokeSpectrumBars(into: cgContext, pixelSize: pixelSize, bands: bands, color: nsColor)
+                        } else {
+                            Self.strokeWaveform(
+                                into: cgContext, pixelSize: pixelSize,
+                                points: tessPoints, segmentBreak: tessBreak,
+                                color: nsColor, lineWidth: lineWidth * displayScale
+                            )
+                        }
                     }
                 ) else { return }
 
@@ -156,5 +202,25 @@ struct MilkdropVisualizerView: View {
         ctx.setStrokeColor((color.usingColorSpace(.deviceRGB) ?? color).cgColor)
         ctx.addPath(path)
         ctx.strokePath()
+    }
+
+    /// Classic mirrored bar-spectrum EQ display, built from SpectrumAnalyzer's log-spaced bands
+    /// (already computed every audio callback for `bassEnergy`, just never drawn until now).
+    private static func strokeSpectrumBars(into ctx: CGContext, pixelSize: CGSize, bands: [CGFloat], color: NSColor) {
+        guard !bands.isEmpty else { return }
+        let barCount = bands.count
+        let spacing = pixelSize.width * 0.10 / CGFloat(barCount)
+        let barWidth = max(1, (pixelSize.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let baseline = pixelSize.height / 2
+
+        ctx.setBlendMode(.plusLighter)
+        ctx.setFillColor((color.usingColorSpace(.deviceRGB) ?? color).cgColor)
+
+        for i in 0..<barCount {
+            let magnitude = max(2, bands[i] * pixelSize.height * 0.45)
+            let x = CGFloat(i) * (barWidth + spacing)
+            let rect = CGRect(x: x, y: baseline - magnitude, width: barWidth, height: magnitude * 2)
+            ctx.fill(rect)
+        }
     }
 }

@@ -76,7 +76,7 @@ final class NowPlayingManager {
                     return
                 }
             }
-            await MainActor.run {
+            /*await MainActor.run {
                 self.trackName = nil
                 self.artistName = nil
                 self.albumName = nil
@@ -86,7 +86,7 @@ final class NowPlayingManager {
                 self.albumBackgroundColor = nil
                 self.albumForegroundColor = nil
                 self.currentTrackKey = nil
-            }
+            }*/
         }
     }
 

@@ -6,22 +6,24 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @State private var audioEngine = CoreAudioTapEngine()
     @State private var nowPlaying = NowPlayingManager()
     @State private var permissions = PermissionsManager()
+    @State private var visualizerModel = MilkdropVisualizerModel()
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         let bgColor = nowPlaying.albumBackgroundColor.map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
         let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
-        
+
         let bassEnergy = audioEngine.levels.prefix(4).reduce(0, +) / 4
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy)
-                .frame(height: 150)
+            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel)
             
             // The album art
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
@@ -65,10 +67,29 @@ struct ContentView: View {
         .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
         .background(bgColor)
         .animation(.easeInOut(duration: 0.5), value: bgColor)
+        // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
+        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space
+        // cycles the visual mode (same action as tapping the visualizer), F toggles fullscreen.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onKeyPress(keys: [" ", "f", "F"]) { press in
+            switch press.characters {
+            case " ":
+                visualizerModel.cycleMode()
+                return .handled
+            case "f", "F":
+                NSApp.keyWindow?.toggleFullScreen(nil)
+                return .handled
+            default:
+                return .ignored
+            }
+        }
         .onAppear {
             PrismDebug.trace("ContentView.onAppear")
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
+            isFocused = true
             PrismDebug.trace("ContentView.onAppear returned (both calls are async/backgrounded)")
         }
         .task {
