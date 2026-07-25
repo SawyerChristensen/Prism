@@ -4,89 +4,14 @@
 //
 //  Port of the waveform-building math from MilkDrop3's DrawWave() (milkdropfs.cpp) and its
 //  SmoothWave() tessellator — the part of MilkDrop that turns raw PCM into the smooth,
-//  curvy oscilloscope line, independent of MilkDrop's Direct3D/Windows plumbing.
+//  curvy oscilloscope line, independent of MilkDrop's Direct3D/Windows plumbing. See
+//  MilkdropWaveMode.swift for the mode enum and tunable params this operates on.
 //
 //  Everything here works in MilkDrop's own normalized space: x/y in roughly -1...1, y-up.
 //  The view layer maps that into pixels.
 //
 
 import Foundation
-
-enum MilkdropWaveMode: Int, CaseIterable {
-    case line          // MilkDrop mode 6: single channel, angle-adjustable, full-width
-    case dualLine      // MilkDrop mode 7: L/R drawn as two separated lines
-    case circular      // MilkDrop mode 0: wrapped into a ring
-    case spiral        // MilkDrop mode 1: x/y oscilloscope spiraling over time
-    case spiro         // MilkDrop mode 2/3: L vs R plotted against each other (Lissajous)
-    case spectrumBars   // Classic bar-spectrum EQ display, drawn from SpectrumAnalyzer's bands
-                        // rather than the point-based waveform pipeline below (see
-                        // MilkdropVisualizerView, which special-cases this mode).
-
-    // Ports of the extra hand-written modes from projectM's Milkdrop2077Wave*.cpp (not part of
-    // stock Milkdrop's mode 0-7 set, but built on the same clipped-line/polar primitives).
-    case crossX        // Milkdrop2077WaveX: L/R drawn as two lines clipped at mirrored angles, crossing in an X.
-    case wideLine       // Milkdrop2077Wave9: single channel, wide-clip line driven entirely by the mystery param.
-    case dualParallel   // Milkdrop2077Wave11: L/R as two fixed vertical lines, offset left/right.
-    case skewedLoop      // Milkdrop2077WaveSkewed: polar plot with an angle skew, less symmetric than .spiral.
-    case star           // Milkdrop2077WaveStar: circular radius with an eased dip near the seam.
-    case flower         // Milkdrop2077WaveFlower: circular radius with a multi-lobed angle multiplier.
-    case lasso          // Milkdrop2077WaveLasso: figure-eight-like parametric curve.
-
-    var label: String {
-        switch self {
-        case .line: return "Line"
-        case .dualLine: return "Dual"
-        case .circular: return "Circular"
-        case .spiral: return "Spiral"
-        case .spiro: return "Spiro"
-        case .spectrumBars: return "Spectrum"
-        case .crossX: return "Cross"
-        case .wideLine: return "Wide"
-        case .dualParallel: return "Parallel"
-        case .skewedLoop: return "Skewed"
-        case .star: return "Star"
-        case .flower: return "Flower"
-        case .lasso: return "Lasso"
-        }
-    }
-
-    /// Maps Milkdrop's `nWaveMode` preset constant (0-15, wrapped mod 16 by the original engine)
-    /// onto the closest mode Prism has. Stock Milkdrop modes 4 (DerivativeLine), 5 (ExplosiveHash)
-    /// and 8 (SpectrumLine, unfinished upstream too) have no Prism equivalent yet and fall back to
-    /// .line rather than failing preset load over an unsupported wave mode.
-    init(presetWaveMode raw: Int) {
-        let wrapped = ((raw % 16) + 16) % 16
-        switch wrapped {
-        case 0: self = .circular
-        case 1: self = .spiral
-        case 2, 3: self = .spiro
-        case 7: self = .dualLine
-        case 9: self = .wideLine
-        case 10: self = .crossX
-        case 11: self = .dualParallel
-        case 12: self = .skewedLoop
-        case 13: self = .star
-        case 14: self = .flower
-        case 15: self = .lasso
-        default: self = .line // 4, 5, 6, 8
-        }
-    }
-}
-
-struct MilkdropWaveformParams {
-    /// m_fWaveScale: amplitude multiplier applied before smoothing.
-    var scale: Float = 1.0
-    /// m_fWaveSmoothing: 0 = none, 0.9 = heavy. Same IIR filter MilkDrop runs across the sample array.
-    var smoothing: Float = 0.55
-    /// fWaveParam mapped to -PI/2...PI/2, used by .line/.dualLine to tilt the scope.
-    var angle: Float = 0
-    /// .dualLine channel separation, 0...1 (mirrors fWavePosY in mode 7).
-    var separation: Float = 0.30
-    /// wave_mystery: unassigned per-preset knob several projectM Milkdrop2077 modes fold into
-    /// their radius/angle math (.crossX/.wideLine/.skewedLoop/.star/.flower). 0 is neutral —
-    /// matches the shape those modes have with no preset driving this value.
-    var mysteryParam: Float = 0
-}
 
 struct WavePoint {
     var x: Float
@@ -178,6 +103,34 @@ enum MilkdropWaveform {
         )
     }
 
+    /// Shared shape behind .line/.dualLine/.crossX/.wideLine/.dualParallel: a straight line,
+    /// clipped edge-to-edge at `angle`, with each sample offset perpendicular to the line by
+    /// `amplitude * samples[i] + perpendicularOffset` — that offset term is what turns a flat
+    /// clipped line into the actual oscilloscope trace. `centerShiftX` (used only by
+    /// .dualParallel's fixed ±0.45 split) shifts the whole line along the X axis directly, after
+    /// clipping, rather than through the line's own perpendicular.
+    private static func clippedLinePoints(
+        angle: Float,
+        halfExtent: Float,
+        amplitude: Float,
+        perpendicularOffset: Float = 0,
+        centerShiftX: Float = 0,
+        samples: [Float],
+        count n: Int
+    ) -> [WavePoint] {
+        let dx = cos(angle), dy = sin(angle)
+        let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: halfExtent)
+        let perp = (x: -dy, y: dx)
+        let stepX = (edge1.x - edge0.x) / Float(n)
+        let stepY = (edge1.y - edge0.y) / Float(n)
+        return (0..<n).map { i in
+            WavePoint(
+                x: edge0.x + centerShiftX + stepX * Float(i) + perp.x * (amplitude * samples[i] + perpendicularOffset),
+                y: edge0.y + stepY * Float(i) + perp.y * (amplitude * samples[i] + perpendicularOffset)
+            )
+        }
+    }
+
     /// Builds the pre-tessellation vertex list for a given mode, mirroring the per-mode branches
     /// inside DrawWave(). `left`/`right` should already be scaled+smoothed via `smoothed(_:)`.
     /// `segmentBreak`, when non-nil, is the index at which the line strip should lift the pen —
@@ -195,41 +148,14 @@ enum MilkdropWaveform {
 
         switch mode {
         case .line:
-            let dx = cos(params.angle), dy = sin(params.angle)
-            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy))
-            let n = count
-            let perp = (x: -dy, y: dx)
-            let stepX = (edge1.x - edge0.x) / Float(n)
-            let stepY = (edge1.y - edge0.y) / Float(n)
-            let pts = (0..<n).map { i in
-                WavePoint(
-                    x: edge0.x + stepX * Float(i) + perp.x * 0.25 * left[i],
-                    y: edge0.y + stepY * Float(i) + perp.y * 0.25 * left[i]
-                )
-            }
+            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, samples: left, count: count)
             return (pts, nil)
 
         case .dualLine:
-            let dx = cos(params.angle), dy = sin(params.angle)
-            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy))
-            let n = count
-            let perp = (x: -dy, y: dx)
-            let stepX = (edge1.x - edge0.x) / Float(n)
-            let stepY = (edge1.y - edge0.y) / Float(n)
             let sep = params.separation * params.separation
-            var pts = (0..<n).map { i -> WavePoint in
-                WavePoint(
-                    x: edge0.x + stepX * Float(i) + perp.x * (0.25 * left[i] + sep),
-                    y: edge0.y + stepY * Float(i) + perp.y * (0.25 * left[i] + sep)
-                )
-            }
-            pts += (0..<n).map { i -> WavePoint in
-                WavePoint(
-                    x: edge0.x + stepX * Float(i) + perp.x * (0.25 * right[i] - sep),
-                    y: edge0.y + stepY * Float(i) + perp.y * (0.25 * right[i] - sep)
-                )
-            }
-            return (pts, n)
+            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: sep, samples: left, count: count)
+                + clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: -sep, samples: right, count: count)
+            return (pts, count)
 
         case .circular:
             let n = count
@@ -265,45 +191,19 @@ enum MilkdropWaveform {
 
         case .crossX:
             // Port of Milkdrop2077WaveX::GenerateVertices: two lines, clipped at mirrored angles
-            // (±0.75, nudged by the mystery param), crossing near the center like an X. Each line
-            // carries one channel, same edge-clip + per-sample perpendicular offset as .line, just
-            // with a slightly larger amplitude (0.35 vs .line's 0.25) and clip box (1.1 vs 1).
-            let n = count
+            // (±0.75, nudged by the mystery param), crossing near the center like an X.
             let angle1 = -0.75 + params.mysteryParam * 3.15
             let angle2 = 0.75 + params.mysteryParam * 3.15
-            func clippedLine(angle: Float, samples: [Float]) -> [WavePoint] {
-                let dx = cos(angle), dy = sin(angle)
-                let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
-                let perp = (x: -dy, y: dx)
-                let stepX = (edge1.x - edge0.x) / Float(n)
-                let stepY = (edge1.y - edge0.y) / Float(n)
-                return (0..<n).map { i in
-                    WavePoint(
-                        x: edge0.x + stepX * Float(i) + perp.x * 0.35 * samples[i],
-                        y: edge0.y + stepY * Float(i) + perp.y * 0.35 * samples[i]
-                    )
-                }
-            }
-            let pts = clippedLine(angle: angle1, samples: left) + clippedLine(angle: angle2, samples: right)
-            return (pts, n)
+            let pts = clippedLinePoints(angle: angle1, halfExtent: 1.1, amplitude: 0.35, samples: left, count: count)
+                + clippedLinePoints(angle: angle2, halfExtent: 1.1, amplitude: 0.35, samples: right, count: count)
+            return (pts, count)
 
         case .wideLine:
             // Port of Milkdrop2077Wave9::GenerateVertices: like .line, but the angle is driven
             // entirely by the mystery param (not user-adjustable) and the clip box/amplitude match
             // .crossX's wider values instead of .line's.
-            let n = count
             let angle: Float = 1.57 * params.mysteryParam
-            let dx = cos(angle), dy = sin(angle)
-            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
-            let perp = (x: -dy, y: dx)
-            let stepX = (edge1.x - edge0.x) / Float(n)
-            let stepY = (edge1.y - edge0.y) / Float(n)
-            let pts = (0..<n).map { i in
-                WavePoint(
-                    x: edge0.x + stepX * Float(i) + perp.x * 0.35 * left[i],
-                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * left[i]
-                )
-            }
+            let pts = clippedLinePoints(angle: angle, halfExtent: 1.1, amplitude: 0.35, samples: left, count: count)
             return (pts, nil)
 
         case .dualParallel:
@@ -311,26 +211,9 @@ enum MilkdropWaveform {
             // two channels perpendicular to a user-adjustable angle), this fixes the baseline
             // vertical (angle 1.57) and shifts each channel's line by a constant ±0.45 along X,
             // giving two parallel vertical scopes side by side.
-            let n = count
-            let angle: Float = 1.57
-            let dx = cos(angle), dy = sin(angle)
-            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
-            let perp = (x: -dy, y: dx)
-            let stepX = (edge1.x - edge0.x) / Float(n)
-            let stepY = (edge1.y - edge0.y) / Float(n)
-            var pts = (0..<n).map { i -> WavePoint in
-                WavePoint(
-                    x: edge0.x - 0.45 + stepX * Float(i) + perp.x * 0.35 * left[i],
-                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * left[i]
-                )
-            }
-            pts += (0..<n).map { i -> WavePoint in
-                WavePoint(
-                    x: edge0.x + 0.45 + stepX * Float(i) + perp.x * 0.35 * right[i],
-                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * right[i]
-                )
-            }
-            return (pts, n)
+            let pts = clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: -0.45, samples: left, count: count)
+                + clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: 0.45, samples: right, count: count)
+            return (pts, count)
 
         case .skewedLoop:
             // Port of Milkdrop2077WaveSkewed::GenerateVertices: a polar plot like .spiral, but the

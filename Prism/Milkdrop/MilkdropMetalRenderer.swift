@@ -84,6 +84,19 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     private var textureSize: CGSize = .zero
     private var frameCounter = 0
 
+    // First-draw timestamp, so `time` below is small and near-zero (like projectM's own
+    // TimeKeeper::GetRunningTime(), elapsed seconds since the renderer started) rather than an
+    // absolute epoch timestamp. That distinction matters: several wave modes cast `time` to
+    // Float32, which only carries ~7.2 significant decimal digits. `Date().timeIntervalSinceReferenceDate`
+    // is already ~7.9e8 in 2026, leaving Float32 only ~94 seconds of resolution at that magnitude —
+    // `Float(time)` would sit frozen for a minute-plus, then jump discontinuously, instead of
+    // advancing smoothly frame to frame. Modes that use `time` as a per-sample angle offset
+    // (.circular/.spiral/.star/.flower/.skewedLoop) just looked like their rotation stalled and
+    // snapped; .lasso uses sin(time)/cos(time) as a *global per-frame amplitude*, so the same jump
+    // collapsed its entire shape toward a point for the frozen stretch, then flipped — the "short
+    // line that alternates sides" symptom.
+    private var renderStartDate: Date?
+
     private let beat = MilkdropBeatState()
 
     // Stabilizes the drawn waveform frame-to-frame (see MilkdropWaveformAligner.swift). Separate
@@ -214,7 +227,8 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let energy = beat.update(left: left, right: right, sampleRate: 44100, now: now)
         let punch = beat.punch
 
-        let time = now.timeIntervalSinceReferenceDate
+        if renderStartDate == nil { renderStartDate = now }
+        let time = now.timeIntervalSince(renderStartDate!)
         frameCounter += 1
         // Drives a loaded preset's per-frame expression program (if any) before this frame's
         // points get generated below, so mode/params reflect this frame's evaluated values.

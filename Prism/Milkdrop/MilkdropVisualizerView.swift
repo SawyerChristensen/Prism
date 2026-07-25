@@ -53,6 +53,9 @@ final class MilkdropVisualizerModel {
                 "wave_r": file.waveR, "wave_g": file.waveG, "wave_b": file.waveB, "wave_a": file.waveAlpha,
                 "wave_mode": Float(file.waveMode),
             ]
+            // Runs once, immediately — seeds any custom variables (e.g. `SPEED=10;`) the per-frame
+            // program below expects to already exist on its first evaluation.
+            MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(&presetVariables)
             perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)
             presetName = url.deletingPathExtension().lastPathComponent
             presetLoadError = nil
