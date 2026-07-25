@@ -470,6 +470,11 @@ final class NowPlayingManager {
     ///
     /// When `processingEnabled` is false, all of the above is skipped entirely and `image` comes
     /// back untouched — some covers just look best left alone (see `ArtworkDisplayPreference`).
+    ///
+    /// Whatever comes out of the steps above then gets recentered on its own remaining opaque
+    /// content (see ArtworkRecentering.swift) as the true last step — after text, not before —
+    /// so a subject masking left pinned in a corner (or a text overlay drawn back in near an
+    /// edge) doesn't stay off-center once the transparent margin around it is gone.
     private nonisolated static func compositeArtwork(
         _ image: NSImage,
         colors: (background: NSColor, foreground: NSColor)?,
@@ -503,10 +508,13 @@ final class NowPlayingManager {
             withoutText = subjectMasked ?? colorKeyed ?? image
         }
 
-        guard includeText, let textMasked = image.maskingOutBackgroundByText(textLines) else {
-            return withoutText
+        let final: NSImage
+        if includeText, let textMasked = image.maskingOutBackgroundByText(textLines) {
+            final = withoutText.overlaying(textMasked) ?? withoutText
+        } else {
+            final = withoutText
         }
-        return withoutText.overlaying(textMasked) ?? withoutText
+        return final.recenteredOnOpaqueContent()
     }
 
     // MARK: - Per-album display preferences

@@ -24,9 +24,34 @@
     "maskingMode" : "combined",
     "processingEnabled" : true
   },
+  "baby keem|die for my bitch" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "baby keem|the melodic blue" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "beach house|beach house" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
+  "beach house|teen dream" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
   "caramella girls|supergott (speedy mixes)" : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "daft punk|homework" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
   "don toliver|life of a don" : {
@@ -49,7 +74,27 @@
     "maskingMode" : "combined",
     "processingEnabled" : true
   },
+  "gene clark|no other" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
   "gorillaz|cracker island" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "gunna|ds4ever" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "hailu mergia|wede harer guzo" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "ian|valedictorian [deluxe]" : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
     "processingEnabled" : true
@@ -73,6 +118,11 @@
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
     "processingEnabled" : true
+  },
+  "kendrick lamar|damn." : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
   },
   "lonown|worry (ultra slowed)" : {
     "includesTextOverlay" : false,
@@ -124,12 +174,32 @@
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "roddy ricch|please excuse me for being antisocial" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "ski aggu|denk mal drüber nach..." : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
   "t.a.t.u.|200 km\/h in the wrong lane (10th anniversary edition)" : {
     "includesTextOverlay" : true,
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "tame impala|currents" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
   "ten years after|a space in time (deluxe version)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "the beatles|magical mystery tour (remastered)" : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
     "processingEnabled" : true
@@ -159,9 +229,29 @@
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "vøj|memory reboot (slowed)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "watsky|x infinity" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "xxxtentacion|?" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
   "¥$|carnival (instrumental)" : {
     "includesTextOverlay" : true,
     "maskingMode" : "combined",
     "processingEnabled" : false
+  },
+  "öwnboss|move your body" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
   }
 }
