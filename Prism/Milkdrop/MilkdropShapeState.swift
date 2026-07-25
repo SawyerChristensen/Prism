@@ -15,9 +15,9 @@
 import Foundation
 
 /// One shape instance's fully-resolved draw parameters for the current frame — what
-/// MilkdropMetalRenderer actually turns into geometry. Colors are clamped to 0...1 here (real
-/// Milkdrop instead wraps out-of-range values via a modulo, letting `r=r+0.01;`-style scripts
-/// intentionally cycle color — an accepted simplification for this port).
+/// MilkdropMetalRenderer actually turns into geometry. Color channels are always in 0...1, but
+/// via wraparound (see `colorWrapped` below), matching real Milkdrop's behavior for scripts that
+/// intentionally push a channel out of range (`r=r+0.01;`-style "flash"/color-cycling presets).
 struct MilkdropShapeInstance {
     var sides: Int
     var x: Float
@@ -98,8 +98,19 @@ final class MilkdropShapeRuntime {
 
             perFrameProgram?.evaluate(&variables)
 
-            func clamped01(_ key: String, _ fallback: Float) -> Float {
-                min(1, max(0, variables[key] ?? fallback))
+            // Real Milkdrop wraps out-of-range color channels via `(int)(f*255) & 0xFF` back to
+            // 0...1, not a clamp — a script that overshoots (deliberately, for a color-cycling
+            // "flash" effect, or by accident) cycles through the color wheel instead of pinning at
+            // white/black. Implemented in floating point (rather than mirroring the C++ integer
+            // cast+bitmask directly) so a runaway per-frame accumulation can't trap on Int32
+            // overflow; a non-finite result (e.g. from a malformed expression) falls back instead
+            // of propagating NaN into the render.
+            func colorWrapped(_ key: String, _ fallback: Float) -> Float {
+                let value = variables[key] ?? fallback
+                guard value.isFinite else { return fallback }
+                var wrapped = (value * 255).truncatingRemainder(dividingBy: 256)
+                if wrapped < 0 { wrapped += 256 }
+                return wrapped / 255
             }
 
             results.append(MilkdropShapeInstance(
@@ -108,12 +119,12 @@ final class MilkdropShapeRuntime {
                 y: variables["y"] ?? preset.y,
                 rad: variables["rad"] ?? preset.rad,
                 ang: variables["ang"] ?? preset.ang,
-                r: clamped01("r", preset.r), g: clamped01("g", preset.g),
-                b: clamped01("b", preset.b), a: clamped01("a", preset.a),
-                r2: clamped01("r2", preset.r2), g2: clamped01("g2", preset.g2),
-                b2: clamped01("b2", preset.b2), a2: clamped01("a2", preset.a2),
-                borderR: clamped01("border_r", preset.borderR), borderG: clamped01("border_g", preset.borderG),
-                borderB: clamped01("border_b", preset.borderB), borderA: clamped01("border_a", preset.borderA),
+                r: colorWrapped("r", preset.r), g: colorWrapped("g", preset.g),
+                b: colorWrapped("b", preset.b), a: colorWrapped("a", preset.a),
+                r2: colorWrapped("r2", preset.r2), g2: colorWrapped("g2", preset.g2),
+                b2: colorWrapped("b2", preset.b2), a2: colorWrapped("a2", preset.a2),
+                borderR: colorWrapped("border_r", preset.borderR), borderG: colorWrapped("border_g", preset.borderG),
+                borderB: colorWrapped("border_b", preset.borderB), borderA: colorWrapped("border_a", preset.borderA),
                 additive: (variables["additive"] ?? (preset.additive ? 1 : 0)) != 0,
                 thickOutline: (variables["thick"] ?? (preset.thickOutline ? 1 : 0)) != 0
             ))

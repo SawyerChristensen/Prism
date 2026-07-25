@@ -12,10 +12,48 @@
 
 import SwiftUI
 
+/// Per-frame feedback-transform state (Milkdrop's `zoom`/`rot`/`cx`/`cy`/`dx`/`dy`/`sx`/`sy`/`warp`/
+/// `decay` per-frame variables) — what drives the warped background trail, distinct from the
+/// waveform's own params. Defaults match projectM's PresetState.hpp exactly (see
+/// MilkdropPresetFile.swift), so an unloaded/preset-less renderer sees the same neutral transform
+/// (no zoom, no rotation, no stretch) real Milkdrop would show for a preset that sets nothing.
+struct MilkdropWarpParams {
+    var zoom: Float = 1.0
+    var zoomExponent: Float = 1.0
+    var rot: Float = 0.0
+    var rotCX: Float = 0.5
+    var rotCY: Float = 0.5
+    var xPush: Float = 0.0
+    var yPush: Float = 0.0
+    var warpAmount: Float = 1.0
+    var stretchX: Float = 1.0
+    var stretchY: Float = 1.0
+    var decay: Float = 0.98
+}
+
 @Observable
 final class MilkdropVisualizerModel {
     var mode: MilkdropWaveMode = .line
     var params = MilkdropWaveformParams()
+    /// Read every frame by MilkdropMetalRenderer to drive the feedback pass's warp transform — see
+    /// updatePresetPerFrame below.
+    private(set) var warpParams = MilkdropWarpParams()
+    /// Static per-preset constants (not per-frame-scriptable — see MilkdropPresetFile.swift) that
+    /// shape the warp-wiggle animation's speed/scale. Read directly by MilkdropMetalRenderer.
+    private(set) var warpAnimSpeed: Float = 1.0
+    private(set) var warpScale: Float = 1.0
+    /// Raw HLSL `comp_N=` source (see MilkdropPresetFile.swift), compiled by MilkdropMetalRenderer —
+    /// the model has no Metal device, so it only carries the source text. `warpShaderSource` is
+    /// parsed too but not yet compiled/used anywhere (see MilkdropShaderTranslator.swift's header
+    /// for why composite shaders shipped first: they're a clean additional pass on plain screen UV,
+    /// while a custom warp shader needs to duplicate the geometric zoom/rotate/stretch/wiggle math
+    /// mid-shader to receive the same per-pixel UV the mesh already computes — real, but more
+    /// involved, and deliberately deferred rather than shipped as a rougher approximation).
+    private(set) var compositeShaderSource: String = ""
+    /// Bumped on every `loadPreset(from:)` call — MilkdropMetalRenderer compares this against the
+    /// generation it last compiled shaders for, recompiling only on an actual preset change rather
+    /// than every frame (dynamic Metal shader compilation is not something to do 60x/sec).
+    private(set) var loadGeneration = 0
 
     /// File name of the currently loaded .milk preset, or nil if none was ever loaded (Prism runs
     /// fine with just the built-in modes/params above — a preset is an optional override).
@@ -59,12 +97,24 @@ final class MilkdropVisualizerModel {
                 "wave_x": file.waveX, "wave_y": file.waveY, "wave_mystery": file.waveParam,
                 "wave_r": file.waveR, "wave_g": file.waveG, "wave_b": file.waveB, "wave_a": file.waveAlpha,
                 "wave_mode": Float(file.waveMode),
+                // Feedback warp-transform starting values — a per-frame script that only reads
+                // (never assigns) one of these, e.g. `dx=dx+bass*0.001;`, needs it pre-seeded to
+                // Milkdrop's real per-frame default, not the evaluator's own undeclared-variable-is-0
+                // fallback (0 would break `zoom`, `sx`/`sy`, `zoomexp` particularly, whose neutral
+                // value is 1, not 0).
+                "zoom": file.zoom, "zoomexp": file.zoomExponent, "rot": file.rot,
+                "cx": file.rotCX, "cy": file.rotCY, "dx": file.xPush, "dy": file.yPush,
+                "warp": file.warpAmount, "sx": file.stretchX, "sy": file.stretchY, "decay": file.decay,
             ]
             // Runs once, immediately — seeds any custom variables (e.g. `SPEED=10;`) the per-frame
             // program below expects to already exist on its first evaluation.
             MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(&presetVariables)
             perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)
             shapes = file.shapes.map(MilkdropShapeRuntime.init(preset:))
+            warpAnimSpeed = file.warpAnimSpeed
+            warpScale = file.warpScale
+            compositeShaderSource = file.compositeShaderSource
+            loadGeneration += 1
             presetName = url.deletingPathExtension().lastPathComponent
             presetLoadError = nil
         } catch {
@@ -73,24 +123,26 @@ final class MilkdropVisualizerModel {
     }
 
     /// Runs the loaded preset's per-frame program (if any) against this frame's timing/audio
-    /// inputs and folds the result back into `params`. No-op if no preset (or one with no
-    /// per-frame code) is loaded. `energy` mirrors projectM's bass/mid/treb(_att) per-frame
-    /// variables — see MilkdropAudioSignals.swift.
+    /// inputs and folds the result back into `params`/`warpParams`. Still refreshes `warpParams`
+    /// from `presetVariables` even with no program loaded (or one with no per-frame code) — a
+    /// preset can set `zoom`/`rot`/etc. as plain static constants with no per-frame code touching
+    /// them at all, and those still need to reach the renderer. `energy` mirrors projectM's
+    /// bass/mid/treb(_att) per-frame variables — see MilkdropAudioSignals.swift.
     func updatePresetPerFrame(time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy) {
-        guard let perFrameProgram else { return }
+        if let perFrameProgram {
+            presetVariables["time"] = Float(time)
+            presetVariables["fps"] = Float(fps)
+            presetVariables["frame"] = Float(frame)
+            presetVariables["progress"] = 0 // No preset-to-preset blend/fade in Prism yet.
+            presetVariables["bass"] = energy.bass
+            presetVariables["mid"] = energy.mid
+            presetVariables["treb"] = energy.treb
+            presetVariables["bass_att"] = energy.bassAtt
+            presetVariables["mid_att"] = energy.midAtt
+            presetVariables["treb_att"] = energy.trebAtt
 
-        presetVariables["time"] = Float(time)
-        presetVariables["fps"] = Float(fps)
-        presetVariables["frame"] = Float(frame)
-        presetVariables["progress"] = 0 // No preset-to-preset blend/fade in Prism yet.
-        presetVariables["bass"] = energy.bass
-        presetVariables["mid"] = energy.mid
-        presetVariables["treb"] = energy.treb
-        presetVariables["bass_att"] = energy.bassAtt
-        presetVariables["mid_att"] = energy.midAtt
-        presetVariables["treb_att"] = energy.trebAtt
-
-        perFrameProgram.evaluate(&presetVariables)
+            perFrameProgram.evaluate(&presetVariables)
+        }
 
         if let mystery = presetVariables["wave_mystery"] {
             params.mysteryParam = mystery
@@ -106,6 +158,18 @@ final class MilkdropVisualizerModel {
         }
         // wave_r/g/b land in presetVariables too, for a future preset-color pass — not consumed
         // yet since color is currently driven by album art (see AlbumColors.swift).
+
+        if let zoom = presetVariables["zoom"] { warpParams.zoom = zoom }
+        if let zoomExponent = presetVariables["zoomexp"] { warpParams.zoomExponent = zoomExponent }
+        if let rot = presetVariables["rot"] { warpParams.rot = rot }
+        if let cx = presetVariables["cx"] { warpParams.rotCX = cx }
+        if let cy = presetVariables["cy"] { warpParams.rotCY = cy }
+        if let dx = presetVariables["dx"] { warpParams.xPush = dx }
+        if let dy = presetVariables["dy"] { warpParams.yPush = dy }
+        if let warp = presetVariables["warp"] { warpParams.warpAmount = warp }
+        if let sx = presetVariables["sx"] { warpParams.stretchX = sx }
+        if let sy = presetVariables["sy"] { warpParams.stretchY = sy }
+        if let decay = presetVariables["decay"] { warpParams.decay = decay }
     }
 
     /// Resolves every loaded shape's per-frame script for this frame, one instance array per shape

@@ -86,6 +86,35 @@ struct MilkdropShapeStateTests {
         #expect(high[0].sides == 100)
     }
 
+    @Test func colorChannelsWrapInsteadOfClampingWhenPushedOutOfRange() {
+        // Real Milkdrop lets a script intentionally overshoot a color channel for a cycling
+        // "flash" effect (`r=r+0.01;` past 1.0 wraps back toward 0, not pins at white). 1.2 * 255
+        // = 306, 306 & 0xFF = 50, 50/255 ≈ 0.196.
+        var preset = MilkdropShapePreset()
+        preset.enabled = true
+        preset.perFrameProgram = "r=1.2; g=-0.1; b=2.0;"
+        let runtime = MilkdropShapeRuntime(preset: preset)
+        let instances = runtime.resolveInstances(time: 0, fps: 60, frame: 1, energy: MilkdropBandEnergy())
+        #expect(abs(instances[0].r - 50.0 / 255.0) < 0.001)
+        // -0.1*255 = -25.5 -> floor-mod 256 -> 230.5 -> /255 ≈ 0.904 (wraps toward white, not black).
+        #expect(abs(instances[0].g - 230.5 / 255.0) < 0.001)
+        // 2.0*255 = 510, 510 mod 256 = 254, /255 ≈ 0.996.
+        #expect(abs(instances[0].b - 254.0 / 255.0) < 0.001)
+    }
+
+    @Test func nonFiniteColorFallsBackInsteadOfPropagatingNaN() {
+        // `pow` isn't divide-by-zero-guarded like the evaluator's other functions, so a fractional
+        // power of a negative base (pow(-1, 0.5)) is a real way a preset script can produce NaN —
+        // this confirms colorWrapped catches it rather than letting NaN reach the renderer.
+        var preset = MilkdropShapePreset()
+        preset.enabled = true
+        preset.r = 0.42
+        preset.perFrameProgram = "r=pow(-1,0.5);"
+        let runtime = MilkdropShapeRuntime(preset: preset)
+        let instances = runtime.resolveInstances(time: 0, fps: 60, frame: 1, energy: MilkdropBandEnergy())
+        #expect(instances[0].r == 0.42)
+    }
+
     @Test func initProgramSeedsVariablesBeforeFirstPerFrameEvaluation() {
         var preset = MilkdropShapePreset()
         preset.enabled = true

@@ -220,6 +220,63 @@ struct MilkdropPresetFileTests {
         #expect(file.shapes[3].enabled == false)
     }
 
+    // MARK: - Warp transform (zoom/rot/cx/cy/dx/dy/sx/sy/warp/decay)
+
+    @Test func parsesWarpTransformConstants() {
+        // Key names confirmed against projectM's PresetState.cpp (zoom/rot/cx/cy/dx/dy/warp/sx/sy
+        // are plain lowercase; decay/zoomExponent/warpAnimSpeed/warpScale use the `f`-prefixed
+        // Milkdrop naming convention, matching fWaveScale/fWaveSmoothing elsewhere in this file).
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        zoom=1.05
+        fZoomExponent=1.2
+        rot=0.02
+        cx=0.4
+        cy=0.6
+        dx=0.01
+        dy=-0.01
+        warp=0.5
+        sx=1.1
+        sy=0.9
+        fDecay=0.95
+        fWarpAnimSpeed=2.0
+        fWarpScale=0.5
+        """)
+        #expect(file.zoom == 1.05)
+        #expect(file.zoomExponent == 1.2)
+        #expect(file.rot == 0.02)
+        #expect(file.rotCX == 0.4)
+        #expect(file.rotCY == 0.6)
+        #expect(file.xPush == 0.01)
+        #expect(file.yPush == -0.01)
+        #expect(file.warpAmount == 0.5)
+        #expect(file.stretchX == 1.1)
+        #expect(file.stretchY == 0.9)
+        #expect(file.decay == 0.95)
+        #expect(file.warpAnimSpeed == 2.0)
+        #expect(file.warpScale == 0.5)
+    }
+
+    @Test func warpTransformConstantsDefaultToRealMilkdropValuesWhenAbsent() {
+        // Defaults confirmed against projectM's PresetState.hpp field initializers — not 0 for
+        // most of these (unlike a generic "missing key" fallback), since 0 would mean "no zoom"/
+        // "no stretch" for a multiplicative value, not "neutral."
+        let file = MilkdropPresetFile(text: "[preset00]\nnWaveMode=0\n")
+        #expect(file.zoom == 1.0)
+        #expect(file.zoomExponent == 1.0)
+        #expect(file.rot == 0.0)
+        #expect(file.rotCX == 0.5)
+        #expect(file.rotCY == 0.5)
+        #expect(file.xPush == 0.0)
+        #expect(file.yPush == 0.0)
+        #expect(file.warpAmount == 1.0)
+        #expect(file.stretchX == 1.0)
+        #expect(file.stretchY == 1.0)
+        #expect(file.decay == 0.98)
+        #expect(file.warpAnimSpeed == 1.0)
+        #expect(file.warpScale == 1.0)
+    }
+
     @Test func shapeIndexOutOfRangeIsIgnoredNotCrashed() {
         // Milkdrop's own CustomShapeCount is 4 (indices 0-3); a stray higher index (or a
         // non-numeric one) shouldn't crash parsing or land anywhere.

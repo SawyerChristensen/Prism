@@ -10,9 +10,13 @@
 //  programs (see MilkdropExpressionEvaluator.swift). Note the shape code slots use a *different*
 //  numbering convention than the main preset's: `shape_0_init1`, not `shape_0_init_1` — confirmed
 //  against projectM's PresetFileParser::GetCode, which appends the slot number directly with no
-//  separating underscore. Everything else in the file — warp/composite shaders, custom waveforms,
-//  motion vectors, borders, textures — is read past but not interpreted; Prism doesn't render the
-//  full preset visual (see MilkdropWaveform.swift's header for that scope decision).
+//  separating underscore. `warp_N=`/`comp_N=` (real HLSL, not NS-EEL — same numbering as
+//  `per_frame_N`) are parsed too, handed to MilkdropShaderTranslator/MilkdropMetalRenderer rather
+//  than the expression evaluator; `compositeShaderSource` is compiled and run for real,
+//  `warpShaderSource` is parsed but not yet compiled (see MilkdropVisualizerModel's doc comment on
+//  why). Everything else in the file — custom waveforms, motion vectors, borders, sprite/`image=`
+//  textures — is read past but not interpreted; Prism doesn't render the full preset visual (see
+//  MilkdropWaveform.swift's header for that scope decision).
 //
 //  Format reference: a flat INI-style file, one `[presetNN]` section (Prism only ever reads the
 //  first), lines are `key=value` with no quoting. Milkdrop's own parser matches keys
@@ -77,6 +81,26 @@ struct MilkdropPresetFile {
     var waveG: Float = 1.0
     var waveB: Float = 1.0
     var waveAlpha: Float = 0.8
+    /// Static per-frame-loop starting values for the feedback warp transform (zoom/rotate/stretch/
+    /// translate — see MilkdropVisualizerView.swift's warpParams). Defaults and key names (`zoom`,
+    /// `rot`, `cx`/`cy`, `dx`/`dy`, `sx`/`sy`, `warp`, `fDecay`, `fZoomExponent`) confirmed against
+    /// projectM's PresetState.cpp/.hpp. A per-frame script that reads/writes these (e.g.
+    /// `rot=rot+0.01;`) starts from whichever of these values is in effect, same as wave_x/y do.
+    var zoom: Float = 1.0
+    var zoomExponent: Float = 1.0
+    var rot: Float = 0.0
+    var rotCX: Float = 0.5
+    var rotCY: Float = 0.5
+    var xPush: Float = 0.0
+    var yPush: Float = 0.0
+    var warpAmount: Float = 1.0
+    var stretchX: Float = 1.0
+    var stretchY: Float = 1.0
+    var decay: Float = 0.98
+    /// Not per-frame-scriptable (absent from projectM's PerFrameContext variable list) — a plain
+    /// load-time constant that only shapes the warp-wiggle animation's speed/scale.
+    var warpAnimSpeed: Float = 1.0
+    var warpScale: Float = 1.0
     /// Concatenated `per_frame_N=` lines, in ascending numeric order. Empty if the preset defines
     /// none (common for the older, non-per-frame-scripted presets).
     var perFrameProgram: String = ""
@@ -87,6 +111,16 @@ struct MilkdropPresetFile {
     /// `shapecode_N_*` keys at all in the file stays at `MilkdropShapePreset()`'s defaults —
     /// `enabled == false`, so it's simply skipped at render time.
     var shapes: [MilkdropShapePreset] = Array(repeating: MilkdropShapePreset(), count: 4)
+    /// Concatenated `warp_N=`/`comp_N=` lines (same underscore-before-digit numbering as
+    /// `per_frame_N`, confirmed against projectM's `GetCode("warp_")`/`GetCode("comp_")` in
+    /// PresetState.cpp) — real HLSL shader code, not NS-EEL expressions, handed to
+    /// MilkdropShaderTranslator rather than MilkdropExpressionProgram. Empty for the majority of
+    /// presets (only the newer "shader-based" Milkdrop 2.0+ format has these at all). Each line's
+    /// leading backtick — present on every shader-code line in real preset files, e.g.
+    /// `` warp_1=`sampler sampler_fw_noisevol_hq; `` — is stripped here, same as projectM's own
+    /// `GetCode` does, rather than left for the translator to deal with.
+    var warpShaderSource: String = ""
+    var compositeShaderSource: String = ""
 
     init(contentsOf url: URL) throws {
         // Presets in the wild are inconsistently encoded (Milkdrop predates any UTF-8 convention),
@@ -110,6 +144,14 @@ struct MilkdropPresetFile {
         var shapeConstants: [Int: [String: String]] = [:]
         var shapeInitLines: [Int: [(index: Int, text: String)]] = [:]
         var shapePerFrameLines: [Int: [(index: Int, text: String)]] = [:]
+        var warpLines: [(index: Int, text: String)] = []
+        var compLines: [(index: Int, text: String)] = []
+
+        // Every warp_N/comp_N line's value starts with a literal backtick in real preset files —
+        // strip it here so downstream code never has to think about it again.
+        func stripBacktick(_ raw: String) -> String {
+            raw.hasPrefix("`") ? String(raw.dropFirst()) : raw
+        }
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -133,6 +175,13 @@ struct MilkdropPresetFile {
                 if n < 1000 {
                     perFrameLines.append((n, value))
                 }
+            } else if key.hasPrefix("warp_"), let n = Int(key.dropFirst("warp_".count)) {
+                // No >= 1000-is-a-comment convention here (unlike per_frame_ above) — that's a
+                // per_frame-specific preset-editor convention, and a real multi-hundred-line
+                // shader could plausibly reach index 1000 legitimately; safer not to guess.
+                warpLines.append((n, stripBacktick(value)))
+            } else if key.hasPrefix("comp_"), let n = Int(key.dropFirst("comp_".count)) {
+                compLines.append((n, stripBacktick(value)))
             } else if key.hasPrefix("shapecode_"), let (idx, subKey) = splitIndexedKey(key, after: "shapecode_"), (0..<4).contains(idx) {
                 shapeConstants[idx, default: [:]][subKey] = value
             } else if key.hasPrefix("shape_"), let (idx, codeKey) = splitIndexedKey(key, after: "shape_"), (0..<4).contains(idx) {
@@ -152,6 +201,10 @@ struct MilkdropPresetFile {
         perFrameProgram = perFrameLines.map(\.text).joined(separator: "\n")
         perFrameInitLines.sort { $0.index < $1.index }
         perFrameInitProgram = perFrameInitLines.map(\.text).joined(separator: "\n")
+        warpLines.sort { $0.index < $1.index }
+        warpShaderSource = warpLines.map(\.text).joined(separator: "\n")
+        compLines.sort { $0.index < $1.index }
+        compositeShaderSource = compLines.map(\.text).joined(separator: "\n")
 
         func cleaned(_ raw: String) -> String {
             var s = raw.trimmingCharacters(in: .whitespaces)
@@ -180,6 +233,20 @@ struct MilkdropPresetFile {
         waveG = float("wave_g", waveG)
         waveB = float("wave_b", waveB)
         waveAlpha = float("fwavealpha", waveAlpha)
+
+        zoom = float("zoom", zoom)
+        zoomExponent = float("fzoomexponent", zoomExponent)
+        rot = float("rot", rot)
+        rotCX = float("cx", rotCX)
+        rotCY = float("cy", rotCY)
+        xPush = float("dx", xPush)
+        yPush = float("dy", yPush)
+        warpAmount = float("warp", warpAmount)
+        stretchX = float("sx", stretchX)
+        stretchY = float("sy", stretchY)
+        decay = float("fdecay", decay)
+        warpAnimSpeed = float("fwarpanimspeed", warpAnimSpeed)
+        warpScale = float("fwarpscale", warpScale)
 
         shapes = (0..<4).map { idx in
             let dict = shapeConstants[idx] ?? [:]

@@ -4,9 +4,10 @@
 //
 //  GPU replacement for the old CPU CGContext trail buffer (see MilkdropMetalRenderer.swift for
 //  the full picture). Three shader pairs:
-//   - feedback_vertex/feedback_fragment: samples last frame's texture with a zoom/rotate/decay
-//     transform baked into the UV lookup — the GPU equivalent of the old ctx.rotate/scaleBy/
-//     setAlpha dance, but as a single texture sample per pixel instead of a full CPU raster pass.
+//   - feedback_vertex/feedback_fragment: samples last frame's texture through Milkdrop's real
+//     per-frame warp transform (zoom/rotate/stretch/translate/warp-wiggle, driven by a loaded
+//     preset's zoom/rot/cx/cy/dx/dy/sx/sy/warp/decay per-frame variables — see
+//     MilkdropVisualizerView.swift's warpParams and MilkdropMetalRenderer.swift for the uniforms).
 //   - solid_vertex/solid_fragment: flat-colored, additively-blended geometry for the waveform
 //     line and spectrum bars, built fresh each frame on the CPU (cheap — a few hundred vertices)
 //     and rasterized on the GPU instead of stroked via Core Graphics.
@@ -97,31 +98,81 @@ vertex FullscreenVertexOut feedback_vertex(uint vid [[vertex_id]]) {
     return out;
 }
 
-// Samples last frame's texture through the inverse of (rotate then scale, about the center),
-// i.e. what the CPU version got from `ctx.rotate(rotation); ctx.scaleBy(zoom)` applied to the
-// *drawn* image — sampling with the inverse is what makes the *destination* appear to zoom in /
-// rotate forward each frame. Anything that lands outside the source texture (which zooming in
-// naturally does, near the very edges) samples as transparent rather than clamping, so the trail
-// fades to nothing at the border instead of smearing edge pixels inward forever.
+// Milkdrop's real per-frame feedback transform (zoom/zoomExponent/stretch/warp-wiggle/rotate/
+// translate), ported from projectM's PresetWarpVertexShaderGlsl330.vert — see
+// MilkdropMetalRenderer.swift for where each uniform below is computed. That reference shader
+// evaluates this per *mesh vertex* (a coarse 65x49 grid, bilinearly interpolated by the
+// rasterizer); doing it here per screen pixel instead is strictly more precise, not an
+// approximation of it, since Prism has no vertex mesh to begin with — it's always drawn a
+// full-screen quad. Each uniform is its own buffer binding (rather than one packed struct) so
+// there's no risk of the Swift-side and Metal-side struct layouts silently drifting apart —
+// scalars and vector types each have unambiguous, independently-matching sizes this way.
+//
+// Anything that lands outside the source texture (which zooming/warping naturally does, near the
+// edges) samples as transparent rather than clamping, so the trail fades to nothing at the border
+// instead of smearing edge pixels inward forever — same edge behavior the old fixed transform had.
 fragment float4 feedback_fragment(
     FullscreenVertexOut in [[stage_in]],
     texture2d<float> previousTexture [[texture(0)]],
-    constant float &cosRot [[buffer(0)]],
-    constant float &sinRot [[buffer(1)]],
-    constant float &invZoom [[buffer(2)]],
-    constant float &decay [[buffer(3)]]
+    constant float &zoom [[buffer(0)]],
+    constant float &zoomExponent [[buffer(1)]],
+    constant float &rot [[buffer(2)]],
+    constant float &warp [[buffer(3)]],
+    constant float &cx [[buffer(4)]],
+    constant float &cy [[buffer(5)]],
+    constant float &dx [[buffer(6)]],
+    constant float &dy [[buffer(7)]],
+    constant float &sx [[buffer(8)]],
+    constant float &sy [[buffer(9)]],
+    constant float &decay [[buffer(10)]],
+    constant float &warpTime [[buffer(11)]],
+    constant float &warpScaleInverse [[buffer(12)]],
+    constant float4 &warpFactors [[buffer(13)]],
+    constant float2 &aspect [[buffer(14)]],
+    constant float2 &invAspect [[buffer(15)]]
 ) {
     constexpr sampler s(address::clamp_to_zero, filter::linear);
-    float2 centered = in.uv - float2(0.5, 0.5);
-    float2 rotated = float2(
-        cosRot * centered.x + sinRot * centered.y,
-        -sinRot * centered.x + cosRot * centered.y
-    );
-    float2 sourceUV = rotated * invZoom + float2(0.5, 0.5);
-    if (sourceUV.x < 0.0 || sourceUV.x > 1.0 || sourceUV.y < 0.0 || sourceUV.y > 1.0) {
+
+    // -1...1, matching the reference shader's quad-corner vertex_position space (kFullscreenCorners
+    // is already in that range; UV here is its 0...1 remap, so this just undoes that remap).
+    float2 pos = (in.uv - float2(0.5, 0.5)) * 2.0;
+
+    float zoom2 = pow(zoom, pow(zoomExponent, length(pos) * 2.0 - 1.0));
+    float zoom2Inverse = 1.0 / zoom2;
+
+    float u = pos.x * aspect.x * 0.5 * zoom2Inverse + 0.5;
+    float v = pos.y * aspect.y * 0.5 * zoom2Inverse + 0.5;
+
+    // Stretch on X, Y, about (cx, cy).
+    u = (u - cx) / sx + cx;
+    v = (v - cy) / sy + cy;
+
+    // Warping: four sine/cosine ripples, amplitude scaled by the preset's `warp` value (0 = none).
+    u += warp * 0.0035 * sin(warpTime * 0.333 + warpScaleInverse * (pos.x * warpFactors.x - pos.y * warpFactors.w));
+    v += warp * 0.0035 * cos(warpTime * 0.375 - warpScaleInverse * (pos.x * warpFactors.z + pos.y * warpFactors.y));
+    u += warp * 0.0035 * cos(warpTime * 0.753 - warpScaleInverse * (pos.x * warpFactors.y - pos.y * warpFactors.z));
+    v += warp * 0.0035 * sin(warpTime * 0.825 + warpScaleInverse * (pos.x * warpFactors.x + pos.y * warpFactors.w));
+
+    // Rotation about (cx, cy).
+    float u2 = u - cx;
+    float v2 = v - cy;
+    float cosRot = cos(rot);
+    float sinRot = sin(rot);
+    u = u2 * cosRot - v2 * sinRot + cx;
+    v = u2 * sinRot + v2 * cosRot + cy;
+
+    // Translation.
+    u -= dx;
+    v -= dy;
+
+    // Undo the aspect-ratio correction applied above, back to plain 0...1 texture space.
+    u = (u - 0.5) * invAspect.x + 0.5;
+    v = (v - 0.5) * invAspect.y + 0.5;
+
+    if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
         return float4(0.0);
     }
-    return previousTexture.sample(s, sourceUV) * decay;
+    return previousTexture.sample(s, float2(u, v)) * decay;
 }
 
 fragment float4 present_fragment(
