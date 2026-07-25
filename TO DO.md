@@ -2,9 +2,6 @@
 ---
 
 - [ ] Organize the projects structure
+- [ ] The 
 - [ ] Fill out the app icon list
-- [ ] Make the waveform more responsive than just "wiggly"
-- [ ] Makd the waveform stereo?
-- [ ] Make the background detection match better
-  - [ ] Make the background color transparent with some
-  - [ ] Detect text color in the album art
+- [ ] Make the "zoom in" effect more predictable. it seems to be triggered more randomly than on beat

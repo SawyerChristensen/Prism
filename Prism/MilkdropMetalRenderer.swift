@@ -37,11 +37,17 @@ final class MilkdropBeatState {
     private let refractoryInterval: TimeInterval = 0.11
     private let punchHalfLife: TimeInterval = 0.09
 
-    func update(left: [Float], right: [Float], sampleRate: Float, now: Date) -> Float {
+    /// Last frame's FPS estimate, for feeding a loaded preset's per-frame `fps` variable — see
+    /// MilkdropVisualizerModel.updatePresetPerFrame.
+    private(set) var lastFPS: Double = 60
+
+    @discardableResult
+    func update(left: [Float], right: [Float], sampleRate: Float, now: Date) -> MilkdropBandEnergy {
         let dt = lastFrameDate.map { now.timeIntervalSince($0) } ?? (1.0 / 60.0)
         lastFrameDate = now
         if startDate == nil { startDate = now }
         let fps = dt > 0 ? min(240.0, max(1.0, 1.0 / dt)) : 60.0
+        lastFPS = fps
 
         let energy = analyzer.process(left: left, right: right, sampleRate: sampleRate, fps: fps)
 
@@ -55,7 +61,7 @@ final class MilkdropBeatState {
         } else if dt > 0 {
             punch *= CGFloat(pow(0.5, dt / punchHalfLife))
         }
-        return energy.bass
+        return energy
     }
 }
 
@@ -76,6 +82,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     private var textures: [MTLTexture?] = [nil, nil]
     private var sourceIndex = 0
     private var textureSize: CGSize = .zero
+    private var frameCounter = 0
 
     private let beat = MilkdropBeatState()
 
@@ -204,10 +211,14 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let scaledRight = MilkdropWaveform.smoothed(visibleRight, scale: model.params.scale, smoothing: model.params.smoothing)
 
         // CoreAudioTapEngine taps the system default output device, so 44.1kHz is the common case.
-        _ = beat.update(left: left, right: right, sampleRate: 44100, now: now)
+        let energy = beat.update(left: left, right: right, sampleRate: 44100, now: now)
         let punch = beat.punch
 
         let time = now.timeIntervalSinceReferenceDate
+        frameCounter += 1
+        // Drives a loaded preset's per-frame expression program (if any) before this frame's
+        // points get generated below, so mode/params reflect this frame's evaluated values.
+        model.updatePresetPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
         let aspect = pixelSize.width > 0 ? Float(pixelSize.height / pixelSize.width) : 1
         let (rawPoints, rawBreak) = MilkdropWaveform.points(
             mode: model.mode, left: scaledLeft, right: scaledRight,

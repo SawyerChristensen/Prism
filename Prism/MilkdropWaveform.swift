@@ -49,6 +49,28 @@ enum MilkdropWaveMode: Int, CaseIterable {
         case .lasso: return "Lasso"
         }
     }
+
+    /// Maps Milkdrop's `nWaveMode` preset constant (0-15, wrapped mod 16 by the original engine)
+    /// onto the closest mode Prism has. Stock Milkdrop modes 4 (DerivativeLine), 5 (ExplosiveHash)
+    /// and 8 (SpectrumLine, unfinished upstream too) have no Prism equivalent yet and fall back to
+    /// .line rather than failing preset load over an unsupported wave mode.
+    init(presetWaveMode raw: Int) {
+        let wrapped = ((raw % 16) + 16) % 16
+        switch wrapped {
+        case 0: self = .circular
+        case 1: self = .spiral
+        case 2, 3: self = .spiro
+        case 7: self = .dualLine
+        case 9: self = .wideLine
+        case 10: self = .crossX
+        case 11: self = .dualParallel
+        case 12: self = .skewedLoop
+        case 13: self = .star
+        case 14: self = .flower
+        case 15: self = .lasso
+        default: self = .line // 4, 5, 6, 8
+        }
+    }
 }
 
 struct MilkdropWaveformParams {
