@@ -354,7 +354,7 @@ extension NSImage {
         }
 
         guard let outCGImage = context.makeImage() else { return nil }
-        return NSImage(cgImage: outCGImage, size: self.size)
+        return outCGImage.asPixelExactNSImage()
     }
 }
 

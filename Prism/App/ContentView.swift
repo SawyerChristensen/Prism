@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var permissions = PermissionsManager()
     @State private var visualizerModel = MilkdropVisualizerModel()
     @State private var isPresetImporterPresented = false
+    // Transient confirmation after "S" saves the current M/T settings for this album (see
+    // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
+    // save happened, since M/T themselves are just a live preview now, not an auto-save.
+    @State private var showSavedConfirmation = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -37,7 +41,7 @@ struct ContentView: View {
                     Image(nsImage: artwork)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 250, height: 250)
+                        .frame(width: 300, height: 300)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         //.shadow(color: fgColor, radius: 6)
                 } /*else {
@@ -84,6 +88,29 @@ struct ContentView: View {
                     .padding(8)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            // "T"/"M" (below) drive nowPlaying.includesTextOverlay/maskingMode directly — stand-
+            // ins for future Settings controls; only shown off their defaults so this stays
+            // invisible day to day.
+            VStack(alignment: .trailing, spacing: 4) {
+                if showSavedConfirmation {
+                    Text("Saved for this album")
+                }
+                if !nowPlaying.processingEnabled {
+                    Text("Processing Off")
+                } else {
+                    if !nowPlaying.includesTextOverlay {
+                        Text("Text Overlay Off")
+                    }
+                    if nowPlaying.maskingMode != .combined {
+                        Text(nowPlaying.maskingMode.label)
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(fgColor.opacity(0.6))
+            .padding(8)
+        }
         .fileImporter(
             isPresented: $isPresetImporterPresented,
             allowedContentTypes: [UTType(filenameExtension: "milk") ?? .plainText]
@@ -110,7 +137,7 @@ struct ContentView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O"]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
             switch press.characters {
             case " ":
                 visualizerModel.cycleMode()
@@ -120,6 +147,25 @@ struct ContentView: View {
                 return .handled
             case "o", "O":
                 isPresetImporterPresented = true
+                return .handled
+            case "t", "T":
+                nowPlaying.includesTextOverlay.toggle()
+                return .handled
+            case "m", "M":
+                let all = ArtworkMaskingMode.allCases
+                let idx = all.firstIndex(of: nowPlaying.maskingMode) ?? 0
+                nowPlaying.maskingMode = all[(idx + 1) % all.count]
+                return .handled
+            case "p", "P":
+                nowPlaying.processingEnabled.toggle()
+                return .handled
+            case "s", "S":
+                nowPlaying.saveCurrentArtworkPreference()
+                showSavedConfirmation = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    showSavedConfirmation = false
+                }
                 return .handled
             default:
                 return .ignored

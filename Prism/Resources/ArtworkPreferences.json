@@ -1,0 +1,142 @@
+{
+  "$uicideboy$|thy kingdom come" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "100 gecs|10,000 gecs" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "50 cent|the massacre" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "a$ap rocky|long.live.a$ap (deluxe version)" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "caramella girls|supergott (speedy mixes)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "don toliver|life of a don" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "evanescence|fallen" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "federico dubbini|kingdom hearts world" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "j dilla|donuts" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "kanye west|808s & heartbreak" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "kanye west|graduation" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
+  "kanye west|my beautiful dark twisted fantasy" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "lonown|worry (ultra slowed)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "madvillain|madvillainy" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "mazzy star|so tonight that i might see" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
+  "miss monique|nomacita (extended)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "neil young|greatest hits" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "neil young|harvest (50th anniversary edition)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "qmiir|tiki tiki" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
+  "rico ace|dope boyz" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "t.a.t.u.|200 km\/h in the wrong lane (10th anniversary edition)" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "ten years after|a space in time (deluxe version)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "the weeknd|hurry up tomorrow" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "travis scott|astroworld" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "travis scott|birds in the trap sing mcknight" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "travis scott|highest in the room" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "travis scott|rodeo" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "¥$|carnival (instrumental)" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  }
+}

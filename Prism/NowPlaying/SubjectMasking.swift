@@ -45,7 +45,7 @@ extension NSImage {
             let ciImage = CIImage(cvPixelBuffer: maskedBuffer)
             let ciContext = CIContext()
             guard let outCGImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return nil }
-            return NSImage(cgImage: outCGImage, size: self.size)
+            return outCGImage.asPixelExactNSImage()
         } catch {
             return nil
         }
@@ -73,6 +73,6 @@ extension NSImage {
         context.draw(subjectCGImage, in: rect)
 
         guard let outCGImage = context.makeImage() else { return nil }
-        return NSImage(cgImage: outCGImage, size: self.size)
+        return outCGImage.asPixelExactNSImage()
     }
 }
