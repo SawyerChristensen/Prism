@@ -140,18 +140,27 @@ enum MilkdropWaveform {
     /// clipped line into the actual oscilloscope trace. `centerShiftX` (used only by
     /// .dualParallel's fixed ±0.45 split) shifts the whole line along the X axis directly, after
     /// clipping, rather than through the line's own perpendicular.
+    ///
+    /// `waveCenter` is params.waveX (Milkdrop's preset-driven "where to put the waveform" knob):
+    /// for a straight line, moving "along" it doesn't do anything (it's clipped edge-to-edge
+    /// regardless), so upstream's ClipWaveformEdges reuses wave_x as the single degree of freedom
+    /// that *does* mean something here — how far to shift the line perpendicular to itself, off
+    /// center. Defaults to 0 (dead center), matching every mode's look before preset loading
+    /// existed.
     private static func clippedLinePoints(
         angle: Float,
         halfExtent: Float,
         amplitude: Float,
         perpendicularOffset: Float = 0,
         centerShiftX: Float = 0,
+        waveCenter: Float = 0,
         samples: [Float],
         count n: Int
     ) -> [WavePoint] {
         let dx = cos(angle), dy = sin(angle)
-        let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: halfExtent)
         let perp = (x: -dy, y: dx)
+        let center = WavePoint(x: perp.x * waveCenter, y: perp.y * waveCenter)
+        let (edge0, edge1) = lineBoxIntersection(center: center, dir: (dx, dy), halfExtent: halfExtent)
         let stepX = (edge1.x - edge0.x) / Float(n)
         let stepY = (edge1.y - edge0.y) / Float(n)
         return (0..<n).map { i in
@@ -179,22 +188,40 @@ enum MilkdropWaveform {
 
         switch mode {
         case .line:
-            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, samples: left, count: count)
+            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, waveCenter: params.waveX, samples: left, count: count)
             return (pts, nil)
 
         case .dualLine:
             let sep = params.separation * params.separation
-            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: sep, samples: left, count: count)
-                + clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: -sep, samples: right, count: count)
+            let pts = clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: sep, waveCenter: params.waveX, samples: left, count: count)
+                + clippedLinePoints(angle: params.angle, halfExtent: 1, amplitude: 0.25, perpendicularOffset: -sep, waveCenter: params.waveX, samples: right, count: count)
             return (pts, count)
 
         case .circular:
             let n = count
-            let invNMinus1 = 1 / Float(n - 1)
+            // Divides by n, not n-1: with n-1, sample n-1 lands at angle exactly 2*pi — the same
+            // position as sample 0, which (manually appended below) closes the loop. Dividing by n
+            // spaces all n samples evenly with no duplicate angle.
+            let invN = 1 / Float(n)
+            // .circular has no per-sample smoothing/blending of its own (unlike .star/.flower,
+            // whose eased radius2-blend incidentally also smooths their own seam) — it plots raw
+            // samples directly, so it's fully exposed to the fact that a snippet of live audio
+            // essentially never has the same amplitude at both ends. Bending a non-periodic
+            // snippet into a ring always leaves *some* seam unless something closes the gap, so
+            // crossfade the last 10% of the ring's radius toward sample 0's radius — same eased
+            // (raised-cosine) blend shape .star/.flower already use for their own blending — so
+            // the ring closes smoothly instead of jumping between two unrelated samples.
+            let radius0 = 0.5 + 0.4 * right[0]
+            let fadeWindow = max(1, n / 10)
             var pts = (0..<n).map { i -> WavePoint in
-                let rad = 0.5 + 0.4 * right[i]
-                let ang = Float(i) * invNMinus1 * 2 * .pi + Float(time) * 0.2
-                return WavePoint(x: rad * cos(ang) * aspect, y: rad * sin(ang))
+                var rad = 0.5 + 0.4 * right[i]
+                if i >= n - fadeWindow {
+                    let t = Float(i - (n - fadeWindow)) / Float(fadeWindow)
+                    let ease = 0.5 - 0.5 * cos(t * .pi)
+                    rad = rad * (1 - ease) + radius0 * ease
+                }
+                let ang = Float(i) * invN * 2 * .pi + Float(time) * 0.2
+                return WavePoint(x: rad * cos(ang) * aspect + params.waveX, y: rad * sin(ang) + params.waveY)
             }
             if let first = pts.first { pts.append(first) } // close the loop
             return (pts, nil)
@@ -204,14 +231,14 @@ enum MilkdropWaveform {
             let pts = (0..<n).map { i -> WavePoint in
                 let rad = 0.53 + 0.43 * right[i]
                 let ang = left[i + 32] * 1.57 + Float(time) * 2.3
-                return WavePoint(x: rad * cos(ang) * aspect, y: rad * sin(ang))
+                return WavePoint(x: rad * cos(ang) * aspect + params.waveX, y: rad * sin(ang) + params.waveY)
             }
             return (pts, nil)
 
         case .spiro:
             let n = count - 32
             let pts = (0..<n).map { i in
-                WavePoint(x: right[i] * aspect, y: left[i + 32])
+                WavePoint(x: right[i] * aspect + params.waveX, y: left[i + 32] + params.waveY)
             }
             return (pts, nil)
 
@@ -225,8 +252,8 @@ enum MilkdropWaveform {
             // (±0.75, nudged by the mystery param), crossing near the center like an X.
             let angle1 = -0.75 + params.mysteryParam * 3.15
             let angle2 = 0.75 + params.mysteryParam * 3.15
-            let pts = clippedLinePoints(angle: angle1, halfExtent: 1.1, amplitude: 0.35, samples: left, count: count)
-                + clippedLinePoints(angle: angle2, halfExtent: 1.1, amplitude: 0.35, samples: right, count: count)
+            let pts = clippedLinePoints(angle: angle1, halfExtent: 1.1, amplitude: 0.35, waveCenter: params.waveX, samples: left, count: count)
+                + clippedLinePoints(angle: angle2, halfExtent: 1.1, amplitude: 0.35, waveCenter: params.waveX, samples: right, count: count)
             return (pts, count)
 
         case .wideLine:
@@ -234,7 +261,7 @@ enum MilkdropWaveform {
             // entirely by the mystery param (not user-adjustable) and the clip box/amplitude match
             // .crossX's wider values instead of .line's.
             let angle: Float = 1.57 * params.mysteryParam
-            let pts = clippedLinePoints(angle: angle, halfExtent: 1.1, amplitude: 0.35, samples: left, count: count)
+            let pts = clippedLinePoints(angle: angle, halfExtent: 1.1, amplitude: 0.35, waveCenter: params.waveX, samples: left, count: count)
             return (pts, nil)
 
         case .dualParallel:
@@ -242,8 +269,8 @@ enum MilkdropWaveform {
             // two channels perpendicular to a user-adjustable angle), this fixes the baseline
             // vertical (angle 1.57) and shifts each channel's line by a constant ±0.45 along X,
             // giving two parallel vertical scopes side by side.
-            let pts = clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: -0.45, samples: left, count: count)
-                + clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: 0.45, samples: right, count: count)
+            let pts = clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: -0.45, waveCenter: params.waveX, samples: left, count: count)
+                + clippedLinePoints(angle: 1.57, halfExtent: 1.1, amplitude: 0.35, centerShiftX: 0.45, waveCenter: params.waveX, samples: right, count: count)
             return (pts, count)
 
         case .skewedLoop:
@@ -256,7 +283,7 @@ enum MilkdropWaveform {
             let pts = (0..<n).map { i -> WavePoint in
                 let rad = 0.63 + 0.23 * right[i] + params.mysteryParam
                 let ang = left[i + 32] * 0.9 + Float(time) * 3.3
-                return WavePoint(x: rad * cos(ang) * aspect, y: rad * sin(ang))
+                return WavePoint(x: rad * cos(ang) * aspect + params.waveX, y: rad * sin(ang) + params.waveY)
             }
             return (pts, nil)
 
@@ -267,20 +294,26 @@ enum MilkdropWaveform {
             // its points. The original re-reads the capture buffer at a fixed offset derived from
             // Milkdrop's windowed sample-count scheme; Prism doesn't use that windowing, so the
             // second phase is approximated as the sample half a buffer-length ahead (wrapped).
+            // Deviates from upstream here: projectM's own C++ also divides by (samples-1), which
+            // puts the last raw sample at angle exactly 2*pi — the same angle as sample 0, used
+            // again to close the loop. Two different audio samples sharing one angle means a real
+            // radius jump baked into the ring at the seam (see .circular's longer note on this same
+            // issue) — visible and reported as a stray line orbiting the shape, so fixed here rather
+            // than ported faithfully.
             let n = count
             guard n > 1 else { return ([], nil) }
             let tenth = Float(n) * 0.1
             var pts = (0..<n).map { i -> WavePoint in
                 let s = Float(i)
                 var radius = 0.7 + 0.4 * right[i] + params.mysteryParam
-                let angle = s / Float(n - 1) * 2 * .pi + Float(time) * 0.2
+                let angle = s / Float(n) * 2 * .pi + Float(time) * 0.2
                 if s < Float(n) / radius {
                     var mix = s / tenth
                     mix = 0.5 - 0.5 * cos(mix * .pi)
                     let radius2 = 0.5 + 0.4 * right[(i + n / 2) % n] + params.mysteryParam
                     radius = radius2 * (1 - mix) + radius * mix
                 }
-                return WavePoint(x: radius * cos(angle) * aspect, y: radius * sin(angle))
+                return WavePoint(x: radius * cos(angle) * aspect + params.waveX, y: radius * sin(angle) + params.waveY)
             }
             if let first = pts.first { pts.append(first) }
             return (pts, nil)
@@ -289,6 +322,12 @@ enum MilkdropWaveform {
             // Port of Milkdrop2077WaveFlower::GenerateVertices: same eased-radius idea as .star,
             // but the angle gets multiplied by pi again in the x term, which wraps it around
             // several times over one lap — that's what turns the single dip into multiple petals.
+            // The original also multiplies its wave_x/wave_y offset by cos(pi) == -1 (presumably
+            // an artifact of how this mode's author wrote it, not a typo we should "fix") — ported
+            // faithfully as a negation rather than dropped, since it's what the shape actually does
+            // upstream.
+            // Same (samples-1) -> samples deviation as .star, for the same reason — see that case's
+            // note.
             let n = count
             guard n > 1 else { return ([], nil) }
             let tenth = Float(n) * 0.1
@@ -296,7 +335,7 @@ enum MilkdropWaveform {
             var pts = (0..<n).map { i -> WavePoint in
                 let s = Float(i)
                 var radius = 0.7 + 0.7 * right[i] + params.mysteryParam
-                let angle = s / Float(n - 1) * 2 * .pi + t * 0.2
+                let angle = s / Float(n) * 2 * .pi + t * 0.2
                 if s < Float(n) / radius {
                     var mix = s / tenth
                     mix = 0.7 - 0.7 * cos(mix * .pi)
@@ -304,8 +343,8 @@ enum MilkdropWaveform {
                     radius = radius2 * (1 - mix) + radius * mix * 0.25
                 }
                 return WavePoint(
-                    x: radius * cos(angle * .pi) * aspect / 1.5,
-                    y: radius * sin(angle - t / 3) / 1.5
+                    x: radius * cos(angle * .pi) * aspect / 1.5 - params.waveX,
+                    y: radius * sin(angle - t / 3) / 1.5 - params.waveY
                 )
             }
             if let first = pts.first { pts.append(first) }
@@ -316,7 +355,8 @@ enum MilkdropWaveform {
             // time rather than the waveform's shape — the left channel only perturbs the angle
             // slightly. `time` (timeIntervalSinceReferenceDate) has been nonzero and growing since
             // 2001, so the tan(t/angle) term's angle-near-zero case isn't reachable in practice,
-            // same as the original's unguarded division.
+            // same as the original's unguarded division. Only wave_y offsets this mode upstream —
+            // there's no wave_x term in the original's x expression, so none is added here either.
             let n = count - 32
             guard n > 0 else { return ([], nil) }
             let t = Float(time)
@@ -324,7 +364,7 @@ enum MilkdropWaveform {
                 let angle = left[i + 32] * 1.57 + t * 2.0
                 return WavePoint(
                     x: cos(t) / 2 + cos(angle * 2 + tan(t / angle)),
-                    y: sin(t) * 2 * sin(angle * 3.14) * aspect / 2.8
+                    y: sin(t) * 2 * sin(angle * 3.14) * aspect / 2.8 + params.waveY
                 )
             }
             return (pts, nil)

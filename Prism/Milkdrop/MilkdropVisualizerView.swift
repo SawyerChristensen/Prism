@@ -47,6 +47,8 @@ final class MilkdropVisualizerModel {
             params.scale = file.waveScale
             params.smoothing = min(max(file.waveSmoothing, 0), 0.9)
             params.mysteryParam = file.waveParam
+            params.waveX = 2 * file.waveX - 1
+            params.waveY = 2 * file.waveY - 1
 
             presetVariables = [
                 "wave_x": file.waveX, "wave_y": file.waveY, "wave_mystery": file.waveParam,
@@ -87,8 +89,17 @@ final class MilkdropVisualizerModel {
         if let mystery = presetVariables["wave_mystery"] {
             params.mysteryParam = mystery
         }
-        // wave_x/wave_y/wave_r/g/b land in presetVariables too, for a future waveform-centering/
-        // preset-color pass — not consumed yet since no current mode reads a center offset.
+        // wave_x/wave_y stay in presetVariables in Milkdrop's raw 0...1 space (matching the
+        // upstream per-frame variable a script like `wave_x=wave_x+0.001;` reads/writes) — convert
+        // to Prism's -1...1 space only here, at the point of handing off to params.
+        if let x = presetVariables["wave_x"] {
+            params.waveX = 2 * x - 1
+        }
+        if let y = presetVariables["wave_y"] {
+            params.waveY = 2 * y - 1
+        }
+        // wave_r/g/b land in presetVariables too, for a future preset-color pass — not consumed
+        // yet since color is currently driven by album art (see AlbumColors.swift).
     }
 }
 

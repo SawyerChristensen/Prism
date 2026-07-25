@@ -33,7 +33,7 @@ struct ContentView: View {
                 VStack {
                     Spacer()
                     
-                    /*if let artwork = nowPlaying.artwork {
+                    if let artwork = nowPlaying.artwork {
                         Image(nsImage: artwork)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -49,7 +49,7 @@ struct ContentView: View {
                                     .font(.largeTitle)
                                     .foregroundStyle(.secondary)
                             }
-                    }*/*/
+                    }*/
                     
                     Spacer()
                     

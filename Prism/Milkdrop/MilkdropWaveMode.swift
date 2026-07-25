@@ -95,4 +95,11 @@ struct MilkdropWaveformParams {
     /// their radius/angle math (.crossX/.wideLine/.skewedLoop/.star/.flower). 0 is neutral —
     /// matches the shape those modes have with no preset driving this value.
     var mysteryParam: Float = 0
+    /// wave_x/wave_y, already converted to Prism's -1...1 space (`2*wave_x-1`, matching
+    /// WaveformMath::GetVertices' own `m_waveX = 2*wave_x-1` upstream). Where a preset wants the
+    /// waveform centered/anchored on screen. 0 is Milkdrop's own default center (raw wave_x/y of
+    /// 0.5), so leaving these at 0 reproduces the exact centered look every mode had before
+    /// preset-driven centering existed.
+    var waveX: Float = 0
+    var waveY: Float = 0
 }
