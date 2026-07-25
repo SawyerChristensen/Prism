@@ -7,25 +7,135 @@
 
 import AppKit
 
+/// A point in whatever feature space a particular k-means clustering call is using — chromaticity
+/// + weighted brightness for the background clustering below, plain RGB for the foreground one.
+/// Kept generic so both share one clustering implementation rather than two near-duplicates.
+private struct KMeansPoint {
+    var x: Double
+    var y: Double
+    var z: Double
+}
+
+private func distanceSquared(_ a: KMeansPoint, _ b: KMeansPoint) -> Double {
+    let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
+    return dx * dx + dy * dy + dz * dz
+}
+
+/// Empirical prior for album art layout: covers frequently center the actual subject and let a
+/// plain or gradient background carry through to the edges, so the four corners are
+/// disproportionately likely to show that background rather than incidental subject detail.
+///
+/// An earlier version applied this as a graded per-pixel *weight* (boosting corner-adjacent
+/// pixels up to 4x in the whole-image vote below) rather than a hard region — but that failed on
+/// Kanye West's "Jesus Is King" (a vinyl scan: a blue disc covering ~78% of the frame, on a white
+/// canvas visible only at the corners). Even a 4x boost on every corner pixel couldn't outweigh
+/// blue's sheer four-to-one area advantage, so blue still won the whole-image vote. A hard region
+/// membership test — "is this pixel actually in a corner, yes or no" — sidesteps that: it lets the
+/// corners be judged on their own, undiluted by how much area the centered subject takes up
+/// elsewhere in the frame. See `pickBackgroundColor` for how that verdict is used.
+private func isCornerPixel(row: Int, col: Int, size: Int, cornerFraction: Double = 0.18) -> Bool {
+    let cornerSize = Int(Double(size) * cornerFraction)
+    guard cornerSize > 0 else { return false }
+    let nearLeftOrRight = col < cornerSize || col >= size - cornerSize
+    let nearTopOrBottom = row < cornerSize || row >= size - cornerSize
+    return nearLeftOrRight && nearTopOrBottom
+}
+
+/// Standard k-means with k-means++ initialization (weights the next centroid pick toward points
+/// far from existing centroids, which avoids the classic bad-luck failure mode of plain random
+/// init — two initial centroids landing close together and permanently splitting one real cluster
+/// while starving another). Returns a cluster index per input point, same order as `points`.
+///
+/// Converges on centroid *movement* falling under `moveThreshold`, not on zero assignment changes
+/// — measured on real album art, a handful of points sitting right on a cluster boundary keep
+/// flip-flopping assignment indefinitely even after the centroids themselves have visibly settled,
+/// which blocked a zero-changes check from ever firing and forced every call through the full
+/// iteration cap (1.2s combined, unoptimized). Movement-based convergence exits as soon as the
+/// centroids stop moving in any *meaningful* way, regardless of a few boundary points still
+/// flickering — measured 342ms combined on the same image and same accuracy. `moveThreshold` is in
+/// the same units as the points, so callers in different feature spaces (e.g. chromaticity's ~0-1
+/// range vs raw RGB's 0-255) need different values.
+private func kmeans(_ points: [KMeansPoint], k: Int, moveThreshold: Double, iterations: Int = 15) -> [Int] {
+    guard points.count > k else { return Array(points.indices) }
+
+    var rng = SystemRandomNumberGenerator()
+    var centroids: [KMeansPoint] = [points[Int.random(in: 0..<points.count, using: &rng)]]
+    while centroids.count < k {
+        let distances = points.map { p in centroids.map { distanceSquared(p, $0) }.min()! }
+        let total = distances.reduce(0, +)
+        guard total > 0 else {
+            centroids.append(points[Int.random(in: 0..<points.count, using: &rng)])
+            continue
+        }
+        var remaining = Double.random(in: 0..<total, using: &rng)
+        var chosen = points.count - 1
+        for (i, d) in distances.enumerated() {
+            remaining -= d
+            if remaining <= 0 { chosen = i; break }
+        }
+        centroids.append(points[chosen])
+    }
+
+    var assignments = [Int](repeating: 0, count: points.count)
+    let thresholdSquared = moveThreshold * moveThreshold
+    for _ in 0..<iterations {
+        for (i, p) in points.enumerated() {
+            var best = 0
+            var bestDistance = Double.greatestFiniteMagnitude
+            for (c, centroid) in centroids.enumerated() {
+                let d = distanceSquared(p, centroid)
+                if d < bestDistance { bestDistance = d; best = c }
+            }
+            assignments[i] = best
+        }
+
+        var sums = [KMeansPoint](repeating: KMeansPoint(x: 0, y: 0, z: 0), count: k)
+        var counts = [Int](repeating: 0, count: k)
+        for (i, p) in points.enumerated() {
+            sums[assignments[i]].x += p.x
+            sums[assignments[i]].y += p.y
+            sums[assignments[i]].z += p.z
+            counts[assignments[i]] += 1
+        }
+        var maxMoveSquared = 0.0
+        for c in 0..<k where counts[c] > 0 {
+            let newCentroid = KMeansPoint(x: sums[c].x / Double(counts[c]), y: sums[c].y / Double(counts[c]), z: sums[c].z / Double(counts[c]))
+            maxMoveSquared = max(maxMoveSquared, distanceSquared(centroids[c], newCentroid))
+            centroids[c] = newCentroid
+        }
+        if maxMoveSquared < thresholdSquared { break } // converged
+    }
+    return assignments
+}
+
 extension NSImage {
-    /// Extracts a dominant background color and a contrasting foreground color. Pure pixel
-    /// crunching, no UI state — `nonisolated` so callers can run it off the main actor (it's
-    /// called from a background task after each artwork fetch).
+    /// Extracts a dominant background color and a contrasting foreground color via k-means
+    /// clustering. Pure pixel crunching, no UI state — `nonisolated` so callers can run it off the
+    /// main actor (it's called from a background task after each artwork fetch).
+    ///
+    /// Earlier versions tried fixed-grid histogram bucketing (by RGB, then by hue, then hue with a
+    /// brightness sub-bucket) — all of them work by picking hard bin boundaries up front and hoping
+    /// real clusters don't straddle one. K-means instead finds the boundaries from the data itself
+    /// via iterative centroid refinement, which is both more accurate (measured closer to ground
+    /// truth on real album art than any of the bucketing attempts) and avoids the whole class of
+    /// "two visually-identical samples land in different buckets" bugs those had.
     nonisolated func extractColors() -> (background: NSColor, foreground: NSColor)? {
         guard let cgImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
 
-        // Verified against real album art (Men At Work's "Business As Usual", which has a fine
-        // black-and-yellow diamond-lattice pattern over roughly the bottom half of the cover):
-        // at a coarse 40x40 grid, even with high-quality interpolation, downscaling blends those
-        // black grid lines into the surrounding yellow — measured 82 RGB-distance units off the
-        // image's true dominant color. That blending is inherent to *any* interpolation quality
-        // once the sample grid is coarser than the pattern being sampled; the fix isn't a better
-        // filter kernel, it's sampling finely enough that each sample point has a real chance of
-        // landing on solid, unblended color. Capped at 300 (native size if smaller) measured 2.4
-        // units off ground truth on the same image — accurate without scaling cost unboundedly on
-        // an unusually large source image. Runs once per track change on a background thread, so
-        // the ~50ms cost at 300x300 isn't perf-sensitive.
-        let size = min(300, max(cgImage.width, cgImage.height))
+        // K-means clusters on centroids, not on dense per-pixel coverage, so it doesn't need the
+        // 300x300 the earlier histogram approach needed to avoid aliasing against fine detail
+        // (e.g. this file's original test case, Men At Work's "Business As Usual," has a fine
+        // black-and-yellow diamond lattice over half the cover). Measured 150x150 vs 300x300 on
+        // that image: same result within a couple RGB units either way. The reason to keep the cap
+        // low rather than "may as well use 300": Xcode Debug builds compile Swift with -Onone, and
+        // k-means' O(points × k × iterations) cost is steep unoptimized — 300x300 measured over a
+        // second combined (background + foreground calls) in an -Onone build (fine in a Release
+        // build's optimized code, bad in Debug), vs ~400-750ms combined at 150x150 with the
+        // movement-based convergence check below (see `kmeans`'s doc comment). Nearest-neighbor
+        // sampling (`.none` interpolation, right below) is what makes shrinking this safe: every
+        // sample point is still a real, unblended source pixel, so fewer of them costs statistical
+        // density, not correctness.
+        let size = min(150, max(cgImage.width, cgImage.height))
         let bytesPerPixel = 4
         let bytesPerRow = size * bytesPerPixel
         var pixelData = [UInt8](repeating: 0, count: size * size * bytesPerPixel)
@@ -40,15 +150,13 @@ extension NSImage {
         ) else { return nil }
 
         // No interpolation (nearest-neighbor): every sample this returns is a real pixel that
-        // existed in the source, never a synthesized blend of two different-colored neighbors.
-        // Measured slightly *more* accurate than `.high` at every grid size tested, which makes
-        // sense for this specific goal — area-averaging is correct for a visually smooth
-        // thumbnail, but for finding "the true dominant color," a blended pixel is exactly the
-        // kind of value we don't want feeding the average.
+        // existed in the source, never a synthesized blend of two different-colored neighbors —
+        // area-averaging is correct for a visually smooth thumbnail, but for finding "the true
+        // dominant color," a blended pixel is exactly the kind of value that shouldn't be there.
         context.interpolationQuality = .none
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
 
-        struct Sample { var r: UInt8; var g: UInt8; var b: UInt8; var hue: CGFloat; var saturation: CGFloat; var brightness: CGFloat }
+        struct Sample { var r: UInt8; var g: UInt8; var b: UInt8; var hue: CGFloat; var saturation: CGFloat; var brightness: CGFloat; var isCorner: Bool }
         var samples: [Sample] = []
         samples.reserveCapacity(size * size)
         for i in stride(from: 0, to: pixelData.count, by: bytesPerPixel) {
@@ -57,7 +165,9 @@ extension NSImage {
             var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0
             NSColor(red: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
                 .getHue(&h, saturation: &s, brightness: &v, alpha: nil)
-            samples.append(Sample(r: r, g: g, b: b, hue: h, saturation: s, brightness: v))
+            let pixelIndex = i / bytesPerPixel
+            let isCorner = isCornerPixel(row: pixelIndex / size, col: pixelIndex % size, size: size)
+            samples.append(Sample(r: r, g: g, b: b, hue: h, saturation: s, brightness: v, isCorner: isCorner))
         }
         guard !samples.isEmpty else { return nil }
 
@@ -69,77 +179,117 @@ extension NSImage {
             return NSColor(red: r / 255, green: g / 255, blue: b / 255, alpha: 1)
         }
 
-        // Background: cluster by *hue*, not RGB distance. RGB-distance clustering (the previous
-        // version) conflates "different hue" with "different brightness" in one number, so
-        // antialiased edge pixels between a yellow field and any darker/black graphic on the
-        // cover — which are genuinely partway toward black, not another shade of yellow — end up
-        // within the same distance threshold and drag the average toward grey. Hue is stable
-        // across exactly that kind of brightness/saturation variation, so two yellows that differ
-        // only in how dark JPEG compression or antialiasing made them still land in the same hue
-        // bucket. Filtering to `saturation >= 0.20` first excludes grey/black/white outright —
-        // they have little to no hue to begin with — so they can never enter the average, rather
-        // than relying on a distance threshold to keep them out after the fact.
-        let colorful = samples.filter { $0.saturation >= 0.20 && $0.brightness >= 0.15 }
-        let pool = colorful.isEmpty ? samples : colorful // falls back to everything for genuinely monochrome art
-
-        var hueBuckets: [Int: [Sample]] = [:]
-        for s in pool {
-            let bucketIndex = Int(s.hue * 30) % 30 // 30 buckets = 12° of hue each
-            hueBuckets[bucketIndex, default: []].append(s)
+        // Ranks a group by size, nudged up for how saturated it is on average. This is a
+        // tie-breaker, not a color transform: unlike the old `vibrancyBoosted` post-process
+        // (removed — it multiplied the *output* color's saturation, which on an off-white or
+        // washed-out cover meant a barely-there yellow tint got amplified into a visibly yellow
+        // background, drifting away from what the artwork actually looks like), this never
+        // touches the color itself. It only changes which candidate group wins when two are
+        // close in size, so a small vivid patch can edge out a slightly larger but near-identical
+        // dull one, while a genuinely dominant color (e.g. an 80% white cover) still wins
+        // regardless of how much more saturated a smaller competing patch is.
+        func saturationScore(_ group: [Sample]) -> Double {
+            guard !group.isEmpty else { return 0 }
+            let avgSaturation = group.reduce(0.0) { $0 + Double($1.saturation) } / Double(group.count)
+            return Double(group.count) * (1 + 0.5 * avgSaturation)
         }
-        guard let dominantHueGroup = hueBuckets.values.max(by: { $0.count < $1.count }) else { return nil }
 
-        // The dominant hue bucket alone still isn't enough: measured on the same album art, it
-        // holds 48,594 samples with brightness spread from 0.15 all the way to 1.0 (median 1.0) —
-        // solid, unblended yellow sits right at the bright end, while the lattice-blended pixels
-        // (same hue, since blending toward black scales brightness down without shifting hue —
-        // see the note above) spread out below it. Averaging the *whole* bucket lets that whole
-        // spread dilute the result even though it's a small minority of it. Sub-bucketing by
-        // brightness within the hue cluster and keeping only the largest sub-bucket isolates the
-        // solid color from that dilution: on the same image, the top 10% of the brightness range
-        // holds 43,358 of those 48,594 samples (89%) — an overwhelming, unambiguous majority —
-        // while the blended pixels scatter thinly across the remaining lower bins and lose by
-        // count. Measured result: #FDEB0B, essentially exact against the image's true dominant
-        // color (#FFEC00), vs. #F2E10F from a flat average of the same bucket.
-        var brightnessBuckets: [Int: [Sample]] = [:]
-        for s in dominantHueGroup {
-            let bucketIndex = min(9, Int(s.brightness * 10)) // 10 bins = 0.1 brightness each
-            brightnessBuckets[bucketIndex, default: []].append(s)
-        }
-        let dominantGroup = brightnessBuckets.values.max(by: { $0.count < $1.count }) ?? dominantHueGroup
-        let background = averageColor(dominantGroup)
-
-        // Foreground: unlike the background, black/white/grey are legitimate choices here — a
-        // dark logo or white text is a perfectly good foreground color — so this bucket by RGB
-        // (not hue) across *all* samples and take the most common bucket that contrasts with the
-        // background, same averaging-not-first-pixel fix as the background gets.
+        // Background should be whichever color is genuinely most common within `group` — not
+        // whichever is most colorful. Splitting into three pools up front (rather than one
+        // saturation-filtered pool like earlier versions had) is what makes that possible: white
+        // and black are deliberate, common design choices (a stark white or black cover background
+        // is completely normal), so they need to be eligible to win outright, same as any hue —
+        // verified against Tyler, The Creator's "Don't Tap The Glass" (a white cover with a small
+        // red figure): filtering white/black out before comparing sizes, like an earlier version
+        // did, picked the red as background because it was the only *chromatic* candidate, even
+        // though white covers ~80% of the image.
         //
-        // Key is a real Hashable struct, not a hand bit-packed Int — a previous version of this
-        // packed r/g/b into one Int via `(r/16 << 16) | (g/16 << 8) | (b/16)`, which is a bug in
-        // Swift specifically: `<<` binds *tighter* than `/`, so `r/16 << 16` actually parses as
-        // `r / (16 << 16)`, i.e. `r / 1048576` — 0 for every possible byte value. Red and green
-        // silently never contributed to the hash; every "bucket" was really just "every pixel
-        // sharing a blue value," regardless of red/green. A struct key sidesteps the whole
-        // precedence trap rather than requiring everyone reading this to get shift/divide
-        // grouping right by eye.
-        struct RGBBucketKey: Hashable { var r: Int; var g: Int; var b: Int }
-        struct RGBBucket { var rSum = 0, gSum = 0, bSum = 0, count = 0 }
-        var rgbBuckets: [RGBBucketKey: RGBBucket] = [:]
-        for s in samples {
-            let key = RGBBucketKey(r: Int(s.r) / 16, g: Int(s.g) / 16, b: Int(s.b) / 16)
-            var bucket = rgbBuckets[key] ?? RGBBucket()
-            bucket.rSum += Int(s.r); bucket.gSum += Int(s.g); bucket.bSum += Int(s.b); bucket.count += 1
-            rgbBuckets[key] = bucket
+        // `nearBlack` deliberately does *not* also require low saturation the way `nearWhite`
+        // does. HSV saturation is (max−min)/max, which is numerically unstable as max approaches
+        // zero: a JPEG-compressed "black" pixel like (5, 7, 7) computes ~30% saturation from pure
+        // compression noise, not from any actual color. Requiring `saturation < 0.20` here (as an
+        // earlier version did) let that noise exclude the true black background from its own pool
+        // — measured on Daft Punk's "TRON: Legacy" cover (a black sleeve with bright cyan neon
+        // text), 99.6% of the near-black pixels failed that saturation check and fell into no pool
+        // at all, leaving the neon glow as the only non-empty candidate and handing it the
+        // background pick by default. At `brightness <= 0.10`, hue and saturation aren't
+        // perceptible anyway, so brightness alone is sufficient here.
+        //
+        // True mid-range grey (moderate brightness, low saturation) is still excluded from all
+        // three pools — it's far more often an incidental shadow/blend artifact than an
+        // intentional background color (confirmed on "Lover"'s pastel-gradient cover, where a pale
+        // pinkish-grey band was, before this exclusion, narrowly outsizing the actual pink and
+        // winning by a hair).
+        //
+        // The chromatic pool clusters in hue-weighted chromaticity space — x = S·cos(2πH),
+        // y = S·sin(2πH) (a flattened color wheel, handling hue's 0°/360° wraparound for free,
+        // unlike a fixed hue bucket that hard-cuts at arbitrary degree boundaries) — plus z = V·0.3,
+        // a *deliberately small* weight on brightness. Clustering in plain RGB would repeat the
+        // original bug this file had (RGB distance conflates "different hue" with "different
+        // brightness" in one number, so antialiased/blended edge pixels between yellow and any
+        // darker graphic get pulled into the yellow cluster and drag its centroid down); clustering
+        // on hue alone can't tell "solid yellow" apart from "yellow blended toward black" at all,
+        // since blending toward black scales brightness down without shifting hue. A *small*
+        // brightness weight is the resolution: enough that k-means can still split those apart when
+        // the data supports it, not enough to let brightness dominate the distance metric.
+        func pickBackgroundColor(from group: [Sample]) -> (color: NSColor, dominantFraction: Double)? {
+            guard !group.isEmpty else { return nil }
+            let chromatic = group.filter { $0.saturation >= 0.20 && $0.brightness >= 0.15 }
+            let nearWhite = group.filter { $0.saturation < 0.20 && $0.brightness >= 0.90 }
+            let nearBlack = group.filter { $0.brightness <= 0.10 }
+
+            var chromaticDominant: [Sample] = []
+            if !chromatic.isEmpty {
+                let chromaticityPoints = chromatic.map { s -> KMeansPoint in
+                    let angle = 2 * Double.pi * Double(s.hue)
+                    return KMeansPoint(x: Double(s.saturation) * cos(angle), y: Double(s.saturation) * sin(angle), z: Double(s.brightness) * 0.3)
+                }
+                let assignments = kmeans(chromaticityPoints, k: 4, moveThreshold: 0.001)
+                var clusters: [Int: [Sample]] = [:]
+                for (i, cluster) in assignments.enumerated() {
+                    clusters[cluster, default: []].append(chromatic[i])
+                }
+                chromaticDominant = clusters.values.max(by: { saturationScore($0) < saturationScore($1) }) ?? []
+            }
+
+            guard let dominant = [chromaticDominant, nearWhite, nearBlack].max(by: { saturationScore($0) < saturationScore($1) }), !dominant.isEmpty else {
+                return nil
+            }
+            return (averageColor(dominant), Double(dominant.count) / Double(group.count))
+        }
+
+        // Corners first: on covers that center a subject on a plain canvas (vinyl scans, logo-on-
+        // solid-field art, etc.) the corner pixels are unambiguous background, and a decisive
+        // consensus among just those pixels should win outright regardless of how much more area
+        // a centered subject occupies elsewhere (see `isCornerPixel`'s doc comment for why a
+        // whole-image weighted vote wasn't enough). Only when the corners *don't* agree — a busy,
+        // edge-to-edge cover with no clean canvas — does this fall through to the whole-image vote.
+        let cornerSamples = samples.filter { $0.isCorner }
+        let background: NSColor
+        if let cornerResult = pickBackgroundColor(from: cornerSamples), cornerResult.dominantFraction >= 0.6 {
+            background = cornerResult.color
+        } else if let wholeImageResult = pickBackgroundColor(from: samples) {
+            background = wholeImageResult.color
+        } else {
+            // Only possible if the entire sampled image is mid-range grey (excluded from all three
+            // pools by design above). Still need *a* background/foreground pair.
+            return (averageColor(samples), samples.first.map { $0.brightness < 0.5 ? .white : .black } ?? .black)
+        }
+
+        // Foreground: unlike the background, black/white/grey are legitimate choices here — a dark
+        // logo or white text is a perfectly good foreground color — so this clusters in plain RGB
+        // across *all* samples (no saturation filter, no hue weighting) and walks clusters from
+        // largest to smallest, taking the first that contrasts with the background.
+        let rgbPoints = samples.map { KMeansPoint(x: Double($0.r), y: Double($0.g), z: Double($0.b)) }
+        let foregroundAssignments = kmeans(rgbPoints, k: 5, moveThreshold: 0.5)
+        var foregroundClusters: [Int: [Sample]] = [:]
+        for (i, cluster) in foregroundAssignments.enumerated() {
+            foregroundClusters[cluster, default: []].append(samples[i])
         }
 
         var foreground: NSColor?
-        for bucket in rgbBuckets.values.sorted(by: { $0.count > $1.count }) {
-            let candidate = NSColor(
-                red: CGFloat(bucket.rSum) / CGFloat(bucket.count) / 255,
-                green: CGFloat(bucket.gSum) / CGFloat(bucket.count) / 255,
-                blue: CGFloat(bucket.bSum) / CGFloat(bucket.count) / 255,
-                alpha: 1
-            )
+        for cluster in foregroundClusters.values.sorted(by: { $0.count > $1.count }) {
+            let candidate = averageColor(cluster)
             if background.hasSufficientContrast(with: candidate) {
                 foreground = candidate
                 break

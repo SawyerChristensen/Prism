@@ -137,10 +137,12 @@ final class NowPlayingManager {
         switch app.bundleID {
         case "com.spotify.client":
             loadSpotifyArtwork()
-            // 💡 Call iTunes API anyway just to fetch the genre for Spotify tracks
-            loadArtworkFromiTunes(artist: artist, album: album)
+            // Only the genre is wanted here — the iTunes lookup must not touch artwork/colors,
+            // since it runs as a separate detached task and could otherwise race with
+            // loadSpotifyArtwork() and overwrite Spotify's own artwork with Apple Music's.
+            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: false)
         case "com.apple.Music":
-            loadArtworkFromiTunes(artist: artist, album: album)
+            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: true)
         default:
             break
         }
@@ -194,8 +196,10 @@ final class NowPlayingManager {
     }
 
     // Looks album art up by artist + album through the iTunes Search API. Used for sources
-    // (like Music) whose artwork can't be read directly.
-    private func loadArtworkFromiTunes(artist: String, album: String) {
+    // (like Music) whose artwork can't be read directly, and to fetch genre metadata for
+    // sources (like Spotify) that don't expose it — in the latter case `updateArtwork` is
+    // false so this can't overwrite artwork/colors already fetched from the real source.
+    private func loadArtworkFromiTunes(artist: String, album: String, updateArtwork: Bool) {
         guard !album.isEmpty || !artist.isEmpty else { return }
 
         var components = URLComponents(string: "https://itunes.apple.com/search")
@@ -216,6 +220,13 @@ final class NowPlayingManager {
 
             let fetchedGenre = firstResult.primaryGenreName // 👈 Extract the genre
 
+            guard updateArtwork else {
+                await MainActor.run {
+                    self?.genre = fetchedGenre
+                }
+                return
+            }
+
             // The API returns a 100x100 thumbnail URL; request a larger rendition instead.
             let highResURL = thumbURL.replacingOccurrences(of: "100x100bb", with: "600x600bb")
             guard let artURL = URL(string: highResURL),
@@ -223,10 +234,10 @@ final class NowPlayingManager {
                   let image = NSImage(data: imageData) else {
                 return
             }
-            
+
             // 💡 Extract colors off the main thread
             let colors = image.extractColors()
-            
+
             await MainActor.run {
                 self?.artwork = image
                 self?.genre = fetchedGenre
