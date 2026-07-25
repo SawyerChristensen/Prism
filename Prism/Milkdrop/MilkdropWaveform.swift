@@ -66,6 +66,37 @@ enum MilkdropWaveform {
         return out
     }
 
+    /// Loop-aware variant of `tessellated(_:)` for closed-ring modes (.circular/.star/.flower —
+    /// see MilkdropWaveMode.isLoop). `points` must be a closed ring: `points.count - 1` unique
+    /// samples plus a final point equal to the first (how points(mode:...) builds those modes).
+    /// Unlike `tessellated(_:)`, neighbor lookups wrap around the ring instead of clamping at the
+    /// array's ends — since index 0 and the last unique index are adjacent on the ring, clamping
+    /// there (treating them as a strip's two disconnected ends) produces a visible kink right at
+    /// the seam, meaning the shape's rotation carried it around as a visible stray dot.
+    static func tessellatedLoop(_ points: [WavePoint]) -> [WavePoint] {
+        let m = points.count - 1 // unique sample count; points[m] == points[0]
+        guard m >= 3 else { return points }
+
+        let c1: Float = -0.15, c2: Float = 1.15, c3: Float = 1.15, c4: Float = -0.15
+        let invSum = 1 / (c1 + c2 + c3 + c4)
+
+        var out: [WavePoint] = []
+        out.reserveCapacity(m * 2 + 1)
+
+        for i in 0..<m {
+            let iBelow = (i - 1 + m) % m
+            let iAbove = (i + 1) % m
+            let iAbove2 = (i + 2) % m
+            out.append(points[i])
+            out.append(WavePoint(
+                x: (c1 * points[iBelow].x + c2 * points[i].x + c3 * points[iAbove].x + c4 * points[iAbove2].x) * invSum,
+                y: (c1 * points[iBelow].y + c2 * points[i].y + c3 * points[iAbove].y + c4 * points[iAbove2].y) * invSum
+            ))
+        }
+        out.append(points[0]) // re-close the (now finer) ring for the line-strip draw call.
+        return out
+    }
+
     /// Same as `tessellated(_:)` but respects a segment break (see `points(mode:...)`), tessellating
     /// each side independently so the midpoint kernel never blends across the gap — mirrors how
     /// DrawWave() calls SmoothWave() twice when nBreak1 != -1.

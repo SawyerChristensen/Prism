@@ -29,6 +29,18 @@ enum MilkdropWaveMode: Int, CaseIterable {
     case flower         // Milkdrop2077WaveFlower: circular radius with a multi-lobed angle multiplier.
     case lasso          // Milkdrop2077WaveLasso: figure-eight-like parametric curve.
 
+    /// True for modes that manually close their point list into a ring (append the first point
+    /// again at the end — see MilkdropWaveform.points()'s .circular/.star/.flower cases). Those
+    /// need loop-aware tessellation (MilkdropWaveform.tessellatedLoop) so the smoothing kernel
+    /// wraps across the seam instead of clamping at it — clamping there reads as a visible kink/
+    /// bright dot at the seam, which appears to orbit the shape as it rotates over time.
+    var isLoop: Bool {
+        switch self {
+        case .circular, .star, .flower: return true
+        default: return false
+        }
+    }
+
     var label: String {
         switch self {
         case .line: return "Line"

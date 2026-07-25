@@ -238,7 +238,10 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             mode: model.mode, left: scaledLeft, right: scaledRight,
             params: model.params, time: time, aspect: aspect
         )
-        let (tessPoints, tessBreak) = MilkdropWaveform.tessellated(rawPoints, segmentBreak: rawBreak)
+        let isLoop = model.mode.isLoop
+        let (tessPoints, tessBreak): ([WavePoint], Int?) = isLoop
+            ? (MilkdropWaveform.tessellatedLoop(rawPoints), nil)
+            : MilkdropWaveform.tessellated(rawPoints, segmentBreak: rawBreak)
 
         let nsColor = NSColor(color).usingColorSpace(.deviceRGB) ?? NSColor(color)
         var colorVec = SIMD4<Float>(Float(nsColor.redComponent), Float(nsColor.greenComponent), Float(nsColor.blueComponent), 1)
@@ -293,7 +296,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                 segments.append(tessPoints)
             }
             for segment in segments {
-                let verts = Self.lineStripVertices(points: segment, pixelSize: pixelSize, halfWidth: halfWidth)
+                let verts = Self.lineStripVertices(points: segment, pixelSize: pixelSize, halfWidth: halfWidth, isLoop: isLoop)
                 Self.draw(verts, as: .triangleStrip, on: encoder, device: device)
             }
         }
@@ -332,9 +335,16 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     /// local normal (from neighboring points). Overlapping geometry at sharp turns isn't
     /// miter-joined — with additive blending that just reads as a slightly brighter joint, which
     /// suits the glowing-scope look rather than fighting it.
-    private static func lineStripVertices(points: [WavePoint], pixelSize: CGSize, halfWidth: Float) -> [SIMD2<Float>] {
+    ///
+    /// `isLoop` (closed-ring modes — see MilkdropWaveMode.isLoop): `points`' last entry duplicates
+    /// the first (added purely so the GPU strip visually closes), so neighbor lookups wrap around
+    /// that (n-1)-point cycle instead of clamping at the array's literal ends. Clamping there would
+    /// give the seam a zero-length "before"/"after" vector on one side, pinching the ring's width
+    /// right at the closure.
+    private static func lineStripVertices(points: [WavePoint], pixelSize: CGSize, halfWidth: Float, isLoop: Bool) -> [SIMD2<Float>] {
         guard points.count > 1 else { return [] }
         let n = points.count
+        let cycle = isLoop ? n - 1 : n
         func toPixel(_ p: WavePoint) -> SIMD2<Float> {
             SIMD2<Float>(p.x * 0.5 * Float(pixelSize.width), p.y * 0.5 * Float(pixelSize.height))
         }
@@ -342,8 +352,16 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         verts.reserveCapacity(n * 2)
         for i in 0..<n {
             let p = toPixel(points[i])
-            let a = toPixel(points[max(0, i - 1)])
-            let b = toPixel(points[min(n - 1, i + 1)])
+            let a: SIMD2<Float>
+            let b: SIMD2<Float>
+            if isLoop, cycle > 0 {
+                let idx = i % cycle
+                a = toPixel(points[(idx - 1 + cycle) % cycle])
+                b = toPixel(points[(idx + 1) % cycle])
+            } else {
+                a = toPixel(points[max(0, i - 1)])
+                b = toPixel(points[min(n - 1, i + 1)])
+            }
             var tangent = b - a
             let len = simd_length(tangent)
             tangent = len > 0.0001 ? (tangent / len) : SIMD2<Float>(1, 0)
