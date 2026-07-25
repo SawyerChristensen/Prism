@@ -38,7 +38,7 @@ struct ContentView: View {
                             .frame(width: 250, height: 250)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             //.shadow(color: fgColor, radius: 6)
-                    } else {
+                    } /*else {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(.quaternary)
                             .frame(width: 250, height: 250)
@@ -47,7 +47,7 @@ struct ContentView: View {
                                     .font(.largeTitle)
                                     .foregroundStyle(.secondary)
                             }
-                    }
+                    }*/
                     
                     Spacer()
                     

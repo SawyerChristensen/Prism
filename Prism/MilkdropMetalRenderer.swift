@@ -79,6 +79,20 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
 
     private let beat = MilkdropBeatState()
 
+    // Stabilizes the drawn waveform frame-to-frame (see MilkdropWaveformAligner.swift). Separate
+    // per channel since projectM aligns L and R independently, each against its own prior frame.
+    // Only feeds the point-generation/smoothing path below — beat/band-energy analysis still runs
+    // on the raw, unaligned snapshot, matching how projectM keeps waveform alignment purely a
+    // rendering-side concern, separate from its FFT-driven bass/mid/treb signal.
+    private let waveformAlignerL = MilkdropWaveformAligner(
+        bufferSampleCount: CoreAudioTapEngine.waveformSampleCount,
+        visibleSampleCount: MilkdropWaveformAligner.visibleSampleCount
+    )
+    private let waveformAlignerR = MilkdropWaveformAligner(
+        bufferSampleCount: CoreAudioTapEngine.waveformSampleCount,
+        visibleSampleCount: MilkdropWaveformAligner.visibleSampleCount
+    )
+
     init(audioEngine: CoreAudioTapEngine, model: MilkdropVisualizerModel) {
         self.audioEngine = audioEngine
         self.model = model
@@ -176,8 +190,18 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let now = Date()
 
         let (left, right) = audioEngine.snapshotWaveform()
-        let scaledLeft = MilkdropWaveform.smoothed(left, scale: model.params.scale, smoothing: model.params.smoothing)
-        let scaledRight = MilkdropWaveform.smoothed(right, scale: model.params.scale, smoothing: model.params.smoothing)
+
+        // Align only the copies feeding the drawn waveform; `left`/`right` themselves stay raw for
+        // beat.update() below, which needs the full, unshifted buffer for its FFT bands.
+        var alignedLeft = left
+        var alignedRight = right
+        waveformAlignerL.align(&alignedLeft)
+        waveformAlignerR.align(&alignedRight)
+        let visibleLeft = Array(alignedLeft.prefix(MilkdropWaveformAligner.visibleSampleCount))
+        let visibleRight = Array(alignedRight.prefix(MilkdropWaveformAligner.visibleSampleCount))
+
+        let scaledLeft = MilkdropWaveform.smoothed(visibleLeft, scale: model.params.scale, smoothing: model.params.smoothing)
+        let scaledRight = MilkdropWaveform.smoothed(visibleRight, scale: model.params.scale, smoothing: model.params.smoothing)
 
         // CoreAudioTapEngine taps the system default output device, so 44.1kHz is the common case.
         _ = beat.update(left: left, right: right, sampleRate: 44100, now: now)

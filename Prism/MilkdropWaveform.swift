@@ -22,6 +22,16 @@ enum MilkdropWaveMode: Int, CaseIterable {
                         // rather than the point-based waveform pipeline below (see
                         // MilkdropVisualizerView, which special-cases this mode).
 
+    // Ports of the extra hand-written modes from projectM's Milkdrop2077Wave*.cpp (not part of
+    // stock Milkdrop's mode 0-7 set, but built on the same clipped-line/polar primitives).
+    case crossX        // Milkdrop2077WaveX: L/R drawn as two lines clipped at mirrored angles, crossing in an X.
+    case wideLine       // Milkdrop2077Wave9: single channel, wide-clip line driven entirely by the mystery param.
+    case dualParallel   // Milkdrop2077Wave11: L/R as two fixed vertical lines, offset left/right.
+    case skewedLoop      // Milkdrop2077WaveSkewed: polar plot with an angle skew, less symmetric than .spiral.
+    case star           // Milkdrop2077WaveStar: circular radius with an eased dip near the seam.
+    case flower         // Milkdrop2077WaveFlower: circular radius with a multi-lobed angle multiplier.
+    case lasso          // Milkdrop2077WaveLasso: figure-eight-like parametric curve.
+
     var label: String {
         switch self {
         case .line: return "Line"
@@ -30,6 +40,13 @@ enum MilkdropWaveMode: Int, CaseIterable {
         case .spiral: return "Spiral"
         case .spiro: return "Spiro"
         case .spectrumBars: return "Spectrum"
+        case .crossX: return "Cross"
+        case .wideLine: return "Wide"
+        case .dualParallel: return "Parallel"
+        case .skewedLoop: return "Skewed"
+        case .star: return "Star"
+        case .flower: return "Flower"
+        case .lasso: return "Lasso"
         }
     }
 }
@@ -43,6 +60,10 @@ struct MilkdropWaveformParams {
     var angle: Float = 0
     /// .dualLine channel separation, 0...1 (mirrors fWavePosY in mode 7).
     var separation: Float = 0.30
+    /// wave_mystery: unassigned per-preset knob several projectM Milkdrop2077 modes fold into
+    /// their radius/angle math (.crossX/.wideLine/.skewedLoop/.star/.flower). 0 is neutral —
+    /// matches the shape those modes have with no preset driving this value.
+    var mysteryParam: Float = 0
 }
 
 struct WavePoint {
@@ -111,16 +132,19 @@ enum MilkdropWaveform {
     }
 
     /// Slab-method line/box clip: intersects the infinite line through `center` in direction `dir`
-    /// with the -1...1 square. Stands in for DrawWave()'s bespoke 4-edge clipper used by modes 6/7
-    /// to stretch a line edge-to-edge across the viewport at an arbitrary angle.
-    private static func lineBoxIntersection(center: WavePoint, dir: (x: Float, y: Float)) -> (WavePoint, WavePoint) {
+    /// with the -halfExtent...halfExtent square. Stands in for DrawWave()'s bespoke 4-edge clipper
+    /// used by modes 6/7 to stretch a line edge-to-edge across the viewport at an arbitrary angle.
+    /// `halfExtent` defaults to 1 (Prism's original modes); projectM's own ClipWaveformEdges clips
+    /// its extra Milkdrop2077 line modes against 1.1 instead, giving them a touch of overscan past
+    /// the visible frame — passed explicitly by those modes below.
+    private static func lineBoxIntersection(center: WavePoint, dir: (x: Float, y: Float), halfExtent: Float = 1) -> (WavePoint, WavePoint) {
         var tMin: Float = -.greatestFiniteMagnitude
         var tMax: Float = .greatestFiniteMagnitude
 
         for (c, d) in [(center.x, dir.x), (center.y, dir.y)] {
             guard abs(d) > 1e-6 else { continue }
-            var t0 = (-1 - c) / d
-            var t1 = (1 - c) / d
+            var t0 = (-halfExtent - c) / d
+            var t1 = (halfExtent - c) / d
             if t0 > t1 { swap(&t0, &t1) }
             tMin = max(tMin, t0)
             tMax = min(tMax, t1)
@@ -216,6 +240,158 @@ enum MilkdropWaveform {
             // Drawn separately in MilkdropVisualizerView from the FFT band levels, not from
             // point data — nothing to tessellate here.
             return ([], nil)
+
+        case .crossX:
+            // Port of Milkdrop2077WaveX::GenerateVertices: two lines, clipped at mirrored angles
+            // (±0.75, nudged by the mystery param), crossing near the center like an X. Each line
+            // carries one channel, same edge-clip + per-sample perpendicular offset as .line, just
+            // with a slightly larger amplitude (0.35 vs .line's 0.25) and clip box (1.1 vs 1).
+            let n = count
+            let angle1 = -0.75 + params.mysteryParam * 3.15
+            let angle2 = 0.75 + params.mysteryParam * 3.15
+            func clippedLine(angle: Float, samples: [Float]) -> [WavePoint] {
+                let dx = cos(angle), dy = sin(angle)
+                let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
+                let perp = (x: -dy, y: dx)
+                let stepX = (edge1.x - edge0.x) / Float(n)
+                let stepY = (edge1.y - edge0.y) / Float(n)
+                return (0..<n).map { i in
+                    WavePoint(
+                        x: edge0.x + stepX * Float(i) + perp.x * 0.35 * samples[i],
+                        y: edge0.y + stepY * Float(i) + perp.y * 0.35 * samples[i]
+                    )
+                }
+            }
+            let pts = clippedLine(angle: angle1, samples: left) + clippedLine(angle: angle2, samples: right)
+            return (pts, n)
+
+        case .wideLine:
+            // Port of Milkdrop2077Wave9::GenerateVertices: like .line, but the angle is driven
+            // entirely by the mystery param (not user-adjustable) and the clip box/amplitude match
+            // .crossX's wider values instead of .line's.
+            let n = count
+            let angle: Float = 1.57 * params.mysteryParam
+            let dx = cos(angle), dy = sin(angle)
+            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
+            let perp = (x: -dy, y: dx)
+            let stepX = (edge1.x - edge0.x) / Float(n)
+            let stepY = (edge1.y - edge0.y) / Float(n)
+            let pts = (0..<n).map { i in
+                WavePoint(
+                    x: edge0.x + stepX * Float(i) + perp.x * 0.35 * left[i],
+                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * left[i]
+                )
+            }
+            return (pts, nil)
+
+        case .dualParallel:
+            // Port of Milkdrop2077Wave11::GenerateVertices: unlike .dualLine (which separates the
+            // two channels perpendicular to a user-adjustable angle), this fixes the baseline
+            // vertical (angle 1.57) and shifts each channel's line by a constant ±0.45 along X,
+            // giving two parallel vertical scopes side by side.
+            let n = count
+            let angle: Float = 1.57
+            let dx = cos(angle), dy = sin(angle)
+            let (edge0, edge1) = lineBoxIntersection(center: WavePoint(x: 0, y: 0), dir: (dx, dy), halfExtent: 1.1)
+            let perp = (x: -dy, y: dx)
+            let stepX = (edge1.x - edge0.x) / Float(n)
+            let stepY = (edge1.y - edge0.y) / Float(n)
+            var pts = (0..<n).map { i -> WavePoint in
+                WavePoint(
+                    x: edge0.x - 0.45 + stepX * Float(i) + perp.x * 0.35 * left[i],
+                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * left[i]
+                )
+            }
+            pts += (0..<n).map { i -> WavePoint in
+                WavePoint(
+                    x: edge0.x + 0.45 + stepX * Float(i) + perp.x * 0.35 * right[i],
+                    y: edge0.y + stepY * Float(i) + perp.y * 0.35 * right[i]
+                )
+            }
+            return (pts, n)
+
+        case .skewedLoop:
+            // Port of Milkdrop2077WaveSkewed::GenerateVertices: a polar plot like .spiral, but the
+            // angle only comes from the left channel (no time-driven spin term besides the sample
+            // offset) — drops the original's `wave_a`-driven alpha skew, since that's a per-preset
+            // value Prism has no source for yet (see the .milk-loading note in this file's header).
+            let n = count - 32
+            guard n > 0 else { return ([], nil) }
+            let pts = (0..<n).map { i -> WavePoint in
+                let rad = 0.63 + 0.23 * right[i] + params.mysteryParam
+                let ang = left[i + 32] * 0.9 + Float(time) * 3.3
+                return WavePoint(x: rad * cos(ang) * aspect, y: rad * sin(ang))
+            }
+            return (pts, nil)
+
+        case .star:
+            // Port of Milkdrop2077WaveStar::GenerateVertices: a closed circular loop like
+            // .circular, but the radius eases toward a second, differently-phased sample near the
+            // seam instead of just following the raw waveform — that dip is what gives the shape
+            // its points. The original re-reads the capture buffer at a fixed offset derived from
+            // Milkdrop's windowed sample-count scheme; Prism doesn't use that windowing, so the
+            // second phase is approximated as the sample half a buffer-length ahead (wrapped).
+            let n = count
+            guard n > 1 else { return ([], nil) }
+            let tenth = Float(n) * 0.1
+            var pts = (0..<n).map { i -> WavePoint in
+                let s = Float(i)
+                var radius = 0.7 + 0.4 * right[i] + params.mysteryParam
+                let angle = s / Float(n - 1) * 2 * .pi + Float(time) * 0.2
+                if s < Float(n) / radius {
+                    var mix = s / tenth
+                    mix = 0.5 - 0.5 * cos(mix * .pi)
+                    let radius2 = 0.5 + 0.4 * right[(i + n / 2) % n] + params.mysteryParam
+                    radius = radius2 * (1 - mix) + radius * mix
+                }
+                return WavePoint(x: radius * cos(angle) * aspect, y: radius * sin(angle))
+            }
+            if let first = pts.first { pts.append(first) }
+            return (pts, nil)
+
+        case .flower:
+            // Port of Milkdrop2077WaveFlower::GenerateVertices: same eased-radius idea as .star,
+            // but the angle gets multiplied by pi again in the x term, which wraps it around
+            // several times over one lap — that's what turns the single dip into multiple petals.
+            let n = count
+            guard n > 1 else { return ([], nil) }
+            let tenth = Float(n) * 0.1
+            let t = Float(time)
+            var pts = (0..<n).map { i -> WavePoint in
+                let s = Float(i)
+                var radius = 0.7 + 0.7 * right[i] + params.mysteryParam
+                let angle = s / Float(n - 1) * 2 * .pi + t * 0.2
+                if s < Float(n) / radius {
+                    var mix = s / tenth
+                    mix = 0.7 - 0.7 * cos(mix * .pi)
+                    let radius2 = 0.7 + 0.7 * right[(i + n / 2) % n] + params.mysteryParam
+                    radius = radius2 * (1 - mix) + radius * mix * 0.25
+                }
+                return WavePoint(
+                    x: radius * cos(angle * .pi) * aspect / 1.5,
+                    y: radius * sin(angle - t / 3) / 1.5
+                )
+            }
+            if let first = pts.first { pts.append(first) }
+            return (pts, nil)
+
+        case .lasso:
+            // Port of Milkdrop2077WaveLasso::GenerateVertices: a parametric curve driven mostly by
+            // time rather than the waveform's shape — the left channel only perturbs the angle
+            // slightly. `time` (timeIntervalSinceReferenceDate) has been nonzero and growing since
+            // 2001, so the tan(t/angle) term's angle-near-zero case isn't reachable in practice,
+            // same as the original's unguarded division.
+            let n = count - 32
+            guard n > 0 else { return ([], nil) }
+            let t = Float(time)
+            let pts = (0..<n).map { i -> WavePoint in
+                let angle = left[i + 32] * 1.57 + t * 2.0
+                return WavePoint(
+                    x: cos(t) / 2 + cos(angle * 2 + tan(t / angle)),
+                    y: sin(t) * 2 * sin(angle * 3.14) * aspect / 2.8
+                )
+            }
+            return (pts, nil)
         }
     }
 }
