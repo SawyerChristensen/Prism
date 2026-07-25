@@ -24,6 +24,25 @@ struct RecognizedTextLine {
     var confidence: Float
 }
 
+extension Array where Element == RecognizedTextLine {
+    /// True if every detected line is just the RIAA Parental Advisory sticker, word for word —
+    /// OCR sometimes splits it across lines ("PARENTAL ADVISORY" / "EXPLICIT CONTENT"), sometimes
+    /// reads it as one. That sticker is compliance boilerplate stamped onto the cover, not part
+    /// of its actual design, so an album whose *only* detected text is this label shouldn't need
+    /// it drawn back into the visualizer by default (see NowPlayingManager.loadSpotifyArtwork/
+    /// loadArtworkFromiTunes, which use this to default `includesTextOverlay` off for exactly
+    /// that case, unless the album already has an explicit saved preference).
+    var isOnlyParentalAdvisoryLabel: Bool {
+        guard !isEmpty else { return false }
+        let advisoryWords: Set<String> = ["PARENTAL", "ADVISORY", "EXPLICIT", "CONTENT", "LYRICS"]
+        return allSatisfy { line in
+            let words = line.string.uppercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+            guard !words.isEmpty else { return false }
+            return words.allSatisfy { advisoryWords.contains($0) }
+        }
+    }
+}
+
 extension NSImage {
     /// Runs Vision's OCR over the whole image and returns every recognized line with its text,
     /// position, and confidence. Empty (not nil) if Vision found no text or the request failed —

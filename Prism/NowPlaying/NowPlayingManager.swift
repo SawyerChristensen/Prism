@@ -319,7 +319,10 @@ final class NowPlayingManager {
             let colors = image.extractColors()
             let subjectMasked = image.maskingOutBackgroundBySubject()
             let textLines = image.recognizedTextLines()
-            let (mode, includeText, processing) = await MainActor.run { (self.maskingMode, self.includesTextOverlay, self.processingEnabled) }
+            let (mode, includeText, processing) = await MainActor.run { () -> (ArtworkMaskingMode, Bool, Bool) in
+                self.applyParentalAdvisoryDefaultIfNeeded(textLines)
+                return (self.maskingMode, self.includesTextOverlay, self.processingEnabled)
+            }
             let composited = Self.compositeArtwork(image, colors: colors, subjectMasked: subjectMasked, textLines: textLines, mode: mode, includeText: includeText, processingEnabled: processing)
 
             await MainActor.run {
@@ -387,7 +390,10 @@ final class NowPlayingManager {
             let colors = image.extractColors()
             let subjectMasked = image.maskingOutBackgroundBySubject()
             let textLines = image.recognizedTextLines()
-            let (mode, includeText, processing) = await MainActor.run { (self?.maskingMode, self?.includesTextOverlay, self?.processingEnabled) }
+            let (mode, includeText, processing) = await MainActor.run { () -> (ArtworkMaskingMode?, Bool?, Bool?) in
+                self?.applyParentalAdvisoryDefaultIfNeeded(textLines)
+                return (self?.maskingMode, self?.includesTextOverlay, self?.processingEnabled)
+            }
             let composited = Self.compositeArtwork(image, colors: colors, subjectMasked: subjectMasked, textLines: textLines, mode: mode ?? .combined, includeText: includeText ?? true, processingEnabled: processing ?? true)
 
             await MainActor.run {
@@ -401,6 +407,18 @@ final class NowPlayingManager {
                 self?.cachedSubjectMask = subjectMasked
             }
         }
+    }
+
+    /// Turns `includesTextOverlay` off when `lines` is nothing but the RIAA Parental Advisory
+    /// sticker (see `[RecognizedTextLine].isOnlyParentalAdvisoryLabel`) — that label is
+    /// compliance boilerplate, not part of the cover's actual design, so it shouldn't need to be
+    /// drawn back into the visualizer by default. Only applies when this album has no explicit
+    /// saved preference yet; an album the user already curated (even to turn text back on)
+    /// always wins over this default.
+    private func applyParentalAdvisoryDefaultIfNeeded(_ lines: [RecognizedTextLine]) {
+        guard currentAlbumKey.map({ artworkPreferences[$0] == nil }) ?? true else { return }
+        guard lines.isOnlyParentalAdvisoryLabel else { return }
+        includesTextOverlay = false
     }
 
     /// Re-composites `artwork` from this track's already-cached ingredients (raw image, colors,
