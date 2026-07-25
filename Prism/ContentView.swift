@@ -25,9 +25,8 @@ struct ContentView: View {
             // The wave
             MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel)
             
-            // The album art
+            // The album art/text
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                
                 // Text pinned to the bottom
                 VStack {
                     Spacer()
@@ -56,14 +55,15 @@ struct ContentView: View {
                         Text(track)
                             .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(fgColor)
+                            .padding()
                         
                         Spacer()
                         
                         Text(artist)
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(fgColor.opacity(0.8))
+                            .padding()
                     }
-                    .padding()
                 }
             }
         }
