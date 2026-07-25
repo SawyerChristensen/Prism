@@ -27,42 +27,43 @@ struct ContentView: View {
             // The wave
             MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel)
             
-            // The album art/text
+            // The album art
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                // Text pinned to the bottom
+                if let artwork = nowPlaying.artwork {
+                    // Real alpha transparency where the artwork's own background was keyed
+                    // out in NowPlayingManager (see NSImage.keyingOutBackground) — not a
+                    // blend mode, so only the actual background pixels go transparent, not
+                    // every dark/light pixel that happens to be part of the subject.
+                    Image(nsImage: artwork)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 250, height: 250)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        //.shadow(color: fgColor, radius: 6)
+                } /*else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.quaternary)
+                        .frame(width: 250, height: 250)
+                        .overlay {
+                            Image(systemName: "music.note")
+                                .font(.largeTitle)
+                                .foregroundStyle(.secondary)
+                        }
+                }*/
+                
                 VStack {
-                    Spacer()
-                    
-                    if let artwork = nowPlaying.artwork {
-                        Image(nsImage: artwork)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 250, height: 250)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            //.shadow(color: fgColor, radius: 6)
-                    } /*else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(.quaternary)
-                            .frame(width: 250, height: 250)
-                            .overlay {
-                                Image(systemName: "music.note")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.secondary)
-                            }
-                    }*/
-                    
-                    Spacer()
+                    Spacer() // Text pinned to the bottom
                     
                     HStack {
                         Text(track)
-                            .font(.system(size: 22, weight: .regular))
+                            .font(.system(size: 24, weight: .regular))
                             .foregroundStyle(fgColor)
                             .padding()
                         
                         Spacer()
                         
                         Text(artist)
-                            .font(.system(size: 22, weight: .semibold))
+                            .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(fgColor.opacity(0.8))
                             .padding()
                     }

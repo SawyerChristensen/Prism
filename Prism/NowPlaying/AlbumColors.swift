@@ -298,9 +298,85 @@ extension NSImage {
 
         return (background, foreground ?? (background.isDark ? .white : .black))
     }
+
+    /// Returns a copy of this image with pixels close to `keyColor` faded to transparent, and
+    /// everything else left untouched — a chroma-key cutout, not a blend mode. A blend mode
+    /// (.lighten/.darken) compares *every* pixel's brightness against whatever's behind the whole
+    /// image, so it also fades out any dark/light pixel that's part of the actual subject (a
+    /// shadow, dark hair, a dark logo), not just the background field — which reads as the layer
+    /// behind the artwork "poking through" the art itself. Keying only touches pixels that
+    /// actually match the measured background color, so the rest of the artwork stays fully
+    /// opaque and renders normally, in front of whatever's behind it.
+    ///
+    /// `tolerance` is a Euclidean distance in 0...255-per-channel RGB space; pixels within it are
+    /// faded, with a feathered (not hard-edged) falloff over the inner 40% of that radius to avoid
+    /// a jagged cutout edge where the background meets the subject.
+    nonisolated func keyingOutBackground(_ keyColor: NSColor, tolerance: CGFloat = 40) -> NSImage? {
+        guard let cgImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let width = cgImage.width, height = cgImage.height
+        guard width > 0, height > 0 else { return nil }
+
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &pixelData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard let keyRGB = keyColor.usingColorSpace(.sRGB) else { return nil }
+        let kr = keyRGB.redComponent * 255, kg = keyRGB.greenComponent * 255, kb = keyRGB.blueComponent * 255
+        let featherWidth = tolerance * 0.4
+
+        for i in stride(from: 0, to: pixelData.count, by: bytesPerPixel) {
+            let a = pixelData[i + 3]
+            guard a > 0 else { continue }
+            // Buffer is premultiplied — un-premultiply so the distance check compares true pixel
+            // color, not color already attenuated by (usually irrelevant, near-1) alpha.
+            let alphaFrac = CGFloat(a) / 255
+            let r = CGFloat(pixelData[i]) / alphaFrac
+            let g = CGFloat(pixelData[i + 1]) / alphaFrac
+            let b = CGFloat(pixelData[i + 2]) / alphaFrac
+            let dr = r - kr, dg = g - kg, db = b - kb
+            let distance = (dr * dr + dg * dg + db * db).squareRoot()
+
+            guard distance < tolerance else { continue }
+            // 0 at the key color itself, ramping to 1 (fully opaque, untouched) over the outer
+            // feather band — scaling all four premultiplied channels by the same factor keeps
+            // premultiplication consistent without needing to re-premultiply by hand.
+            let alphaScale = distance < tolerance - featherWidth ? 0 : (distance - (tolerance - featherWidth)) / featherWidth
+            pixelData[i] = UInt8(CGFloat(pixelData[i]) * alphaScale)
+            pixelData[i + 1] = UInt8(CGFloat(pixelData[i + 1]) * alphaScale)
+            pixelData[i + 2] = UInt8(CGFloat(pixelData[i + 2]) * alphaScale)
+            pixelData[i + 3] = UInt8(CGFloat(pixelData[i + 3]) * alphaScale)
+        }
+
+        guard let outCGImage = context.makeImage() else { return nil }
+        return NSImage(cgImage: outCGImage, size: self.size)
+    }
+}
+
+/// Which of the two "special" background tones (if either) a color counts as — used to decide
+/// whether an album-art image is worth keying out (see NSImage.keyingOutBackground below).
+/// Thresholds deliberately match `pickBackgroundColor`'s own nearBlack/nearWhite pool definitions
+/// above, so "detected as black/white" means the same thing here as it does during background
+/// extraction.
+enum BackgroundTone {
+    case black, white, other
 }
 
 extension NSColor {
+    nonisolated var backgroundTone: BackgroundTone {
+        guard let rgb = usingColorSpace(.deviceRGB) else { return .other }
+        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
+        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+        if brightness <= 0.10 { return .black }
+        if saturation < 0.20 && brightness >= 0.90 { return .white }
+        return .other
+    }
+
     nonisolated var luminance: CGFloat {
         guard let rgb = usingColorSpace(.deviceRGB) else { return 0.5 }
         let r = rgb.redComponent <= 0.03928 ? rgb.redComponent / 12.92 : pow((rgb.redComponent + 0.055) / 1.055, 2.4)

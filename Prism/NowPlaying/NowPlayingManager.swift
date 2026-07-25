@@ -177,9 +177,10 @@ final class NowPlayingManager {
             }
 
             let colors = image.extractColors()
+            let displayImage = Self.keyedArtwork(image, colors: colors)
 
             await MainActor.run {
-                self.artwork = image
+                self.artwork = displayImage
                 self.albumBackgroundColor = colors?.background
                 self.albumForegroundColor = colors?.foreground
             }
@@ -237,13 +238,42 @@ final class NowPlayingManager {
 
             // 💡 Extract colors off the main thread
             let colors = image.extractColors()
+            let displayImage = Self.keyedArtwork(image, colors: colors)
 
             await MainActor.run {
-                self?.artwork = image
+                self?.artwork = displayImage
                 self?.genre = fetchedGenre
                 self?.albumBackgroundColor = colors?.background
                 self?.albumForegroundColor = colors?.foreground
             }
+        }
+    }
+
+    /// Prototype combining both background-removal approaches: color-keying (subtracts the
+    /// measured background color wherever it appears — only meaningful when that background is
+    /// solid black or white, see NSColor.backgroundTone) and Vision's subject segmentation
+    /// (doesn't care what the background looks like, but can occasionally miss a sliver of the
+    /// true subject at its edge). Run together, the subject overlay guarantees Vision's subject
+    /// is never accidentally punched full of holes by the color key even if it shares the
+    /// background's color, while the color key still cleans up anything outside the subject that
+    /// the color-keying alone would have caught. Degrades gracefully through all four
+    /// availability combinations, down to the untouched original if neither applies.
+    private nonisolated static func keyedArtwork(_ image: NSImage, colors: (background: NSColor, foreground: NSColor)?) -> NSImage {
+        let colorKeyed: NSImage? = {
+            guard let background = colors?.background, background.backgroundTone != .other else { return nil }
+            return image.keyingOutBackground(background)
+        }()
+        let subjectMasked = image.maskingOutBackgroundBySubject()
+
+        switch (colorKeyed, subjectMasked) {
+        case let (.some(colorKeyed), .some(subjectMasked)):
+            return colorKeyed.overlaying(subjectMasked) ?? subjectMasked
+        case let (.some(colorKeyed), nil):
+            return colorKeyed
+        case let (nil, .some(subjectMasked)):
+            return subjectMasked
+        case (nil, nil):
+            return image
         }
     }
 
