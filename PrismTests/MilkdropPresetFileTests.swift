@@ -144,4 +144,92 @@ struct MilkdropPresetFileTests {
         #expect(vars["b"] == 1)
         #expect(abs((vars["wave_y"] ?? -1) - 0.5) < 0.001) // 0.5*0.9 + 0.05 == 0.5
     }
+
+    // MARK: - Custom shapes (shapecode_N_*)
+
+    @Test func parsesShapecodeConstants() {
+        // Key format confirmed directly against projectM's CustomShape.cpp (shapecodePrefix =
+        // "shapecode_" + index + "_"), not a real bundled test preset — none of projectM's
+        // checked-out presets/tests/*.milk exercise custom shapes.
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_1_enabled=1
+        shapecode_1_sides=6
+        shapecode_1_additive=1
+        shapecode_1_num_inst=3
+        shapecode_1_x=0.25
+        shapecode_1_rad=0.4
+        shapecode_1_r=0.1
+        shapecode_1_g=0.2
+        shapecode_1_b=0.3
+        shapecode_1_r2=0.9
+        shapecode_1_border_a=0.5
+        """)
+        let shape = file.shapes[1]
+        #expect(shape.enabled == true)
+        #expect(shape.sides == 6)
+        #expect(shape.additive == true)
+        #expect(shape.numInst == 3)
+        #expect(shape.x == 0.25)
+        #expect(shape.rad == 0.4)
+        #expect(shape.r == 0.1)
+        #expect(shape.g == 0.2)
+        #expect(shape.b == 0.3)
+        #expect(shape.r2 == 0.9)
+        #expect(shape.borderA == 0.5)
+        // Untouched fields keep CustomShape.cpp's own defaults.
+        #expect(shape.y == 0.5)
+        #expect(shape.g2 == 1.0)
+    }
+
+    @Test func shapeCodeSlotsHaveNoUnderscoreBeforeTheDigitUnlikeMainPerFrame() {
+        // Confirmed against PresetState.cpp: main preset code uses GetCode("per_frame_") (trailing
+        // underscore, so "per_frame_1"), but shapes use GetCode(shapePrefix + "init")/"per_frame"
+        // with the slot number appended directly — "shape_0_init1", not "shape_0_init_1". A parser
+        // that copy-pasted the main convention would silently drop these.
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_0_enabled=1
+        shape_0_init1=SPEED=2;
+        shape_0_per_frame1=x=0.5+0.1*sin(time*SPEED);
+        """)
+        #expect(file.shapes[0].initProgram.contains("SPEED=2"))
+        #expect(file.shapes[0].perFrameProgram.contains("sin(time*SPEED)"))
+    }
+
+    @Test func multiSlotShapeCodeConcatenatesInNumericOrder() {
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_2_enabled=1
+        shape_2_per_frame1=ang=0.1+
+        shape_2_per_frame2=  0.2*sin(time);
+        """)
+        #expect(file.shapes[2].perFrameProgram.contains("sin(time)"))
+    }
+
+    @Test func shapeSlotsWithNoKeysStayDisabledAtDefaults() {
+        // A preset that only defines shape 1 shouldn't fabricate shapes 0, 2, 3.
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_1_enabled=1
+        """)
+        #expect(file.shapes.count == 4)
+        #expect(file.shapes[0].enabled == false)
+        #expect(file.shapes[1].enabled == true)
+        #expect(file.shapes[2].enabled == false)
+        #expect(file.shapes[3].enabled == false)
+    }
+
+    @Test func shapeIndexOutOfRangeIsIgnoredNotCrashed() {
+        // Milkdrop's own CustomShapeCount is 4 (indices 0-3); a stray higher index (or a
+        // non-numeric one) shouldn't crash parsing or land anywhere.
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_9_enabled=1
+        shapecode_x_enabled=1
+        nWaveMode=2
+        """)
+        #expect(file.waveMode == 2)
+        #expect(file.shapes.allSatisfy { $0.enabled == false })
+    }
 }

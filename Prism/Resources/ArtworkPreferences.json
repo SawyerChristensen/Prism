@@ -19,6 +19,11 @@
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "alex g|god save the animals" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
   "avicii|the days \/ nights" : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
@@ -43,6 +48,11 @@
     "includesTextOverlay" : true,
     "maskingMode" : "combined",
     "processingEnabled" : false
+  },
+  "britney spears|britney (digital deluxe version)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
   },
   "caramella girls|supergott (speedy mixes)" : {
     "includesTextOverlay" : false,
@@ -72,6 +82,11 @@
   "federico dubbini|kingdom hearts world" : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "france gall|babacar (remasterisé en 2004)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
   "gene clark|no other" : {
@@ -124,6 +139,21 @@
     "maskingMode" : "combined",
     "processingEnabled" : false
   },
+  "kishi bashi|151a" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "kylie minogue|fever" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "lil uzi vert|pink tape" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
   "lonown|worry (ultra slowed)" : {
     "includesTextOverlay" : false,
     "maskingMode" : "visionAloneElseColorKey",
@@ -136,6 +166,11 @@
   },
   "madvillain|madvillainy" : {
     "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "maximum the hormone|bu-ikikaesu" : {
+    "includesTextOverlay" : true,
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
@@ -169,6 +204,11 @@
     "maskingMode" : "combined",
     "processingEnabled" : false
   },
+  "rae sremmurd|sremmlife 2 (deluxe)" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
   "rico ace|dope boyz" : {
     "includesTextOverlay" : true,
     "maskingMode" : "visionAloneElseColorKey",
@@ -182,6 +222,11 @@
   "ski aggu|denk mal drüber nach..." : {
     "includesTextOverlay" : false,
     "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "spice girls|spice" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
   "t.a.t.u.|200 km\/h in the wrong lane (10th anniversary edition)" : {
@@ -205,6 +250,11 @@
     "processingEnabled" : true
   },
   "the weeknd|hurry up tomorrow" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "visionAloneElseColorKey",
+    "processingEnabled" : true
+  },
+  "the white stripes|elephant" : {
     "includesTextOverlay" : true,
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true

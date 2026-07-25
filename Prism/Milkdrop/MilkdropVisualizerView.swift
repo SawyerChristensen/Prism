@@ -30,6 +30,11 @@ final class MilkdropVisualizerModel {
     private var perFrameProgram: MilkdropExpressionProgram?
     private var presetVariables: [String: Float] = [:]
 
+    // Custom shapes (`shapecode_N_*`) loaded alongside the waveform program above — see
+    // MilkdropShapeState.swift. Always 4 slots (disabled ones resolve to zero instances, so
+    // MilkdropMetalRenderer never needs to check `enabled` itself).
+    private var shapes: [MilkdropShapeRuntime] = []
+
     func cycleMode() {
         let all = MilkdropWaveMode.allCases
         let idx = all.firstIndex(of: mode) ?? 0
@@ -59,6 +64,7 @@ final class MilkdropVisualizerModel {
             // program below expects to already exist on its first evaluation.
             MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(&presetVariables)
             perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)
+            shapes = file.shapes.map(MilkdropShapeRuntime.init(preset:))
             presetName = url.deletingPathExtension().lastPathComponent
             presetLoadError = nil
         } catch {
@@ -100,6 +106,14 @@ final class MilkdropVisualizerModel {
         }
         // wave_r/g/b land in presetVariables too, for a future preset-color pass — not consumed
         // yet since color is currently driven by album art (see AlbumColors.swift).
+    }
+
+    /// Resolves every loaded shape's per-frame script for this frame, one instance array per shape
+    /// slot (disabled/instance-less shapes contribute an empty array). Called from
+    /// MilkdropMetalRenderer.draw(in:) alongside updatePresetPerFrame, with the same per-frame
+    /// timing/audio inputs.
+    func updateShapesPerFrame(time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy) -> [[MilkdropShapeInstance]] {
+        shapes.map { $0.resolveInstances(time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy) }
     }
 }
 

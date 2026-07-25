@@ -76,6 +76,13 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     private let solidPipeline: MTLRenderPipelineState
     private let feedbackPipeline: MTLRenderPipelineState
     private let presentPipeline: MTLRenderPipelineState
+    // Custom shapes (shapecode_N_*) use their own pipelines: per-vertex color (for the fill
+    // gradient, unlike solidPipeline's uniform color) and blend factors that don't match
+    // solidPipeline's fixed (One,One) — Milkdrop's shape blend is (SourceAlpha,One) when additive,
+    // (SourceAlpha,OneMinusSourceAlpha — standard "over" alpha) otherwise. See CustomShape.cpp:
+    // 101-105 in projectM, and MilkdropShapeState.swift for the rest of the port.
+    private let shapeAdditivePipeline: MTLRenderPipelineState
+    private let shapeAlphaPipeline: MTLRenderPipelineState
 
     // Ping-pong feedback textures: textures[sourceIndex] is "what was on screen last frame" (read
     // this frame), textures[1 - sourceIndex] is this frame's render target. Swapped every frame.
@@ -159,6 +166,32 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         self.feedbackPipeline = makePipeline(vertex: "feedback_vertex", fragment: "feedback_fragment", additiveBlend: false)
         self.presentPipeline = makePipeline(vertex: "feedback_vertex", fragment: "present_fragment", additiveBlend: false)
 
+        func makeBlendedPipeline(vertex: String, fragment: String, sourceFactor: MTLBlendFactor, destFactor: MTLBlendFactor) -> MTLRenderPipelineState {
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = library.makeFunction(name: vertex)
+            descriptor.fragmentFunction = library.makeFunction(name: fragment)
+            guard let attachment = descriptor.colorAttachments[0] else {
+                fatalError("Missing color attachment 0 on pipeline descriptor")
+            }
+            attachment.pixelFormat = .bgra8Unorm
+            attachment.isBlendingEnabled = true
+            attachment.rgbBlendOperation = .add
+            attachment.alphaBlendOperation = .add
+            attachment.sourceRGBBlendFactor = sourceFactor
+            attachment.sourceAlphaBlendFactor = sourceFactor
+            attachment.destinationRGBBlendFactor = destFactor
+            attachment.destinationAlphaBlendFactor = destFactor
+            // swiftlint:disable:next force_try
+            return try! device.makeRenderPipelineState(descriptor: descriptor)
+        }
+
+        self.shapeAdditivePipeline = makeBlendedPipeline(
+            vertex: "shape_vertex", fragment: "shape_fragment", sourceFactor: .sourceAlpha, destFactor: .one
+        )
+        self.shapeAlphaPipeline = makeBlendedPipeline(
+            vertex: "shape_vertex", fragment: "shape_fragment", sourceFactor: .sourceAlpha, destFactor: .oneMinusSourceAlpha
+        )
+
         super.init()
     }
 
@@ -233,6 +266,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         // Drives a loaded preset's per-frame expression program (if any) before this frame's
         // points get generated below, so mode/params reflect this frame's evaluated values.
         model.updatePresetPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
+        let shapeInstancesByShape = model.updateShapesPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
         let aspect = pixelSize.width > 0 ? Float(pixelSize.height / pixelSize.width) : 1
         let (rawPoints, rawBreak) = MilkdropWaveform.points(
             mode: model.mode, left: scaledLeft, right: scaledRight,
@@ -298,6 +332,23 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             for segment in segments {
                 let verts = Self.lineStripVertices(points: segment, pixelSize: pixelSize, halfWidth: halfWidth, isLoop: isLoop)
                 Self.draw(verts, as: .triangleStrip, on: encoder, device: device)
+            }
+        }
+
+        for shapeInstances in shapeInstancesByShape {
+            for instance in shapeInstances {
+                let pipeline = instance.additive ? shapeAdditivePipeline : shapeAlphaPipeline
+                encoder.setRenderPipelineState(pipeline)
+                let fillVerts = Self.shapeFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
+                Self.drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+
+                if instance.borderA > 0 {
+                    let outlineHalfWidth = Float(instance.thickOutline ? 3.0 : 1.5) * Float(backingScale)
+                    let outlineVerts = Self.shapeOutlineVertices(
+                        instance, pixelSize: pixelSize, aspect: aspect, halfWidth: outlineHalfWidth
+                    )
+                    Self.drawShape(outlineVerts, as: .triangleStrip, on: encoder, device: device)
+                }
             }
         }
 
@@ -393,5 +444,85 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             verts.append(SIMD2(xRight, y0)); verts.append(SIMD2(xRight, y1)); verts.append(SIMD2(xLeft, y1))
         }
         return verts
+    }
+
+    // MARK: - Custom shape geometry (shapecode_N_* — see MilkdropShapeState.swift)
+
+    /// CPU-side mirror of Shaders.metal's `ShapeVertex` struct. Field order/types must match
+    /// exactly — Metal's `float2`/`float4` alignment already lines up with
+    /// SIMD2<Float>/SIMD4<Float>'s, so no explicit padding is needed.
+    private struct ShapeVertex {
+        var position: SIMD2<Float>
+        var color: SIMD4<Float>
+    }
+
+    private static func drawShape(_ vertices: [ShapeVertex], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
+        let minCount = primitive == .triangleStrip ? 2 : 3
+        guard vertices.count >= minCount,
+              let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<ShapeVertex>.stride * vertices.count, options: .storageModeShared)
+        else { return }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: primitive, vertexStart: 0, vertexCount: vertices.count)
+    }
+
+    /// Center + `sides` rim points in NDC space, an exact port of CustomShape.cpp's vertex math:
+    /// center = `(x*2-1, y*-2+1)`; rim point i = center + `rad*cos(angle)*aspectY` (x), `+
+    /// rad*sin(angle)` (y), where `angle = 2π·i/sides + ang + π/4`. Shared by the fill and outline
+    /// builders below so the two stay geometrically identical (same polygon, different mesh).
+    private static func shapeRimPointsNDC(_ instance: MilkdropShapeInstance, aspect: Float) -> (center: SIMD2<Float>, rim: [SIMD2<Float>]) {
+        let center = SIMD2<Float>(instance.x * 2 - 1, instance.y * -2 + 1)
+        guard instance.sides >= 3 else { return (center, []) }
+        let pi: Float = .pi
+        var rim: [SIMD2<Float>] = []
+        rim.reserveCapacity(instance.sides)
+        for i in 0..<instance.sides {
+            let cornerProgress = Float(i) / Float(instance.sides)
+            let angle = cornerProgress * pi * 2 + instance.ang + pi * 0.25
+            rim.append(center + SIMD2<Float>(instance.rad * cosf(angle) * aspect, instance.rad * sinf(angle)))
+        }
+        return (center, rim)
+    }
+
+    /// Explicit triangles (not a GPU triangle-fan primitive — Metal has none) forming the same
+    /// center-to-rim gradient fan as CustomShape.cpp's fill mesh: center vertex colored
+    /// `(r,g,b,a)`, every rim vertex colored `(r2,g2,b2,a2)` — a real per-vertex gradient.
+    private static func shapeFillVertices(_ instance: MilkdropShapeInstance, pixelSize: CGSize, aspect: Float) -> [ShapeVertex] {
+        let (centerNDC, rim) = shapeRimPointsNDC(instance, aspect: aspect)
+        guard rim.count >= 3 else { return [] }
+
+        func toPixel(_ ndc: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(ndc.x * 0.5 * Float(pixelSize.width), ndc.y * 0.5 * Float(pixelSize.height))
+        }
+
+        let center = ShapeVertex(position: toPixel(centerNDC), color: SIMD4<Float>(instance.r, instance.g, instance.b, instance.a))
+        let rimColor = SIMD4<Float>(instance.r2, instance.g2, instance.b2, instance.a2)
+        let rimPixels = rim.map(toPixel)
+
+        var verts: [ShapeVertex] = []
+        verts.reserveCapacity(rim.count * 3)
+        for i in 0..<rim.count {
+            let next = rimPixels[(i + 1) % rim.count]
+            verts.append(center)
+            verts.append(ShapeVertex(position: rimPixels[i], color: rimColor))
+            verts.append(ShapeVertex(position: next, color: rimColor))
+        }
+        return verts
+    }
+
+    /// Outline ribbon around the same rim used above, reusing `lineStripVertices`' ribbon-extrusion
+    /// math (identical to how `.circular` wave mode closes its loop) instead of duplicating it,
+    /// then tinting every vertex with the shape's uniform border color to fit the shape pipeline's
+    /// per-vertex-color format. `thickOutline` widens the ribbon rather than redrawing it 3x with
+    /// pixel offsets like upstream's "poor-man's" hack — same thicker-outline result, simpler code.
+    private static func shapeOutlineVertices(_ instance: MilkdropShapeInstance, pixelSize: CGSize, aspect: Float, halfWidth: Float) -> [ShapeVertex] {
+        let (_, rim) = shapeRimPointsNDC(instance, aspect: aspect)
+        guard rim.count >= 3 else { return [] }
+
+        var points = rim.map { WavePoint(x: $0.x, y: $0.y) }
+        if let first = points.first { points.append(first) }
+
+        let borderColor = SIMD4<Float>(instance.borderR, instance.borderG, instance.borderB, instance.borderA)
+        return Self.lineStripVertices(points: points, pixelSize: pixelSize, halfWidth: halfWidth, isLoop: true)
+            .map { ShapeVertex(position: $0, color: borderColor) }
     }
 }

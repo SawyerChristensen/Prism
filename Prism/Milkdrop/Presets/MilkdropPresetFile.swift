@@ -2,14 +2,17 @@
 //  MilkdropPresetFile.swift
 //  Prism
 //
-//  Parses the subset of Milkdrop's ".milk" preset format Prism's waveform-only pipeline actually
-//  needs: the top-level `key=value` constants that seed a preset's wave state (nWaveMode,
-//  fWaveScale, fWaveSmoothing, fWaveParam, wave_x/y/r/g/b), plus the numbered `per_frame_N=`/
-//  `per_frame_init_N=` lines, which get concatenated in numeric order into expression programs
-//  (see MilkdropExpressionEvaluator.swift). Everything else in the file — warp/composite shaders,
-//  custom shapes/waveforms, motion vectors, borders — is read past but not interpreted; Prism
-//  only renders the waveform layer, not the full preset visual (see MilkdropWaveform.swift's
-//  header for that scope decision).
+//  Parses the subset of Milkdrop's ".milk" preset format Prism's pipeline actually needs: the
+//  top-level `key=value` constants that seed a preset's wave state (nWaveMode, fWaveScale,
+//  fWaveSmoothing, fWaveParam, wave_x/y/r/g/b), the numbered `per_frame_N=`/`per_frame_init_N=`
+//  lines, and up to 4 custom shapes' `shapecode_N_*` constants plus their `shape_N_init*`/
+//  `shape_N_per_frame*` code — all of which get concatenated in numeric order into expression
+//  programs (see MilkdropExpressionEvaluator.swift). Note the shape code slots use a *different*
+//  numbering convention than the main preset's: `shape_0_init1`, not `shape_0_init_1` — confirmed
+//  against projectM's PresetFileParser::GetCode, which appends the slot number directly with no
+//  separating underscore. Everything else in the file — warp/composite shaders, custom waveforms,
+//  motion vectors, borders, textures — is read past but not interpreted; Prism doesn't render the
+//  full preset visual (see MilkdropWaveform.swift's header for that scope decision).
 //
 //  Format reference: a flat INI-style file, one `[presetNN]` section (Prism only ever reads the
 //  first), lines are `key=value` with no quoting. Milkdrop's own parser matches keys
@@ -24,6 +27,43 @@ import Foundation
 
 enum MilkdropPresetFileError: Error {
     case unreadable
+}
+
+/// One `shapecode_N_*` custom shape: a per-frame-scripted polygon/circle overlay, independent of
+/// the main preset's waveform. Defaults match projectM's CustomShape.cpp (the reference this was
+/// ported from) exactly, since a preset that only sets a few keys relies on the rest of these.
+struct MilkdropShapePreset {
+    var enabled: Bool = false
+    var sides: Int = 4
+    var additive: Bool = false
+    var thickOutline: Bool = false
+    /// `num_inst`: how many independently-scripted copies to draw (see MilkdropShapeState.swift).
+    var numInst: Int = 1
+    var x: Float = 0.5
+    var y: Float = 0.5
+    var rad: Float = 0.1
+    var ang: Float = 0.0
+    /// Center-vertex color of the fill gradient.
+    var r: Float = 1.0
+    var g: Float = 0.0
+    var b: Float = 0.0
+    var a: Float = 1.0
+    /// Rim-vertex color of the fill gradient (a real per-vertex gradient in Milkdrop, not a flat
+    /// fill — see MilkdropMetalRenderer.swift's shape draw path).
+    var r2: Float = 0.0
+    var g2: Float = 1.0
+    var b2: Float = 0.0
+    var a2: Float = 0.0
+    /// Outline color/alpha. `borderA <= 0` (Milkdrop's default) means no outline is drawn at all.
+    var borderR: Float = 1.0
+    var borderG: Float = 1.0
+    var borderB: Float = 1.0
+    var borderA: Float = 0.0
+    /// Concatenated `shape_N_init*=` lines — run once at load, same role as the main preset's
+    /// `perFrameInitProgram`.
+    var initProgram: String = ""
+    /// Concatenated `shape_N_per_frame*=` lines — re-evaluated once per instance, every frame.
+    var perFrameProgram: String = ""
 }
 
 struct MilkdropPresetFile {
@@ -43,6 +83,10 @@ struct MilkdropPresetFile {
     /// Concatenated `per_frame_init_N=` lines — run once, before `perFrameProgram`'s first
     /// evaluation, to seed any custom variables the per-frame program reads (e.g. `SPEED=10;`).
     var perFrameInitProgram: String = ""
+    /// Always 4 elements (indices 0-3), matching Milkdrop's `CustomShapeCount`. A shape with no
+    /// `shapecode_N_*` keys at all in the file stays at `MilkdropShapePreset()`'s defaults —
+    /// `enabled == false`, so it's simply skipped at render time.
+    var shapes: [MilkdropShapePreset] = Array(repeating: MilkdropShapePreset(), count: 4)
 
     init(contentsOf url: URL) throws {
         // Presets in the wild are inconsistently encoded (Milkdrop predates any UTF-8 convention),
@@ -63,6 +107,9 @@ struct MilkdropPresetFile {
         var constants: [String: String] = [:]
         var perFrameLines: [(index: Int, text: String)] = []
         var perFrameInitLines: [(index: Int, text: String)] = []
+        var shapeConstants: [Int: [String: String]] = [:]
+        var shapeInitLines: [Int: [(index: Int, text: String)]] = [:]
+        var shapePerFrameLines: [Int: [(index: Int, text: String)]] = [:]
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -86,6 +133,16 @@ struct MilkdropPresetFile {
                 if n < 1000 {
                     perFrameLines.append((n, value))
                 }
+            } else if key.hasPrefix("shapecode_"), let (idx, subKey) = splitIndexedKey(key, after: "shapecode_"), (0..<4).contains(idx) {
+                shapeConstants[idx, default: [:]][subKey] = value
+            } else if key.hasPrefix("shape_"), let (idx, codeKey) = splitIndexedKey(key, after: "shape_"), (0..<4).contains(idx) {
+                // No underscore between the code-family name and its slot number here (unlike
+                // `per_frame_N` above) — see this file's header for why.
+                if codeKey.hasPrefix("init"), let n = Int(codeKey.dropFirst("init".count)) {
+                    shapeInitLines[idx, default: []].append((n, value))
+                } else if codeKey.hasPrefix("per_frame"), let n = Int(codeKey.dropFirst("per_frame".count)) {
+                    shapePerFrameLines[idx, default: []].append((n, value))
+                }
             } else {
                 constants[key] = value
             }
@@ -101,12 +158,17 @@ struct MilkdropPresetFile {
             if s.hasSuffix(";") { s.removeLast() }
             return s.trimmingCharacters(in: .whitespaces)
         }
-        func float(_ key: String, _ fallback: Float) -> Float {
-            constants[key].map(cleaned).flatMap(Float.init) ?? fallback
+        func floatIn(_ dict: [String: String], _ key: String, _ fallback: Float) -> Float {
+            dict[key].map(cleaned).flatMap(Float.init) ?? fallback
         }
-        func int(_ key: String, _ fallback: Int) -> Int {
-            constants[key].map(cleaned).flatMap { Int(Double($0) ?? Double(fallback)) } ?? fallback
+        func intIn(_ dict: [String: String], _ key: String, _ fallback: Int) -> Int {
+            dict[key].map(cleaned).flatMap { Int(Double($0) ?? Double(fallback)) } ?? fallback
         }
+        func boolIn(_ dict: [String: String], _ key: String, _ fallback: Bool) -> Bool {
+            dict[key].map(cleaned).flatMap { Double($0) }.map { $0 != 0 } ?? fallback
+        }
+        func float(_ key: String, _ fallback: Float) -> Float { floatIn(constants, key, fallback) }
+        func int(_ key: String, _ fallback: Int) -> Int { intIn(constants, key, fallback) }
 
         waveMode = int("nwavemode", waveMode)
         waveScale = float("fwavescale", waveScale)
@@ -118,5 +180,48 @@ struct MilkdropPresetFile {
         waveG = float("wave_g", waveG)
         waveB = float("wave_b", waveB)
         waveAlpha = float("fwavealpha", waveAlpha)
+
+        shapes = (0..<4).map { idx in
+            let dict = shapeConstants[idx] ?? [:]
+            var shape = MilkdropShapePreset()
+            shape.enabled = boolIn(dict, "enabled", shape.enabled)
+            shape.sides = intIn(dict, "sides", shape.sides)
+            shape.additive = boolIn(dict, "additive", shape.additive)
+            shape.thickOutline = boolIn(dict, "thickoutline", shape.thickOutline)
+            shape.numInst = intIn(dict, "num_inst", shape.numInst)
+            shape.x = floatIn(dict, "x", shape.x)
+            shape.y = floatIn(dict, "y", shape.y)
+            shape.rad = floatIn(dict, "rad", shape.rad)
+            shape.ang = floatIn(dict, "ang", shape.ang)
+            shape.r = floatIn(dict, "r", shape.r)
+            shape.g = floatIn(dict, "g", shape.g)
+            shape.b = floatIn(dict, "b", shape.b)
+            shape.a = floatIn(dict, "a", shape.a)
+            shape.r2 = floatIn(dict, "r2", shape.r2)
+            shape.g2 = floatIn(dict, "g2", shape.g2)
+            shape.b2 = floatIn(dict, "b2", shape.b2)
+            shape.a2 = floatIn(dict, "a2", shape.a2)
+            shape.borderR = floatIn(dict, "border_r", shape.borderR)
+            shape.borderG = floatIn(dict, "border_g", shape.borderG)
+            shape.borderB = floatIn(dict, "border_b", shape.borderB)
+            shape.borderA = floatIn(dict, "border_a", shape.borderA)
+
+            let initLines = (shapeInitLines[idx] ?? []).sorted { $0.index < $1.index }
+            shape.initProgram = initLines.map(\.text).joined(separator: "\n")
+            let frameLines = (shapePerFrameLines[idx] ?? []).sorted { $0.index < $1.index }
+            shape.perFrameProgram = frameLines.map(\.text).joined(separator: "\n")
+            return shape
+        }
     }
+}
+
+/// Splits a lowercased key like `shapecode_0_sides` (after stripping the `shapecode_` prefix into
+/// `0_sides`) into its shape index and the remaining sub-key (`sides`). Returns nil for a
+/// malformed key (no second underscore, or a non-numeric index) rather than crashing.
+private func splitIndexedKey(_ key: String, after prefix: String) -> (index: Int, rest: String)? {
+    let remainder = key.dropFirst(prefix.count)
+    guard let underscore = remainder.firstIndex(of: "_"), let index = Int(remainder[remainder.startIndex..<underscore]) else {
+        return nil
+    }
+    return (index, String(remainder[remainder.index(after: underscore)...]))
 }

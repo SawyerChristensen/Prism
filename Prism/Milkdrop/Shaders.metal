@@ -45,6 +45,37 @@ fragment float4 solid_fragment(
     return color;
 }
 
+// MARK: - Custom shapes (shapecode_N_* — see MilkdropShapeState.swift)
+
+// Unlike solid_vertex's uniform fragment color, Milkdrop's shape fill is a genuine per-vertex
+// gradient (center color -> rim color), so color travels with the vertex instead of as a constant.
+struct ShapeVertex {
+    float2 position; // Same pixel-space, center-origin, y-up convention as solid_vertex's input.
+    float4 color;
+};
+
+struct ShapeVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex ShapeVertexOut shape_vertex(
+    const device ShapeVertex *vertices [[buffer(0)]],
+    constant float2 &viewportSize [[buffer(1)]],
+    uint vid [[vertex_id]]
+) {
+    ShapeVertex v = vertices[vid];
+    float2 ndc = v.position / (viewportSize * 0.5);
+    ShapeVertexOut out;
+    out.position = float4(ndc, 0.0, 1.0);
+    out.color = v.color;
+    return out;
+}
+
+fragment float4 shape_fragment(ShapeVertexOut in [[stage_in]]) {
+    return in.color;
+}
+
 // MARK: - Full-screen quad (shared by the feedback pass and the present pass)
 
 // NDC (-1,-1) is the bottom-left of clip space, but texture UV (0,0) samples the top-left texel —
