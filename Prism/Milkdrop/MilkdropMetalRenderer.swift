@@ -72,70 +72,52 @@ final class MilkdropBeatState {
     }
 }
 
-final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
+/// Renders one preset's entire pipeline into an offscreen texture — nothing here touches a live
+/// `MTKView` drawable directly (see `renderToTexture(view:)`) so that MilkdropMetalCoordinator can
+/// hold two independent instances (the front-facing preset and, only during a transition, the one
+/// it's fading out of) and composite their output itself.
+final class MilkdropMetalRenderer: NSObject {
     private let audioEngine: CoreAudioTapEngine
-    var model: MilkdropVisualizerModel
+    let model: MilkdropVisualizerModel
     var color: Color = .white
     var bassEnergy: CGFloat = 0
 
-    private let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
-    private let solidPipeline: MTLRenderPipelineState
-    private let feedbackPipeline: MTLRenderPipelineState
-    private let presentPipeline: MTLRenderPipelineState
-    // VideoEcho.cpp/Filters.cpp's "old-school" final-composite path (see MilkdropPresetFile.swift's
-    // usesOldStyleFinalComposite) — a fixed Metal shader, not dynamically compiled per preset like
-    // compiledComposite/compiledWarp, since it's the same closed-form function for every old-style
-    // preset regardless of which of its knobs are set.
-    private let oldStyleCompositePipeline: MTLRenderPipelineState
-    // The scripted warp-mesh path (per_pixel_N= — see MilkdropPerPixelMesh.swift), used instead of
-    // feedbackPipeline's full-screen quad only when the loaded preset actually has per-pixel code.
-    // The mesh's triangle connectivity never changes (fixed 32x24 grid), so its index buffer is
-    // built once here rather than every frame like the (per-preset-varying) vertex buffer.
-    private let feedbackMeshPipeline: MTLRenderPipelineState
-    private let meshIndexBuffer: MTLBuffer
-    // Custom shapes (shapecode_N_*) use their own pipelines: per-vertex color (for the fill
-    // gradient, unlike solidPipeline's uniform color) and blend factors that don't match
-    // solidPipeline's fixed (One,One) — Milkdrop's shape blend is (SourceAlpha,One) when additive,
-    // (SourceAlpha,OneMinusSourceAlpha — standard "over" alpha) otherwise. See CustomShape.cpp:
-    // 101-105 in projectM, and MilkdropShapeState.swift for the rest of the port.
-    private let shapeAdditivePipeline: MTLRenderPipelineState
-    private let shapeAlphaPipeline: MTLRenderPipelineState
-    // `textured=1` shapes (CustomShape.cpp:145-201) — same blend factors as the pair above, just a
-    // different vertex/fragment pair that samples a texture instead of the flat gradient fill.
-    private let shapeTexturedAdditivePipeline: MTLRenderPipelineState
-    private let shapeTexturedAlphaPipeline: MTLRenderPipelineState
-
-    // Paired with a dynamically-compiled composite fragment function at draw time (see
-    // compileCompositeShader below) — MTLRenderPipelineDescriptor doesn't require its vertex and
-    // fragment functions to come from the same MTLLibrary, so the static full-screen-quad vertex
-    // shader is reused as-is rather than duplicated into every generated shader source.
-    private let feedbackVertexFunction: MTLFunction
-    // Reused when dynamically compiling a `warp_N=` shader's fragment function (see
-    // compileWarpShader below) — same reasoning as feedbackVertexFunction above, just for the mesh
-    // vertex stage instead of the full-screen quad.
-    private let feedbackMeshVertexFunction: MTLFunction
-    // Reused (paired with a GPU-compiled per_pixel_N= vertex function — see
-    // compiledPerPixelMeshOnlyPipeline below) for a preset with a scripted mesh but no warp_N=
-    // shader of its own — same reasoning as feedbackMeshVertexFunction above, just the fragment
-    // side of that same pairing instead of the vertex side. `feedbackMeshPipeline` above already
-    // bundles this same function with the static `feedback_mesh_vertex`, but doesn't expose it
-    // separately for reuse in a different pairing the way feedbackVertexFunction/
-    // feedbackMeshVertexFunction already had to.
-    private let feedbackMeshFragmentFunction: MTLFunction
-    // The four filter/wrap combinations MilkdropShaderTranslator's qualifier-prefix parsing can
-    // resolve a texture to (TextureManager.cpp:355-401) — created once and picked per texture
-    // binding at draw time, rather than one MTLSamplerState per compiled shader.
-    private let samplerLinearRepeat: MTLSamplerState
-    private let samplerLinearClamp: MTLSamplerState
-    private let samplerNearestRepeat: MTLSamplerState
-    private let samplerNearestClamp: MTLSamplerState
-    // Milkdrop's built-in noise textures (sampler_noise_lq, etc.) — generated once here, not
-    // per-preset, since their content isn't preset-specific (see MilkdropNoiseTextures.swift).
-    private let noiseTextures: MilkdropNoiseTextures?
+    // Every static, preset-independent GPU resource (pipelines/samplers/fixed functions/geometry)
+    // now lives on `shared` — see MilkdropMetalCoordinator.swift's MilkdropSharedRenderResources —
+    // so that switching presets doesn't recompile ~15 pipeline states or regenerate the noise
+    // texture catalog every time. Computed passthroughs below keep every reference to e.g.
+    // `device`/`solidPipeline` elsewhere in this file unchanged (still just `device`, not
+    // `shared.device`), so this split touched nothing past `init` and these declarations.
+    private let shared: MilkdropSharedRenderResources
+    private var device: MTLDevice { shared.device }
+    private var commandQueue: MTLCommandQueue { shared.commandQueue }
+    private var solidPipeline: MTLRenderPipelineState { shared.solidPipeline }
+    private var feedbackPipeline: MTLRenderPipelineState { shared.feedbackPipeline }
+    private var presentPipeline: MTLRenderPipelineState { shared.presentPipeline }
+    private var oldStyleCompositePipeline: MTLRenderPipelineState { shared.oldStyleCompositePipeline }
+    private var feedbackMeshPipeline: MTLRenderPipelineState { shared.feedbackMeshPipeline }
+    private var meshIndexBuffer: MTLBuffer { shared.meshIndexBuffer }
+    private var shapeAdditivePipeline: MTLRenderPipelineState { shared.shapeAdditivePipeline }
+    private var shapeAlphaPipeline: MTLRenderPipelineState { shared.shapeAlphaPipeline }
+    private var shapeTexturedAdditivePipeline: MTLRenderPipelineState { shared.shapeTexturedAdditivePipeline }
+    private var shapeTexturedAlphaPipeline: MTLRenderPipelineState { shared.shapeTexturedAlphaPipeline }
+    private var feedbackVertexFunction: MTLFunction { shared.feedbackVertexFunction }
+    private var feedbackMeshVertexFunction: MTLFunction { shared.feedbackMeshVertexFunction }
+    private var feedbackMeshFragmentFunction: MTLFunction { shared.feedbackMeshFragmentFunction }
+    private var samplerLinearRepeat: MTLSamplerState { shared.samplerLinearRepeat }
+    private var samplerLinearClamp: MTLSamplerState { shared.samplerLinearClamp }
+    private var samplerNearestRepeat: MTLSamplerState { shared.samplerNearestRepeat }
+    private var samplerNearestClamp: MTLSamplerState { shared.samplerNearestClamp }
+    private var noiseTextures: MilkdropNoiseTextures? { shared.noiseTextures }
     // Preset-pack `Textures/` lookups for custom sampler names (`sampler_worms`, `sampler_rand00`,
-    // etc. — see MilkdropShaderTranslator's `.custom` resource case). One instance for the
-    // renderer's lifetime (not per-preset) since it internally caches by scanned root already.
+    // etc. — see MilkdropShaderTranslator's `.custom` resource case). Deliberately kept per-instance
+    // (NOT moved to MilkdropSharedRenderResources like everything above) despite looking just as
+    // "not preset-specific" — its `scannedRoot`/`randomTextureDescriptors`-equivalent cache
+    // (MilkdropCustomTextureManager.swift) is single, unkeyed, mutable state, not indexed by
+    // preset. Sharing one instance across the active and outgoing renderer during a transition
+    // would let whichever one calls `prepareForPreset` second silently stomp the other's resolved
+    // root/random-slot choices if the two presets come from different packs — a real correctness
+    // bug, not just a missed sharing opportunity.
     private let customTextures: MilkdropCustomTextureManager
     /// The `model.loadGeneration` `customTextures` last (re)scanned for — same gating pattern as
     /// `compiledCompositeGeneration`/`compiledWarpGeneration`, so a folder walk + directory scan
@@ -221,134 +203,12 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         visibleSampleCount: MilkdropWaveformAligner.visibleSampleCount
     )
 
-    init(audioEngine: CoreAudioTapEngine, model: MilkdropVisualizerModel) {
+    init(shared: MilkdropSharedRenderResources, audioEngine: CoreAudioTapEngine, model: MilkdropVisualizerModel) {
+        self.shared = shared
         self.audioEngine = audioEngine
         self.model = model
-
-        // Every Mac Metal can plausibly run on has a capable GPU; there's no meaningful degraded
-        // path for a GPU-rendered visualizer if this fails, so a hard failure here is honest
-        // rather than limping along with a half-working renderer.
-        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
-            fatalError("Metal is not available on this device")
-        }
-        self.device = device
-        self.commandQueue = queue
-
-        guard let library = device.makeDefaultLibrary() else {
-            fatalError("Could not load Shaders.metal's compiled library")
-        }
-
-        func makePipeline(vertex: String, fragment: String, additiveBlend: Bool) -> MTLRenderPipelineState {
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = library.makeFunction(name: vertex)
-            descriptor.fragmentFunction = library.makeFunction(name: fragment)
-            guard let attachment = descriptor.colorAttachments[0] else {
-                fatalError("Missing color attachment 0 on pipeline descriptor")
-            }
-            attachment.pixelFormat = .bgra8Unorm
-            attachment.isBlendingEnabled = additiveBlend
-            if additiveBlend {
-                attachment.rgbBlendOperation = .add
-                attachment.alphaBlendOperation = .add
-                attachment.sourceRGBBlendFactor = .one
-                attachment.sourceAlphaBlendFactor = .one
-                attachment.destinationRGBBlendFactor = .one
-                attachment.destinationAlphaBlendFactor = .one
-            }
-            // swiftlint:disable:next force_try
-            return try! device.makeRenderPipelineState(descriptor: descriptor)
-        }
-
-        // Waveform/bars: additive ("plusLighter"-equivalent), matching the old CG blend mode —
-        // overlapping strokes brighten instead of overpainting, giving the glowy scope look.
-        self.solidPipeline = makePipeline(vertex: "solid_vertex", fragment: "solid_fragment", additiveBlend: true)
-        // Feedback and present passes fully replace their target's contents (loadAction .clear
-        // plus a full-screen quad), so blending would be a no-op — left off for clarity/cost.
-        self.feedbackPipeline = makePipeline(vertex: "feedback_vertex", fragment: "feedback_fragment", additiveBlend: false)
-        self.presentPipeline = makePipeline(vertex: "feedback_vertex", fragment: "present_fragment", additiveBlend: false)
-        self.oldStyleCompositePipeline = makePipeline(vertex: "feedback_vertex", fragment: "milkdrop_old_style_final_composite", additiveBlend: false)
-
-        func makeBlendedPipeline(vertex: String, fragment: String, sourceFactor: MTLBlendFactor, destFactor: MTLBlendFactor) -> MTLRenderPipelineState {
-            let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = library.makeFunction(name: vertex)
-            descriptor.fragmentFunction = library.makeFunction(name: fragment)
-            guard let attachment = descriptor.colorAttachments[0] else {
-                fatalError("Missing color attachment 0 on pipeline descriptor")
-            }
-            attachment.pixelFormat = .bgra8Unorm
-            attachment.isBlendingEnabled = true
-            attachment.rgbBlendOperation = .add
-            attachment.alphaBlendOperation = .add
-            attachment.sourceRGBBlendFactor = sourceFactor
-            attachment.sourceAlphaBlendFactor = sourceFactor
-            attachment.destinationRGBBlendFactor = destFactor
-            attachment.destinationAlphaBlendFactor = destFactor
-            // swiftlint:disable:next force_try
-            return try! device.makeRenderPipelineState(descriptor: descriptor)
-        }
-
-        self.shapeAdditivePipeline = makeBlendedPipeline(
-            vertex: "shape_vertex", fragment: "shape_fragment", sourceFactor: .sourceAlpha, destFactor: .one
-        )
-        self.shapeAlphaPipeline = makeBlendedPipeline(
-            vertex: "shape_vertex", fragment: "shape_fragment", sourceFactor: .sourceAlpha, destFactor: .oneMinusSourceAlpha
-        )
-        self.shapeTexturedAdditivePipeline = makeBlendedPipeline(
-            vertex: "shape_textured_vertex", fragment: "shape_textured_fragment", sourceFactor: .sourceAlpha, destFactor: .one
-        )
-        self.shapeTexturedAlphaPipeline = makeBlendedPipeline(
-            vertex: "shape_textured_vertex", fragment: "shape_textured_fragment", sourceFactor: .sourceAlpha, destFactor: .oneMinusSourceAlpha
-        )
-
-        guard let feedbackVertexFunction = library.makeFunction(name: "feedback_vertex") else {
-            fatalError("Could not load Shaders.metal's feedback_vertex function")
-        }
-        self.feedbackVertexFunction = feedbackVertexFunction
-
-        self.feedbackMeshPipeline = makePipeline(vertex: "feedback_mesh_vertex", fragment: "feedback_mesh_fragment", additiveBlend: false)
-
-        guard let feedbackMeshVertexFunction = library.makeFunction(name: "feedback_mesh_vertex") else {
-            fatalError("Could not load Shaders.metal's feedback_mesh_vertex function")
-        }
-        self.feedbackMeshVertexFunction = feedbackMeshVertexFunction
-
-        guard let feedbackMeshFragmentFunction = library.makeFunction(name: "feedback_mesh_fragment") else {
-            fatalError("Could not load Shaders.metal's feedback_mesh_fragment function")
-        }
-        self.feedbackMeshFragmentFunction = feedbackMeshFragmentFunction
-
-        let meshIndices = MilkdropPerPixelMeshRuntime.sharedIndices
-        guard let meshIndexBuffer = device.makeBuffer(
-            bytes: meshIndices, length: MemoryLayout<UInt16>.stride * meshIndices.count, options: .storageModeShared
-        ) else {
-            fatalError("Could not allocate the per-pixel warp mesh's index buffer")
-        }
-        self.meshIndexBuffer = meshIndexBuffer
-
-        func makeSampler(filter: MTLSamplerMinMagFilter, address: MTLSamplerAddressMode) -> MTLSamplerState {
-            let descriptor = MTLSamplerDescriptor()
-            descriptor.minFilter = filter
-            descriptor.magFilter = filter
-            descriptor.sAddressMode = address
-            descriptor.tAddressMode = address
-            descriptor.rAddressMode = address
-            // swiftlint:disable:next force_unwrapping
-            return device.makeSamplerState(descriptor: descriptor)!
-        }
-        self.samplerLinearRepeat = makeSampler(filter: .linear, address: .repeat)
-        self.samplerLinearClamp = makeSampler(filter: .linear, address: .clampToEdge)
-        self.samplerNearestRepeat = makeSampler(filter: .nearest, address: .repeat)
-        self.samplerNearestClamp = makeSampler(filter: .nearest, address: .clampToEdge)
-
-        self.noiseTextures = MilkdropNoiseTextures(device: device)
-        self.customTextures = MilkdropCustomTextureManager(device: device)
-
+        self.customTextures = MilkdropCustomTextureManager(device: shared.device)
         super.init()
-    }
-
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // Textures are (re)created lazily at the top of draw(in:) instead — simpler than
-        // coordinating state between two separate delegate callbacks for the same condition.
     }
 
     private func ensureTextures(size: CGSize) {
@@ -880,13 +740,14 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    func draw(in view: MTKView) {
-        guard let drawable = view.currentDrawable,
-              let presentDescriptor = view.currentRenderPassDescriptor else { return }
-
+    /// Renders this preset's whole pipeline for one frame and returns the finished texture —
+    /// everything through Pass 1.5 (composite), unchanged from the old single-renderer `draw(in:)`.
+    /// Does not touch `view.currentDrawable` at all; MilkdropMetalCoordinator.draw(in:) owns
+    /// presenting (and, during a transition, blending two of these calls' results together).
+    func renderToTexture(view: MTKView) -> MTLTexture? {
         ensureTextures(size: view.drawableSize)
         guard let sourceTexture = textures[sourceIndex],
-              let destTexture = textures[1 - sourceIndex] else { return }
+              let destTexture = textures[1 - sourceIndex] else { return nil }
 
         let pixelSize = view.drawableSize
         let now = Date()
@@ -986,7 +847,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let backingScale = view.bounds.width > 0 ? pixelSize.width / view.bounds.width : 2.0
         let lineWidthPx = Float(1.6 + bassEnergy * 2.2 + punch * 1.4) * Float(backingScale)
 
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else { return nil }
 
         // MARK: Pass 1 — feedback (decayed/zoomed/rotated previous frame) + new stroke, into destTexture
 
@@ -996,7 +857,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         feedbackPass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         feedbackPass.colorAttachments[0].storeAction = .store
 
-        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: feedbackPass) else { return }
+        guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: feedbackPass) else { return nil }
 
         // Base transform comes from the loaded preset's real per-frame zoom/rot/warp/etc. (neutral
         // defaults — zoom=1, rot=0, warp=1, decay=0.98 — when nothing's loaded, matching real
@@ -1432,21 +1293,13 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        // MARK: Pass 2 — present destTexture to the drawable
-
-        guard let presentEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: presentDescriptor) else {
-            commandBuffer.commit()
-            return
-        }
-        presentEncoder.setRenderPipelineState(presentPipeline)
-        presentEncoder.setFragmentTexture(destTexture, index: 0)
-        presentEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        presentEncoder.endEncoding()
-
-        commandBuffer.present(drawable)
+        // Presenting `destTexture` to a live drawable (formerly "Pass 2" here) now belongs to
+        // MilkdropMetalCoordinator, which owns the actual view and — during a transition — needs
+        // to blend this texture with a second renderer's before anything reaches the drawable.
         commandBuffer.commit()
 
         sourceIndex = 1 - sourceIndex
+        return destTexture
     }
 
     // MARK: - Transient vertex buffer pool (waveform/shape/custom-waveform geometry, rebuilt every frame)

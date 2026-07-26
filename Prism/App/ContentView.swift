@@ -261,9 +261,23 @@ struct ContentView: View {
     /// at launch): remembers it for next launch's restore (MilkdropLastPresetStore) and restarts
     /// the idle auto-cycle countdown so a manual skip doesn't get immediately followed by an
     /// auto-cycle a moment later.
+    ///
+    /// Loads into a *fresh* `MilkdropVisualizerModel` instance rather than mutating the existing
+    /// `visualizerModel` in place (TO DO.md Phase 3 — "Preset blending/crossfade transitions"): the
+    /// renderer needs the outgoing preset's own live, still-evolving state to keep rendering for
+    /// the crossfade's duration, which isn't possible if loading the next preset overwrites it
+    /// destructively. `MilkdropMetalView.updateNSView` notices `visualizerModel` became a different
+    /// instance and starts the transition (see MilkdropMetalCoordinator.updateModelIfNeeded). A
+    /// failed load's error is surfaced on the *existing* (still on-screen) model, matching the old
+    /// behavior of the alert appearing over whatever preset is still visible.
     private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true) {
-        visualizerModel.loadPreset(from: url)
-        guard visualizerModel.presetLoadError == nil else { return }
+        let newModel = MilkdropVisualizerModel()
+        newModel.loadPreset(from: url)
+        guard newModel.presetLoadError == nil else {
+            visualizerModel.presetLoadError = newModel.presetLoadError
+            return
+        }
+        visualizerModel = newModel
         lastPresetStore.rememberLoaded(url)
         if resetAutoCycle {
             restartAutoCycleTimerIfNeeded()

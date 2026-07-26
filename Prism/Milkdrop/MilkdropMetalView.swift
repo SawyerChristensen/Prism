@@ -17,8 +17,8 @@ struct MilkdropMetalView: NSViewRepresentable {
     var bassEnergy: CGFloat
     var model: MilkdropVisualizerModel
 
-    func makeCoordinator() -> MilkdropMetalRenderer {
-        MilkdropMetalRenderer(audioEngine: audioEngine, model: model)
+    func makeCoordinator() -> MilkdropMetalCoordinator {
+        MilkdropMetalCoordinator(audioEngine: audioEngine, model: model)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -40,10 +40,14 @@ struct MilkdropMetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // `model` is a reference type, so mutations (e.g. loadPreset(from:)) are already visible to
-        // the renderer without re-pushing it; `color`/`bassEnergy` are value types and do need
-        // pushing through on every SwiftUI update.
+        // `color`/`bassEnergy` are value types and need pushing through on every SwiftUI update.
         context.coordinator.color = color
         context.coordinator.bassEnergy = bassEnergy
+        // `model` is a reference type, but ContentView.loadPresetAndTrack now hands down a *new*
+        // MilkdropVisualizerModel instance per preset load (see its own doc comment on why) rather
+        // than mutating the existing one in place — so unlike color/bassEnergy, this one does need
+        // an identity check: a different instance than last time means a new preset just loaded,
+        // which starts a crossfade rather than just updating a property in place.
+        context.coordinator.updateModelIfNeeded(model)
     }
 }

@@ -220,6 +220,27 @@ fragment float4 present_fragment(
     return tex.sample(s, in.uv);
 }
 
+// MARK: - Preset-to-preset crossfade (TO DO.md Phase 3 — "Preset blending/crossfade transitions")
+
+// Simple cross-dissolve between the outgoing and incoming preset's fully-rendered output, exact
+// port of real projectM's own default/built-in transition
+// (Renderer/TransitionShaders/TransitionShaderBuiltInSimpleBlendGlsl330.frag) — `progress` is the
+// same cosine-eased curve real projectM feeds that shader as `iProgressCosine`
+// (PresetTransition::Draw: `(-cos(linearProgress * PI) + 1.0) * 0.5`), computed once per frame by
+// MilkdropMetalCoordinator rather than re-derived here, since MSL has no reason to redo that work
+// per-pixel.
+fragment float4 milkdrop_crossfade_fragment(
+    FullscreenVertexOut in [[stage_in]],
+    texture2d<float> outgoing [[texture(0)]],
+    texture2d<float> incoming [[texture(1)]],
+    constant float& progress [[buffer(0)]]
+) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    float4 a = outgoing.sample(s, in.uv);
+    float4 b = incoming.sample(s, in.uv);
+    return mix(a, b, progress);
+}
+
 // MARK: - Old-style final composite (VideoEcho.cpp/Filters.cpp — no comp_N= shader at all)
 
 // Real Milkdrop's "old-school" (Milkdrop 1.x-format, pre-shader) final-composite path — see
