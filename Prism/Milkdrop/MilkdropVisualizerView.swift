@@ -70,6 +70,11 @@ struct MilkdropOldStyleCompositeParams {
 
 @Observable
 final class MilkdropVisualizerModel {
+    /// Precomputed "q1".."q32" dictionary keys — see MilkdropCustomWaveform.swift's identical
+    /// `qKeys` for why (avoids re-interpolating the same 32 strings every time `qVariables` reads
+    /// them back out of `presetVariables`).
+    private static let qKeys: [String] = (1...32).map { "q\($0)" }
+
     var mode: MilkdropWaveMode = .line
     var params = MilkdropWaveformParams()
     /// Smoothed (exponential moving average, not instantaneous) frames-per-second, written by
@@ -283,19 +288,24 @@ final class MilkdropVisualizerModel {
     /// MilkdropExpressionEvaluator.swift's header on NS-EEL's "undeclared = 0" semantics), not a
     /// distinct storage mechanism, so a preset that never touches q-vars just reads back all zeros.
     var qVariables: [Float] {
-        (1...32).map { presetVariables["q\($0)"] ?? 0 }
+        Self.qKeys.map { presetVariables[$0] ?? 0 }
     }
 
     /// Resolves this frame's warp mesh vertices, or `nil` if the loaded preset has no `per_pixel_N=`
     /// code (the common case — see `perPixelMesh`'s doc comment). `aspectX`/`aspectY` match
     /// MilkdropMetalRenderer's own aspect-ratio correction (see its `aspectXY`), so the mesh's
     /// static radius/angle geometry lines up with the fixed-formula path's.
+    /// `qVars` is `qVariables`, resolved once per frame by the caller (MilkdropMetalRenderer.draw)
+    /// and threaded through here rather than each of this/updateCustomWaveforms/
+    /// buildDynamicShaderUniforms independently recomputing the same 32-entry array from
+    /// `presetVariables` — that used to happen 2-4x/frame for an identical result.
     func updatePerPixelMesh(
-        aspectX: Float, aspectY: Float, time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy
+        aspectX: Float, aspectY: Float, time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy,
+        qVars: [Float]
     ) -> [MilkdropMeshVertexAttributes]? {
         perPixelMesh?.calculate(
             aspectX: aspectX, aspectY: aspectY,
-            time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy, qVars: qVariables,
+            time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy, qVars: qVars,
             zoom: warpParams.zoom, zoomExp: warpParams.zoomExponent, rot: warpParams.rot, warp: warpParams.warpAmount,
             cx: warpParams.rotCX, cy: warpParams.rotCY, dx: warpParams.xPush, dy: warpParams.yPush,
             sx: warpParams.stretchX, sy: warpParams.stretchY
@@ -306,12 +316,12 @@ final class MilkdropVisualizerModel {
     /// slots contribute an empty array — see MilkdropCustomWaveform.swift). `pcmLeft`/`pcmRight`
     /// and `spectrumLeft`/`spectrumRight` are raw audio sample data, not yet scaled/smoothed by
     /// anything (each custom waveform does its own scaling/smoothing, separate from the built-in
-    /// waveform's — see MilkdropCustomWaveformRuntime.resolvePoints).
+    /// waveform's — see MilkdropCustomWaveformRuntime.resolvePoints). `qVars` — see
+    /// updatePerPixelMesh's doc comment above.
     func updateCustomWaveforms(
         pcmLeft: [Float], pcmRight: [Float], spectrumLeft: [Float], spectrumRight: [Float],
-        time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy
+        time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy, qVars: [Float]
     ) -> [MilkdropCustomWaveformDrawData] {
-        let qVars = qVariables
         return customWaves.map { wave in
             let (left, right) = wave.preset.spectrum ? (spectrumLeft, spectrumRight) : (pcmLeft, pcmRight)
             let points = wave.resolvePoints(

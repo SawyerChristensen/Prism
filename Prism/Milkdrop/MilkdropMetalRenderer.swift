@@ -611,7 +611,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     /// instances each calling their own `floatRand()`).
     private func buildDynamicShaderUniforms(
         time: Double, frame: Int, energy: MilkdropBandEnergy, randPreset: SIMD4<Float>, pixelSize: CGSize,
-        aspect: SIMD2<Float>, invAspect: SIMD2<Float>
+        aspect: SIMD2<Float>, invAspect: SIMD2<Float>, qVars: [Float]
     ) -> [Float] {
         var uniforms = [Float](repeating: 0, count: Self.totalUniformCount)
         uniforms[0] = Float(time)
@@ -656,7 +656,6 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             uniforms[38 + i] = 0.5 + 0.5 * sinf(t * slowRoamFreqs[i] + slowRoamPhases[i])
         }
 
-        let qVars = model.qVariables
         for i in 0..<qVars.count { uniforms[42 + i] = qVars[i] }
         return uniforms
     }
@@ -722,13 +721,18 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         // Drives a loaded preset's per-frame expression program (if any) before this frame's
         // points get generated below, so mode/params reflect this frame's evaluated values.
         model.updatePresetPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
+        // Resolved once here — model.qVariables re-derives a 32-entry array from presetVariables on
+        // every call (a real, if small, cost — see its own doc comment), and this frame has up to
+        // four call sites that all want the identical result (per-pixel mesh, custom waveforms, and
+        // both dynamic-shader-uniform builds below).
+        let qVars = model.qVariables
         let shapeInstancesByShape = model.updateShapesPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
         // Mono spectrum reused for both channels (see MilkdropAudioSignals.swift's
         // lastMagnitudeSpectrum doc comment on why there's no true stereo spectrum here).
         let magnitudeSpectrum = beat.magnitudeSpectrum
         let customWavePointsByWave = model.updateCustomWaveforms(
             pcmLeft: left, pcmRight: right, spectrumLeft: magnitudeSpectrum, spectrumRight: magnitudeSpectrum,
-            time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy
+            time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy, qVars: qVars
         )
 
         // Re-scan for a Textures/ folder only on an actual preset change too — same reasoning as
@@ -830,7 +834,8 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         //  2. A per_pixel_N= script with no warp shader — the existing scripted-mesh path.
         //  3. Neither — the existing per-pixel-exact fixed-formula path.
         let meshVerticesFromScript = model.updatePerPixelMesh(
-            aspectX: aspectXY.x, aspectY: aspectXY.y, time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy
+            aspectX: aspectXY.x, aspectY: aspectXY.y, time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
+            qVars: qVars
         )
 
         // Resolved before committing to the warp-shader branch: if a texture genuinely fails to
@@ -859,7 +864,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 5)
                 var warpUniforms = buildDynamicShaderUniforms(
                     time: time, frame: frameCounter, energy: energy, randPreset: compiledWarp.randPreset, pixelSize: pixelSize,
-                    aspect: aspectXY, invAspect: invAspectXY
+                    aspect: aspectXY, invAspect: invAspectXY, qVars: qVars
                 )
                 encoder.setFragmentBytes(&warpUniforms, length: MemoryLayout<Float>.stride * warpUniforms.count, index: 0)
                 for (i, (binding, texture)) in resolvedWarpTextures.enumerated() {
@@ -933,27 +938,60 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         }
 
         for shapeInstances in shapeInstancesByShape {
-            for instance in shapeInstances {
-                if instance.textured {
+            // Fill draws are batched: consecutive instances sharing the same (textured, additive)
+            // pipeline choice get merged into one combined vertex buffer + one draw call instead of
+            // one call per instance. This matters because `num_inst` is genuinely unbounded in real
+            // presets — measured against the real ~9,795-file corpus on this machine: literal
+            // values like 1024, 817, 800, 512 each appear hundreds of times (particle/swarm-style
+            // presets are a real genre, not a pathological edge case) — and every fill-mesh's
+            // vertices are independent triangles (`.triangle`, not a strip), so concatenating
+            // several instances' vertex arrays is trivially safe: no connecting geometry needed
+            // between one instance's triangles and the next, unlike a triangle-strip. Falls back to
+            // one draw call per instance automatically whenever additive/textured actually differs
+            // instance-to-instance (uncommon in practice — these are structural draw-mode flags, not
+            // typically per-instance-animated the way color/position are), so this is never worse
+            // than the previous behavior, only better.
+            var i = 0
+            while i < shapeInstances.count {
+                let textured = shapeInstances[i].textured
+                let additive = shapeInstances[i].additive
+                var j = i + 1
+                while j < shapeInstances.count, shapeInstances[j].textured == textured, shapeInstances[j].additive == additive {
+                    j += 1
+                }
+                let run = shapeInstances[i..<j]
+
+                if textured {
                     // Real Milkdrop textures a shape from its own `image=` key or, since that's
                     // effectively unused across the real corpus (see TO DO.md's Phase 2 notes),
                     // from the "main texture" — the same last-frame content `sourceTexture` already
                     // is here (this pass reads it as the feedback source, exactly the role
                     // CustomShape.cpp's mainTexture plays upstream).
-                    let pipeline = instance.additive ? shapeTexturedAdditivePipeline : shapeTexturedAlphaPipeline
+                    let pipeline = additive ? shapeTexturedAdditivePipeline : shapeTexturedAlphaPipeline
                     encoder.setRenderPipelineState(pipeline)
                     encoder.setFragmentTexture(sourceTexture, index: 0)
                     encoder.setFragmentSamplerState(samplerLinearRepeat, index: 0)
-                    let fillVerts = Self.shapeTexturedFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
-                    drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+                    var combined: [ShapeTexturedVertex] = []
+                    for instance in run {
+                        combined.append(contentsOf: Self.shapeTexturedFillVertices(instance, pixelSize: pixelSize, aspect: aspect))
+                    }
+                    drawShape(combined, as: .triangle, on: encoder, device: device)
                 } else {
-                    let pipeline = instance.additive ? shapeAdditivePipeline : shapeAlphaPipeline
+                    let pipeline = additive ? shapeAdditivePipeline : shapeAlphaPipeline
                     encoder.setRenderPipelineState(pipeline)
-                    let fillVerts = Self.shapeFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
-                    drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+                    var combined: [ShapeVertex] = []
+                    for instance in run {
+                        combined.append(contentsOf: Self.shapeFillVertices(instance, pixelSize: pixelSize, aspect: aspect))
+                    }
+                    drawShape(combined, as: .triangle, on: encoder, device: device)
                 }
 
-                if instance.borderA > 0 {
+                // Border/outline pass — still per-instance (a triangle *strip*, unlike the fill
+                // mesh above, so safely batching it would need degenerate-triangle stitching
+                // between instances; not attempted this pass — see TO DO.md). Only actually runs
+                // for instances with a visible border, which is the common case's exception, not
+                // its rule.
+                for instance in run where instance.borderA > 0 {
                     // The border always draws through the plain (untextured) shape pipeline, even
                     // when the fill above was textured — CustomShape.cpp's outline pass always
                     // binds untexturedShader regardless of m_textured. Re-bind explicitly rather
@@ -967,6 +1005,8 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                     )
                     drawShape(outlineVerts, as: .triangleStrip, on: encoder, device: device)
                 }
+
+                i = j
             }
         }
 
@@ -1018,7 +1058,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                 var uniforms = buildDynamicShaderUniforms(
                     time: time, frame: frameCounter, energy: energy,
                     randPreset: compiledComposite.randPreset, pixelSize: pixelSize,
-                    aspect: aspectXY, invAspect: invAspectXY
+                    aspect: aspectXY, invAspect: invAspectXY, qVars: qVars
                 )
 
                 // A texture this preset needed (e.g. a noise texture) failing to resolve here would

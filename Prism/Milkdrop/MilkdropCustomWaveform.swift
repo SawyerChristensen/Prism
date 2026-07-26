@@ -26,6 +26,13 @@ final class MilkdropCustomWaveformRuntime {
     private let perFrameProgram: MilkdropExpressionProgram?
     private let perPointProgram: MilkdropExpressionProgram?
 
+    /// Precomputed "q1".."q32"/"t1".."t8" dictionary keys — `resolvePoints`'s per-point loop below
+    /// used to rebuild these via fresh string interpolation on *every point*, up to 4 waveform
+    /// slots, every frame; a real, measured cost (40 String allocations + dictionary hashes per
+    /// point for no reason, since the key set never changes). Read-only after init.
+    private static let qKeys: [String] = (1...32).map { "q\($0)" }
+    private static let tKeys: [String] = (1...8).map { "t\($0)" }
+
     /// Persistent per-frame environment, reused every frame — shares its variable space with the
     /// (once-only) init code, matching upstream's single WaveformPerFrameContext object.
     private var frameVariables: [String: Float]
@@ -88,8 +95,8 @@ final class MilkdropCustomWaveformRuntime {
         frameVariables["bass_att"] = energy.bassAtt
         frameVariables["mid_att"] = energy.midAtt
         frameVariables["treb_att"] = energy.trebAtt
-        for i in 0..<min(32, qVars.count) { frameVariables["q\(i + 1)"] = qVars[i] }
-        for i in 0..<8 { frameVariables["t\(i + 1)"] = tValuesAfterInit[i] }
+        for i in 0..<min(32, qVars.count) { frameVariables[Self.qKeys[i]] = qVars[i] }
+        for i in 0..<8 { frameVariables[Self.tKeys[i]] = tValuesAfterInit[i] }
 
         perFrameProgram?.evaluate(&frameVariables)
 
@@ -169,18 +176,31 @@ final class MilkdropCustomWaveformRuntime {
         let sampleMultiplicator = sampleCount > 1 ? 1 / Float(sampleCount - 1) : 0
         var points: [MilkdropCustomWaveformPoint] = []
         points.reserveCapacity(sampleCount)
+
+        // q1-32/t1-8 are reset every point (a per-point script's own mutation of one shouldn't
+        // leak into the next point's evaluation — Milkdrop's "read-only per-point" contract), but
+        // the *values* being reset to are fixed for the whole sweep (qVars/frameVariables' t-vars
+        // don't change once perFrameProgram above has already run) — precomputed once here rather
+        // than re-read from frameVariables/re-interpolated into a fresh key string every point.
+        let qCount = min(32, qVars.count)
+        let frameTValues: [Float] = Self.tKeys.map { frameVariables[$0] ?? 0 }
+        let baseR = frameVariables["r"] ?? preset.r
+        let baseG = frameVariables["g"] ?? preset.g
+        let baseB = frameVariables["b"] ?? preset.b
+        let baseA = frameVariables["a"] ?? preset.a
+
         for s in 0..<sampleCount {
-            for i in 0..<min(32, qVars.count) { pointVariables["q\(i + 1)"] = qVars[i] }
-            for i in 0..<8 { pointVariables["t\(i + 1)"] = frameVariables["t\(i + 1)"] ?? 0 }
+            for i in 0..<qCount { pointVariables[Self.qKeys[i]] = qVars[i] }
+            for i in 0..<8 { pointVariables[Self.tKeys[i]] = frameTValues[i] }
             pointVariables["sample"] = Float(s) * sampleMultiplicator
             pointVariables["value1"] = sampleL[s]
             pointVariables["value2"] = sampleR[s]
             pointVariables["x"] = 0.5 + sampleL[s]
             pointVariables["y"] = 0.5 + sampleR[s]
-            pointVariables["r"] = frameVariables["r"] ?? preset.r
-            pointVariables["g"] = frameVariables["g"] ?? preset.g
-            pointVariables["b"] = frameVariables["b"] ?? preset.b
-            pointVariables["a"] = frameVariables["a"] ?? preset.a
+            pointVariables["r"] = baseR
+            pointVariables["g"] = baseG
+            pointVariables["b"] = baseB
+            pointVariables["a"] = baseA
 
             perPointProgram?.evaluate(&pointVariables)
 

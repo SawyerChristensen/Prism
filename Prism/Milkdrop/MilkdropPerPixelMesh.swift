@@ -63,6 +63,10 @@ final class MilkdropPerPixelMeshRuntime {
         return idx
     }()
 
+    /// Precomputed "q1".."q32" dictionary keys — see MilkdropCustomWaveform.swift's identical
+    /// `qKeys` for why (avoids re-interpolating the same 32 strings every time q-vars are seeded).
+    private static let qKeys: [String] = (1...32).map { "q\($0)" }
+
     private let program: MilkdropExpressionProgram
     // One persistent environment reused across every vertex *and* every frame — matching
     // upstream's single shared PerPixelContext (its own comment: "Can't make this multithreaded as
@@ -174,7 +178,7 @@ final class MilkdropPerPixelMeshRuntime {
         variables["aspectx"] = aspectX
         variables["aspecty"] = aspectY
         for i in 0..<min(32, qVars.count) {
-            variables["q\(i + 1)"] = qVars[i]
+            variables[Self.qKeys[i]] = qVars[i]
         }
 
         var out: [MilkdropMeshVertexAttributes] = []
