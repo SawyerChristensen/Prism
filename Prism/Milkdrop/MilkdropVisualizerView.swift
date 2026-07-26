@@ -127,8 +127,8 @@ final class MilkdropVisualizerModel {
     // MilkdropExpressionEvaluator.swift/MilkdropPresetFile.swift). `presetVariables` persists
     // across frames — presets read back their own previous values (`wave_x=wave_x+0.001;`) same
     // as projectM's per-frame context does.
-    private var perFrameProgram: MilkdropExpressionProgram?
-    private var presetVariables: [String: Float] = [:]
+    private var perFrameProgram: MilkdropResolvedProgram?
+    private var presetVariables = MilkdropVariableSlots()
 
     // Custom shapes (`shapecode_N_*`) loaded alongside the waveform program above — see
     // MilkdropShapeState.swift. Always 4 slots (disabled ones resolve to zero instances, so
@@ -159,7 +159,11 @@ final class MilkdropVisualizerModel {
             params.waveX = 2 * file.waveX - 1
             params.waveY = 2 * file.waveY - 1
 
-            presetVariables = [
+            // Fresh instance every load (not a reset of the existing one) so a prior preset's
+            // slots/accumulated state never leaks into the next — matches the old dictionary
+            // literal's full-replacement semantics exactly.
+            presetVariables = MilkdropVariableSlots()
+            presetVariables.load([
                 "wave_x": file.waveX, "wave_y": file.waveY, "wave_mystery": file.waveParam,
                 "wave_r": file.waveR, "wave_g": file.waveG, "wave_b": file.waveB, "wave_a": file.waveAlpha,
                 "wave_mode": Float(file.waveMode),
@@ -180,11 +184,18 @@ final class MilkdropVisualizerModel {
                 "echo_orient": Float(file.videoEchoOrientation),
                 "brighten": file.brighten ? 1 : 0, "darken": file.darken ? 1 : 0,
                 "solarize": file.solarize ? 1 : 0, "invert": file.invert ? 1 : 0,
-            ]
+            ])
             // Runs once, immediately — seeds any custom variables (e.g. `SPEED=10;`) the per-frame
-            // program below expects to already exist on its first evaluation.
-            MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(&presetVariables)
-            perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)
+            // program below expects to already exist on its first evaluation. Uses the string-keyed
+            // path (not resolved): this program never runs again after this line.
+            MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(presetVariables)
+            // Resolved once here (not re-hashed every frame) — see
+            // MilkdropExpressionEvaluator.swift's perf note. Runs once/frame (not in a per-vertex/
+            // per-point/per-instance loop the way the mesh/waveform/shape programs do), so this is
+            // a smaller win in isolation, but keeps this file's evaluation path consistent with the
+            // rest of the codebase after this change rather than being the one holdout still on the
+            // string-keyed path.
+            perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)?.resolved(against: presetVariables)
             shapes = file.shapes.map(MilkdropShapeRuntime.init(preset:))
             perPixelMesh = MilkdropPerPixelMeshRuntime(source: file.perPixelProgram)
             customWaves = file.customWaves.map(MilkdropCustomWaveformRuntime.init(preset:))
@@ -222,7 +233,7 @@ final class MilkdropVisualizerModel {
             presetVariables["mid_att"] = energy.midAtt
             presetVariables["treb_att"] = energy.trebAtt
 
-            perFrameProgram.evaluate(&presetVariables)
+            perFrameProgram.evaluate(presetVariables)
         }
 
         if let mystery = presetVariables["wave_mystery"] {

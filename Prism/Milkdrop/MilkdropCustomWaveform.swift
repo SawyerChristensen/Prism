@@ -21,21 +21,63 @@ struct MilkdropCustomWaveformPoint {
     var color: SIMD4<Float>
 }
 
+/// A `time`/`fps`/`frame`/`progress`/`bass`/`mid`/`treb`/`*_att`/`q1`-`q32`/`t1`-`t8` slot bundle,
+/// resolved once against a given `MilkdropVariableSlots` store — the same built-in set every
+/// per-frame/per-point/per-vertex/per-instance environment in this codebase seeds, factored out
+/// here since `MilkdropCustomWaveformRuntime` below needs it twice (once for `frameVariables`,
+/// once for the separate `pointVariables` store — two distinct environments, per upstream's own
+/// WaveformPerFrameContext/WaveformPerPointContext split, so two distinct slot sets even though
+/// the names overlap).
+private struct MilkdropTimingSlots {
+    let time: Int
+    let fps: Int
+    let frame: Int
+    let progress: Int
+    let bass: Int
+    let mid: Int
+    let treb: Int
+    let bassAtt: Int
+    let midAtt: Int
+    let trebAtt: Int
+    let q: [Int]
+    let t: [Int]
+
+    init(_ store: MilkdropVariableSlots) {
+        time = store.slot(for: "time")
+        fps = store.slot(for: "fps")
+        frame = store.slot(for: "frame")
+        progress = store.slot(for: "progress")
+        bass = store.slot(for: "bass")
+        mid = store.slot(for: "mid")
+        treb = store.slot(for: "treb")
+        bassAtt = store.slot(for: "bass_att")
+        midAtt = store.slot(for: "mid_att")
+        trebAtt = store.slot(for: "treb_att")
+        q = (1...32).map { store.slot(for: "q\($0)") }
+        t = (1...8).map { store.slot(for: "t\($0)") }
+    }
+}
+
 final class MilkdropCustomWaveformRuntime {
     let preset: MilkdropCustomWavePreset
-    private let perFrameProgram: MilkdropExpressionProgram?
-    private let perPointProgram: MilkdropExpressionProgram?
-
-    /// Precomputed "q1".."q32"/"t1".."t8" dictionary keys — `resolvePoints`'s per-point loop below
-    /// used to rebuild these via fresh string interpolation on *every point*, up to 4 waveform
-    /// slots, every frame; a real, measured cost (40 String allocations + dictionary hashes per
-    /// point for no reason, since the key set never changes). Read-only after init.
-    private static let qKeys: [String] = (1...32).map { "q\($0)" }
-    private static let tKeys: [String] = (1...8).map { "t\($0)" }
+    /// Resolved once against `frameVariables`/`pointVariables` respectively, right after both
+    /// exist — `perPointProgram` in particular runs once per rendered sample point (commonly in
+    /// the hundreds, up to 4 waveform slots, every frame), so avoiding a `[String: Float]`
+    /// dictionary hash/lookup per read/write matters there (see
+    /// MilkdropExpressionEvaluator.swift's perf note).
+    private let perFrameProgram: MilkdropResolvedProgram?
+    private let perPointProgram: MilkdropResolvedProgram?
 
     /// Persistent per-frame environment, reused every frame — shares its variable space with the
     /// (once-only) init code, matching upstream's single WaveformPerFrameContext object.
-    private var frameVariables: [String: Float]
+    private let frameVariables = MilkdropVariableSlots()
+    private let frameTiming: MilkdropTimingSlots
+    private let rSlot: Int
+    private let gSlot: Int
+    private let bSlot: Int
+    private let aSlot: Int
+    private let samplesSlot: Int
+
     /// `t1`-`t8` as they stood immediately after the init code ran once at load — re-seeded into
     /// `frameVariables` at the top of *every* frame, undoing whatever last frame's per-frame script
     /// did to them. This isn't a bug in this port: ported verbatim from
@@ -49,23 +91,48 @@ final class MilkdropCustomWaveformRuntime {
     /// own custom (non-built-in) variable accumulates across the whole sweep, matching
     /// MilkdropPerPixelMeshRuntime's/MilkdropShapeRuntime's established pattern in this codebase
     /// (and upstream's own single shared WaveformPerPointContext object).
-    private var pointVariables: [String: Float] = [:]
+    private let pointVariables = MilkdropVariableSlots()
+    private let pointTiming: MilkdropTimingSlots
+    private let sampleSlot: Int
+    private let value1Slot: Int
+    private let value2Slot: Int
+    private let pointXSlot: Int
+    private let pointYSlot: Int
+    private let pointRSlot: Int
+    private let pointGSlot: Int
+    private let pointBSlot: Int
+    private let pointASlot: Int
 
     init(preset: MilkdropCustomWavePreset) {
         self.preset = preset
-        // Built up in a local first (not `self.frameVariables`) — referencing an instance property
-        // from the closure `tValuesAfterInit`'s map literal would use would capture `self` before
-        // every stored property is initialized, which Swift rejects.
-        var initialFrameVariables: [String: Float] = [
-            "r": preset.r, "g": preset.g, "b": preset.b, "a": preset.a,
-            "samples": Float(preset.samples),
-        ]
-        // Runs once, immediately — same role as the main preset's perFrameInitProgram.
-        MilkdropExpressionProgram(source: preset.initProgram)?.evaluate(&initialFrameVariables)
-        tValuesAfterInit = (1...8).map { initialFrameVariables["t\($0)"] ?? 0 }
-        frameVariables = initialFrameVariables
-        perFrameProgram = MilkdropExpressionProgram(source: preset.perFrameProgram)
-        perPointProgram = MilkdropExpressionProgram(source: preset.perPointProgram)
+
+        frameTiming = MilkdropTimingSlots(frameVariables)
+        rSlot = frameVariables.slot(for: "r")
+        gSlot = frameVariables.slot(for: "g")
+        bSlot = frameVariables.slot(for: "b")
+        aSlot = frameVariables.slot(for: "a")
+        samplesSlot = frameVariables.slot(for: "samples")
+
+        pointTiming = MilkdropTimingSlots(pointVariables)
+        sampleSlot = pointVariables.slot(for: "sample")
+        value1Slot = pointVariables.slot(for: "value1")
+        value2Slot = pointVariables.slot(for: "value2")
+        pointXSlot = pointVariables.slot(for: "x")
+        pointYSlot = pointVariables.slot(for: "y")
+        pointRSlot = pointVariables.slot(for: "r")
+        pointGSlot = pointVariables.slot(for: "g")
+        pointBSlot = pointVariables.slot(for: "b")
+        pointASlot = pointVariables.slot(for: "a")
+
+        frameVariables.load(["r": preset.r, "g": preset.g, "b": preset.b, "a": preset.a, "samples": Float(preset.samples)])
+        // Runs once, immediately — same role as the main preset's perFrameInitProgram. Uses the
+        // string-keyed path (not resolved): this program never runs again after this line.
+        MilkdropExpressionProgram(source: preset.initProgram)?.evaluate(frameVariables)
+        let tSlots = frameTiming.t
+        let seededFrameVariables = frameVariables
+        tValuesAfterInit = tSlots.map { seededFrameVariables.value(at: $0) }
+        perFrameProgram = MilkdropExpressionProgram(source: preset.perFrameProgram)?.resolved(against: frameVariables)
+        perPointProgram = MilkdropExpressionProgram(source: preset.perPointProgram)?.resolved(against: pointVariables)
     }
 
     /// Resolves this frame's waveform points from raw audio sample data — PCM waveform data if
@@ -85,20 +152,20 @@ final class MilkdropCustomWaveformRuntime {
         let maxSampleCount = min(left.count, right.count)
         guard maxSampleCount > 0 else { return [] }
 
-        frameVariables["time"] = time
-        frameVariables["fps"] = fps
-        frameVariables["frame"] = frame
-        frameVariables["progress"] = 0
-        frameVariables["bass"] = energy.bass
-        frameVariables["mid"] = energy.mid
-        frameVariables["treb"] = energy.treb
-        frameVariables["bass_att"] = energy.bassAtt
-        frameVariables["mid_att"] = energy.midAtt
-        frameVariables["treb_att"] = energy.trebAtt
-        for i in 0..<min(32, qVars.count) { frameVariables[Self.qKeys[i]] = qVars[i] }
-        for i in 0..<8 { frameVariables[Self.tKeys[i]] = tValuesAfterInit[i] }
+        frameVariables.setValue(time, at: frameTiming.time)
+        frameVariables.setValue(fps, at: frameTiming.fps)
+        frameVariables.setValue(frame, at: frameTiming.frame)
+        frameVariables.setValue(0, at: frameTiming.progress)
+        frameVariables.setValue(energy.bass, at: frameTiming.bass)
+        frameVariables.setValue(energy.mid, at: frameTiming.mid)
+        frameVariables.setValue(energy.treb, at: frameTiming.treb)
+        frameVariables.setValue(energy.bassAtt, at: frameTiming.bassAtt)
+        frameVariables.setValue(energy.midAtt, at: frameTiming.midAtt)
+        frameVariables.setValue(energy.trebAtt, at: frameTiming.trebAtt)
+        for i in 0..<min(32, qVars.count) { frameVariables.setValue(qVars[i], at: frameTiming.q[i]) }
+        for i in 0..<8 { frameVariables.setValue(tValuesAfterInit[i], at: frameTiming.t[i]) }
 
-        perFrameProgram?.evaluate(&frameVariables)
+        perFrameProgram?.evaluate(frameVariables)
 
         // Confirmed against CustomWaveform::Draw: an *earlier* `sampleCount -= m_sep` in that
         // function is immediately overwritten by this same `min(maxSampleCount, samples)`
@@ -110,7 +177,7 @@ final class MilkdropCustomWaveformRuntime {
         // evaluator maps to 0, but `samples = exp(1000);` maps to `Float.infinity` just fine) —
         // `Int(aFloat)` traps fatally on a non-finite or out-of-Int-range value, so this can't be a
         // direct `Int(...)` conversion the way the constructor-time default is.
-        let rawSamples = frameVariables["samples"] ?? Float(preset.samples)
+        let rawSamples = frameVariables.value(at: samplesSlot)
         let clampedSamples = rawSamples.isFinite ? Int(max(0, min(Float(maxSampleCount), rawSamples))) : preset.samples
         let sampleCount = min(maxSampleCount, clampedSamples)
         guard sampleCount >= 2 else { return [] }
@@ -154,19 +221,19 @@ final class MilkdropCustomWaveformRuntime {
 
         // Read-only per-point globals, loaded once (not re-read per point) — matches
         // WaveformPerPointContext::LoadReadOnlyStateVariables.
-        pointVariables["time"] = time
-        pointVariables["fps"] = fps
-        pointVariables["frame"] = frame
-        pointVariables["progress"] = 0
-        pointVariables["bass"] = energy.bass
-        pointVariables["mid"] = energy.mid
-        pointVariables["treb"] = energy.treb
-        pointVariables["bass_att"] = energy.bassAtt
-        pointVariables["mid_att"] = energy.midAtt
-        pointVariables["treb_att"] = energy.trebAtt
+        pointVariables.setValue(time, at: pointTiming.time)
+        pointVariables.setValue(fps, at: pointTiming.fps)
+        pointVariables.setValue(frame, at: pointTiming.frame)
+        pointVariables.setValue(0, at: pointTiming.progress)
+        pointVariables.setValue(energy.bass, at: pointTiming.bass)
+        pointVariables.setValue(energy.mid, at: pointTiming.mid)
+        pointVariables.setValue(energy.treb, at: pointTiming.treb)
+        pointVariables.setValue(energy.bassAtt, at: pointTiming.bassAtt)
+        pointVariables.setValue(energy.midAtt, at: pointTiming.midAtt)
+        pointVariables.setValue(energy.trebAtt, at: pointTiming.trebAtt)
 
-        func colorWrapped(_ vars: [String: Float], _ key: String, _ fallback: Float) -> Float {
-            let value = vars[key] ?? fallback
+        func colorWrapped(_ slot: Int, _ fallback: Float) -> Float {
+            let value = pointVariables.value(at: slot)
             guard value.isFinite else { return fallback }
             var wrapped = (value * 255).truncatingRemainder(dividingBy: 256)
             if wrapped < 0 { wrapped += 256 }
@@ -181,36 +248,36 @@ final class MilkdropCustomWaveformRuntime {
         // leak into the next point's evaluation — Milkdrop's "read-only per-point" contract), but
         // the *values* being reset to are fixed for the whole sweep (qVars/frameVariables' t-vars
         // don't change once perFrameProgram above has already run) — precomputed once here rather
-        // than re-read from frameVariables/re-interpolated into a fresh key string every point.
+        // than re-read from frameVariables every point.
         let qCount = min(32, qVars.count)
-        let frameTValues: [Float] = Self.tKeys.map { frameVariables[$0] ?? 0 }
-        let baseR = frameVariables["r"] ?? preset.r
-        let baseG = frameVariables["g"] ?? preset.g
-        let baseB = frameVariables["b"] ?? preset.b
-        let baseA = frameVariables["a"] ?? preset.a
+        let frameTValues: [Float] = frameTiming.t.map { frameVariables.value(at: $0) }
+        let baseR = frameVariables.value(at: rSlot)
+        let baseG = frameVariables.value(at: gSlot)
+        let baseB = frameVariables.value(at: bSlot)
+        let baseA = frameVariables.value(at: aSlot)
 
         for s in 0..<sampleCount {
-            for i in 0..<qCount { pointVariables[Self.qKeys[i]] = qVars[i] }
-            for i in 0..<8 { pointVariables[Self.tKeys[i]] = frameTValues[i] }
-            pointVariables["sample"] = Float(s) * sampleMultiplicator
-            pointVariables["value1"] = sampleL[s]
-            pointVariables["value2"] = sampleR[s]
-            pointVariables["x"] = 0.5 + sampleL[s]
-            pointVariables["y"] = 0.5 + sampleR[s]
-            pointVariables["r"] = baseR
-            pointVariables["g"] = baseG
-            pointVariables["b"] = baseB
-            pointVariables["a"] = baseA
+            for i in 0..<qCount { pointVariables.setValue(qVars[i], at: pointTiming.q[i]) }
+            for i in 0..<8 { pointVariables.setValue(frameTValues[i], at: pointTiming.t[i]) }
+            pointVariables.setValue(Float(s) * sampleMultiplicator, at: sampleSlot)
+            pointVariables.setValue(sampleL[s], at: value1Slot)
+            pointVariables.setValue(sampleR[s], at: value2Slot)
+            pointVariables.setValue(0.5 + sampleL[s], at: pointXSlot)
+            pointVariables.setValue(0.5 + sampleR[s], at: pointYSlot)
+            pointVariables.setValue(baseR, at: pointRSlot)
+            pointVariables.setValue(baseG, at: pointGSlot)
+            pointVariables.setValue(baseB, at: pointBSlot)
+            pointVariables.setValue(baseA, at: pointASlot)
 
-            perPointProgram?.evaluate(&pointVariables)
+            perPointProgram?.evaluate(pointVariables)
 
-            let ndcX = (pointVariables["x"] ?? 0.5) * 2 - 1
-            let ndcY = (pointVariables["y"] ?? 0.5) * -2 + 1
+            let ndcX = pointVariables.value(at: pointXSlot) * 2 - 1
+            let ndcY = pointVariables.value(at: pointYSlot) * -2 + 1
             points.append(MilkdropCustomWaveformPoint(
                 position: SIMD2(ndcX, ndcY),
                 color: SIMD4(
-                    colorWrapped(pointVariables, "r", preset.r), colorWrapped(pointVariables, "g", preset.g),
-                    colorWrapped(pointVariables, "b", preset.b), colorWrapped(pointVariables, "a", preset.a)
+                    colorWrapped(pointRSlot, preset.r), colorWrapped(pointGSlot, preset.g),
+                    colorWrapped(pointBSlot, preset.b), colorWrapped(pointASlot, preset.a)
                 )
             ))
         }

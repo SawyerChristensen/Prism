@@ -63,19 +63,49 @@ final class MilkdropPerPixelMeshRuntime {
         return idx
     }()
 
-    /// Precomputed "q1".."q32" dictionary keys — see MilkdropCustomWaveform.swift's identical
-    /// `qKeys` for why (avoids re-interpolating the same 32 strings every time q-vars are seeded).
-    private static let qKeys: [String] = (1...32).map { "q\($0)" }
-
-    private let program: MilkdropExpressionProgram
+    private let program: MilkdropResolvedProgram
     // One persistent environment reused across every vertex *and* every frame — matching
     // upstream's single shared PerPixelContext (its own comment: "Can't make this multithreaded as
     // per-pixel code may use gmegabuf or regXX vars"). Every built-in key (x/y/rad/ang/zoom/etc,
     // listed in `calculate` below) is overwritten before each vertex's evaluation, so a script that
     // only reads those still differentiates every vertex correctly; a script that mutates a custom
     // variable of its own sees that value accumulate across the whole mesh sweep, then again next
-    // frame — same as real Milkdrop.
-    private var variables: [String: Float] = [:]
+    // frame — same as real Milkdrop. Slot-indexed (not `[String: Float]`) since `program` runs once
+    // per mesh vertex (825x/frame) — see MilkdropExpressionEvaluator.swift's perf note.
+    private let variables: MilkdropVariableSlots
+
+    // Slot indices for every built-in name seeded/read every vertex — resolved once below, not
+    // re-hashed 825 times/frame.
+    private let timeSlot: Int
+    private let fpsSlot: Int
+    private let frameSlot: Int
+    private let bassSlot: Int
+    private let midSlot: Int
+    private let trebSlot: Int
+    private let bassAttSlot: Int
+    private let midAttSlot: Int
+    private let trebAttSlot: Int
+    private let meshxSlot: Int
+    private let meshySlot: Int
+    private let pixelsxSlot: Int
+    private let pixelsySlot: Int
+    private let aspectxSlot: Int
+    private let aspectySlot: Int
+    private let qSlots: [Int]
+    private let xSlot: Int
+    private let ySlot: Int
+    private let radSlot: Int
+    private let angSlot: Int
+    private let zoomSlot: Int
+    private let zoomExpSlot: Int
+    private let rotSlot: Int
+    private let warpSlot: Int
+    private let cxSlot: Int
+    private let cySlot: Int
+    private let dxSlot: Int
+    private let dySlot: Int
+    private let sxSlot: Int
+    private let sySlot: Int
 
     // Static per-vertex geometry (NDC position/radius/angle) — rebuilt only when the aspect ratio
     // changes (see MilkdropMetalRenderer's own aspectXY), not every frame like `variables` above.
@@ -86,8 +116,42 @@ final class MilkdropPerPixelMeshRuntime {
     /// `nil` if the preset has no usable `per_pixel_N=` code at all — callers should keep using the
     /// existing full-screen fragment-shader warp path in that case (see Shaders.metal's header).
     init?(source: String) {
-        guard let program = MilkdropExpressionProgram(source: source) else { return nil }
-        self.program = program
+        guard let parsed = MilkdropExpressionProgram(source: source) else { return nil }
+
+        let variables = MilkdropVariableSlots()
+        self.variables = variables
+        timeSlot = variables.slot(for: "time")
+        fpsSlot = variables.slot(for: "fps")
+        frameSlot = variables.slot(for: "frame")
+        bassSlot = variables.slot(for: "bass")
+        midSlot = variables.slot(for: "mid")
+        trebSlot = variables.slot(for: "treb")
+        bassAttSlot = variables.slot(for: "bass_att")
+        midAttSlot = variables.slot(for: "mid_att")
+        trebAttSlot = variables.slot(for: "treb_att")
+        meshxSlot = variables.slot(for: "meshx")
+        meshySlot = variables.slot(for: "meshy")
+        pixelsxSlot = variables.slot(for: "pixelsx")
+        pixelsySlot = variables.slot(for: "pixelsy")
+        aspectxSlot = variables.slot(for: "aspectx")
+        aspectySlot = variables.slot(for: "aspecty")
+        qSlots = (1...32).map { variables.slot(for: "q\($0)") }
+        xSlot = variables.slot(for: "x")
+        ySlot = variables.slot(for: "y")
+        radSlot = variables.slot(for: "rad")
+        angSlot = variables.slot(for: "ang")
+        zoomSlot = variables.slot(for: "zoom")
+        zoomExpSlot = variables.slot(for: "zoomexp")
+        rotSlot = variables.slot(for: "rot")
+        warpSlot = variables.slot(for: "warp")
+        cxSlot = variables.slot(for: "cx")
+        cySlot = variables.slot(for: "cy")
+        dxSlot = variables.slot(for: "dx")
+        dySlot = variables.slot(for: "dy")
+        sxSlot = variables.slot(for: "sx")
+        sySlot = variables.slot(for: "sy")
+
+        program = parsed.resolved(against: variables)
     }
 
     /// Static per-vertex NDC position/radius/angle for the whole grid — shared by the scripted
@@ -162,53 +226,55 @@ final class MilkdropPerPixelMeshRuntime {
             rebuildBaseVertices(aspectX: aspectX, aspectY: aspectY)
         }
 
-        variables["time"] = time
-        variables["fps"] = fps
-        variables["frame"] = frame
-        variables["bass"] = energy.bass
-        variables["mid"] = energy.mid
-        variables["treb"] = energy.treb
-        variables["bass_att"] = energy.bassAtt
-        variables["mid_att"] = energy.midAtt
-        variables["treb_att"] = energy.trebAtt
-        variables["meshx"] = Float(Self.gridSizeX)
-        variables["meshy"] = Float(Self.gridSizeY)
-        variables["pixelsx"] = aspectX // Prism has no separate pixel-resolution plumbing reaching
-        variables["pixelsy"] = aspectY // this runtime; aspect ratio is the closest available proxy.
-        variables["aspectx"] = aspectX
-        variables["aspecty"] = aspectY
+        variables.setValue(time, at: timeSlot)
+        variables.setValue(fps, at: fpsSlot)
+        variables.setValue(frame, at: frameSlot)
+        variables.setValue(energy.bass, at: bassSlot)
+        variables.setValue(energy.mid, at: midSlot)
+        variables.setValue(energy.treb, at: trebSlot)
+        variables.setValue(energy.bassAtt, at: bassAttSlot)
+        variables.setValue(energy.midAtt, at: midAttSlot)
+        variables.setValue(energy.trebAtt, at: trebAttSlot)
+        variables.setValue(Float(Self.gridSizeX), at: meshxSlot)
+        variables.setValue(Float(Self.gridSizeY), at: meshySlot)
+        // Prism has no separate pixel-resolution plumbing reaching this runtime; aspect ratio is
+        // the closest available proxy.
+        variables.setValue(aspectX, at: pixelsxSlot)
+        variables.setValue(aspectY, at: pixelsySlot)
+        variables.setValue(aspectX, at: aspectxSlot)
+        variables.setValue(aspectY, at: aspectySlot)
         for i in 0..<min(32, qVars.count) {
-            variables[Self.qKeys[i]] = qVars[i]
+            variables.setValue(qVars[i], at: qSlots[i])
         }
 
         var out: [MilkdropMeshVertexAttributes] = []
         out.reserveCapacity(baseVertices.count)
         for base in baseVertices {
-            variables["x"] = base.position.x * 0.5 * aspectX + 0.5
-            variables["y"] = base.position.y * 0.5 * aspectY + 0.5
-            variables["rad"] = base.radius
+            variables.setValue(base.position.x * 0.5 * aspectX + 0.5, at: xSlot)
+            variables.setValue(base.position.y * 0.5 * aspectY + 0.5, at: ySlot)
+            variables.setValue(base.radius, at: radSlot)
             // Negated to match projectM's PerPixelMesh.cpp (`*perPixelContext.ang =
             // -curRadiusAngle.angle`) — not a typo to "fix"; scripts are written against this sign.
-            variables["ang"] = -base.angle
-            variables["zoom"] = zoom
-            variables["zoomexp"] = zoomExp
-            variables["rot"] = rot
-            variables["warp"] = warp
-            variables["cx"] = cx
-            variables["cy"] = cy
-            variables["dx"] = dx
-            variables["dy"] = dy
-            variables["sx"] = sx
-            variables["sy"] = sy
+            variables.setValue(-base.angle, at: angSlot)
+            variables.setValue(zoom, at: zoomSlot)
+            variables.setValue(zoomExp, at: zoomExpSlot)
+            variables.setValue(rot, at: rotSlot)
+            variables.setValue(warp, at: warpSlot)
+            variables.setValue(cx, at: cxSlot)
+            variables.setValue(cy, at: cySlot)
+            variables.setValue(dx, at: dxSlot)
+            variables.setValue(dy, at: dySlot)
+            variables.setValue(sx, at: sxSlot)
+            variables.setValue(sy, at: sySlot)
 
-            program.evaluate(&variables)
+            program.evaluate(variables)
 
             out.append(MilkdropMeshVertexAttributes(
                 transforms: SIMD4(
-                    variables["zoom"] ?? zoom,
-                    variables["zoomexp"] ?? zoomExp,
-                    variables["rot"] ?? rot,
-                    variables["warp"] ?? warp
+                    variables.value(at: zoomSlot),
+                    variables.value(at: zoomExpSlot),
+                    variables.value(at: rotSlot),
+                    variables.value(at: warpSlot)
                 ),
                 position: base.position,
                 // Always the static grid-derived radius/angle, never the (possibly
@@ -216,9 +282,9 @@ final class MilkdropPerPixelMeshRuntime {
                 // zoom2 exponent always reads the static `m_radiusAngleBuffer`, not a per-pixel-code
                 // override, even though the script's own `rad`/`ang` variables are read/write.
                 radiusAngle: SIMD2(base.radius, base.angle),
-                center: SIMD2(variables["cx"] ?? cx, variables["cy"] ?? cy),
-                distance: SIMD2(variables["dx"] ?? dx, variables["dy"] ?? dy),
-                stretch: SIMD2(variables["sx"] ?? sx, variables["sy"] ?? sy)
+                center: SIMD2(variables.value(at: cxSlot), variables.value(at: cySlot)),
+                distance: SIMD2(variables.value(at: dxSlot), variables.value(at: dySlot)),
+                stretch: SIMD2(variables.value(at: sxSlot), variables.value(at: sySlot))
             ))
         }
         return out
