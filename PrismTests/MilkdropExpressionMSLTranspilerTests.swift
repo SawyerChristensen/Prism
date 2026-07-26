@@ -7,14 +7,15 @@
 //  representative programs, actually dispatches a compute kernel running the transpiled body and
 //  compares its output against MilkdropExpressionProgram's own (reference) dictionary-based
 //  evaluator for identical inputs — not just "did it compile," but "did it compute the same
-//  answer." Verified first, much more exhaustively, via a standalone `swiftc` harness: 20,000
-//  checks (17 synthetic programs covering every operator/builtin/edge case — including the two
-//  correctness traps this transpiler exists to avoid: `if`/`&&`/`||` must evaluate BOTH sides
-//  even though only one is "taken," since NS-EEL has no real short-circuit branching — plus 6 real
-//  `per_pixel_N=` scripts pulled from the actual ~9,795-file preset pack on this machine), 0
-//  failures, GPU output matching CPU to within float precision (`mathMode = .safe`, disabling
-//  fast-math, which would otherwise risk masking a real mismatch as "close enough"). See
-//  TO DO.md for the full writeup.
+//  answer." `if`/`&&`/`||` short-circuit in both (real NS-EEL semantics, confirmed 7/26 — see
+//  MilkdropExpressionMSLTranspiler.swift's header), so these tests confirm the GPU and CPU sides
+//  agree on *which* branch/side actually ran (an untaken branch's side effect must not appear on
+//  either side), not that both unconditionally run everything. Verified first, much more
+//  exhaustively, via a standalone `swiftc` harness: 20,000 checks (17 synthetic programs covering
+//  every operator/builtin/edge case, plus 6 real `per_pixel_N=` scripts pulled from the actual
+//  ~9,795-file preset pack on this machine), 0 failures, GPU output matching CPU to within float
+//  precision (`mathMode = .safe`, disabling fast-math, which would otherwise risk masking a real
+//  mismatch as "close enough"). See TO DO.md for the full writeup.
 //
 
 import Metal
@@ -113,14 +114,17 @@ struct MilkdropExpressionMSLTranspilerTests {
         try assertGPUMatchesCPU("a = 1 + 2 - 3 * 4 / 5; b = (x < y); c = (x == x); d = 7 % 0;")
     }
 
-    @Test func ifWithSideEffectsOnBothBranchesMatchesCPU() throws {
-        // The single most important correctness trap this transpiler exists to avoid — see this
-        // file's header and MilkdropExpressionMSLTranspiler.swift's own header.
+    @Test func ifShortCircuitsOnlyTakenBranchMatchesCPU() throws {
+        // The single most important correctness property this transpiler must preserve — see this
+        // file's header and MilkdropExpressionMSLTranspiler.swift's own header. GPU and CPU must
+        // agree on exactly which branch's side effect fired for both a true and a false condition.
         try assertGPUMatchesCPU("s1 = 0; s2 = 0; a = if(above(bass, 0.5), s1 = 1, s2 = 1); b = s1; c = s2;")
+        try assertGPUMatchesCPU("s1 = 0; s2 = 0; a = if(above(bass, 999.0), s1 = 1, s2 = 1); b = s1; c = s2;")
     }
 
-    @Test func logicalAndOrWithSideEffectsOnBothSidesMatchesCPU() throws {
+    @Test func logicalAndOrShortCircuitMatchesCPU() throws {
         try assertGPUMatchesCPU("s1 = 0; s2 = 0; a = (bass > 0.5) && (s1 = 1); b = (treb > 5) || (s2 = 1); c = s1; d = s2;")
+        try assertGPUMatchesCPU("s1 = 0; s2 = 0; a = (bass > 999.0) && (s1 = 1); b = (treb > -999.0) || (s2 = 1); c = s1; d = s2;")
     }
 
     @Test func guardedOpsMatchCPU() throws {

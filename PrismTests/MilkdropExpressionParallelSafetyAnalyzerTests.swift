@@ -75,4 +75,44 @@ struct MilkdropExpressionParallelSafetyAnalyzerTests {
     @Test func readThenWriteLaterPingPongAccumulatorIsUnsafe() {
         #expect(!isSafe("a = counter; counter = a + 1;"))
     }
+
+    // MARK: - if/&&/|| short-circuit-aware safety (added 7/26 — see this analyzer's own header,
+    // points 5/6, for the correctness bug this closes: treating both branches of an `if` as
+    // "always written this iteration" was only sound while the evaluator itself was (incorrectly)
+    // eager; now that both short-circuit for real, only a variable assigned in *every* reachable
+    // branch is actually guaranteed.
+
+    @Test func variableAssignedOnBothIfBranchesIsSafe() {
+        // Symmetric — both branches assign `temp`, so it's genuinely guaranteed regardless of which
+        // one actually ran this iteration. The common `if(cond,x=1,x=2)` ternary-like pattern.
+        #expect(isSafe("temp = if(above(bass,1), 1, 2); zoom = temp;"))
+    }
+
+    @Test func variableAssignedOnOnlyOneIfBranchThenReadIsUnsafe() {
+        // Asymmetric — `temp` is only guaranteed to have been written this iteration if the `above`
+        // branch was taken (the `else` branch, `0`, deliberately leaves it untouched); on a vertex
+        // where the else branch ran, a later read of `temp` would see whatever a *different*
+        // iteration last left there. This is exactly the class of bug the old, eager-evaluation-
+        // assuming version of this analyzer would have missed. (Real NS-EEL `if` always takes
+        // exactly 3 arguments — an else branch is mandatory, not optional.)
+        #expect(!isSafe("if(above(bass,1), temp = 1, 0); zoom = temp;"))
+    }
+
+    @Test func variableAssignedOnOnlyOneIfBranchButNeverReadIsSafe() {
+        // Asymmetric write, but nothing downstream ever reads `temp` — no read-before-guaranteed-
+        // write hazard exists, so this stays safe (matches the analyzer's existing "only a read
+        // needs a guaranteed prior write" contract, unaffected by this fix).
+        #expect(isSafe("if(above(bass,1), temp = 1, 0); zoom = 1;"))
+    }
+
+    @Test func assignmentInsideAndOperandRightSideIsUnsafe() {
+        // `&&`'s right operand only evaluates when the left side is already true — an assignment
+        // there has no symmetric "other side" the way `if`'s branches do, so it's never treated as
+        // guaranteed (this analyzer's header, point 6).
+        #expect(!isSafe("ok = above(bass,1) && (temp = 1); zoom = temp;"))
+    }
+
+    @Test func assignmentInsideOrOperandRightSideIsUnsafe() {
+        #expect(!isSafe("ok = above(bass,1) || (temp = 1); zoom = temp;"))
+    }
 }

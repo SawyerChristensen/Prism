@@ -183,6 +183,22 @@ final class MilkdropResolvedProgram {
             let value = eval(operand, store)
             return op == "-" ? -value : (value == 0 ? 1 : 0)
         case .binary(let op, let lhs, let rhs):
+            // `&&`/`||` short-circuit in real NS-EEL (vendor/projectm-eval/TreeFunctions.c's
+            // `prjm_eval_func_boolean_and_op`/`_or_op` — the right operand's side effects, if any,
+            // must not run when the left operand alone already determines the result) — confirmed
+            // 7/26 against upstream, correcting a previous wrong assumption in this file (every
+            // other binary operator has no side effects to worry about, so those still evaluate
+            // both sides unconditionally).
+            if op == "&&" {
+                let left = eval(lhs, store)
+                if left == 0 { return 0 }
+                return eval(rhs, store) != 0 ? 1 : 0
+            }
+            if op == "||" {
+                let left = eval(lhs, store)
+                if left != 0 { return 1 }
+                return eval(rhs, store) != 0 ? 1 : 0
+            }
             let left = eval(lhs, store)
             let right = eval(rhs, store)
             switch op {
@@ -197,11 +213,20 @@ final class MilkdropResolvedProgram {
             case ">=": return left >= right ? 1 : 0
             case "==": return left == right ? 1 : 0
             case "!=": return left != right ? 1 : 0
-            case "&&": return (left != 0 && right != 0) ? 1 : 0
-            case "||": return (left != 0 || right != 0) ? 1 : 0
             default: return 0
             }
         case .call(let function, let argNodes):
+            // `if(cond,a,b)` short-circuits in real NS-EEL (`prjm_eval_func_if`) — only the taken
+            // branch's expression (and any side effects, e.g. an assignment) actually runs, unlike
+            // `above`/`below`/`equal`/`band`/`bor`/`bnot`/every other builtin, which are ordinary
+            // eager 2-arg functions with no such contract. Confirmed 7/26 against upstream,
+            // correcting a previous wrong assumption in this file (see this file's other short-
+            // circuit fix on `&&`/`||` just above, and MilkdropExpressionParallelSafetyAnalyzer
+            // .swift's matching update).
+            if function == .ifFn, argNodes.count == 3 {
+                let cond = eval(argNodes[0], store)
+                return cond != 0 ? eval(argNodes[1], store) : eval(argNodes[2], store)
+            }
             // Same eager-evaluation/no-array-allocation contract as the original evaluator's
             // `.call` case — see its own comment for why (a per_pixel_N= mesh sweep alone runs
             // ~800 evaluations/frame).
@@ -332,6 +357,19 @@ final class MilkdropExpressionProgram {
             let value = evalStore(operand, store)
             return op == "-" ? -value : (value == 0 ? 1 : 0)
         case .binary(let op, let lhs, let rhs):
+            // Short-circuit `&&`/`||` — see `MilkdropResolvedProgram.eval`'s matching fix for the
+            // real-NS-EEL-semantics rationale (both paths must agree: this one is the reference
+            // implementation the resolved-slot path is checked against for byte-identical output).
+            if op == "&&" {
+                let left = evalStore(lhs, store)
+                if left == 0 { return 0 }
+                return evalStore(rhs, store) != 0 ? 1 : 0
+            }
+            if op == "||" {
+                let left = evalStore(lhs, store)
+                if left != 0 { return 1 }
+                return evalStore(rhs, store) != 0 ? 1 : 0
+            }
             let left = evalStore(lhs, store)
             let right = evalStore(rhs, store)
             switch op {
@@ -346,11 +384,14 @@ final class MilkdropExpressionProgram {
             case ">=": return left >= right ? 1 : 0
             case "==": return left == right ? 1 : 0
             case "!=": return left != right ? 1 : 0
-            case "&&": return (left != 0 && right != 0) ? 1 : 0
-            case "||": return (left != 0 || right != 0) ? 1 : 0
             default: return 0
             }
         case .call(let name, let argNodes):
+            // Short-circuit `if(cond,a,b)` — see `MilkdropResolvedProgram.eval`'s matching fix.
+            if name == "if", argNodes.count == 3 {
+                let cond = evalStore(argNodes[0], store)
+                return cond != 0 ? evalStore(argNodes[1], store) : evalStore(argNodes[2], store)
+            }
             let a0: Float = argNodes.count > 0 ? evalStore(argNodes[0], store) : 0
             let a1: Float = argNodes.count > 1 ? evalStore(argNodes[1], store) : 0
             let a2: Float = argNodes.count > 2 ? evalStore(argNodes[2], store) : 0
@@ -375,6 +416,20 @@ final class MilkdropExpressionProgram {
             let value = eval(operand, &vars)
             return op == "-" ? -value : (value == 0 ? 1 : 0)
         case .binary(let op, let lhs, let rhs):
+            // Short-circuit `&&`/`||` — real NS-EEL semantics (see `MilkdropResolvedProgram.eval`'s
+            // matching fix). This function is the reference oracle `MilkdropExpressionEvaluatorTests
+            // .swift`/`MilkdropResolvedProgramTests.swift` check every other path against for
+            // byte-identical output, so it must lead this fix, not follow it.
+            if op == "&&" {
+                let left = eval(lhs, &vars)
+                if left == 0 { return 0 }
+                return eval(rhs, &vars) != 0 ? 1 : 0
+            }
+            if op == "||" {
+                let left = eval(lhs, &vars)
+                if left != 0 { return 1 }
+                return eval(rhs, &vars) != 0 ? 1 : 0
+            }
             let left = eval(lhs, &vars)
             let right = eval(rhs, &vars)
             switch op {
@@ -389,11 +444,15 @@ final class MilkdropExpressionProgram {
             case ">=": return left >= right ? 1 : 0
             case "==": return left == right ? 1 : 0
             case "!=": return left != right ? 1 : 0
-            case "&&": return (left != 0 && right != 0) ? 1 : 0
-            case "||": return (left != 0 || right != 0) ? 1 : 0
             default: return 0
             }
         case .call(let name, let argNodes):
+            // Short-circuit `if(cond,a,b)` — real NS-EEL semantics (`prjm_eval_func_if`): only the
+            // taken branch's expression, including any assignment side effect, actually runs.
+            if name == "if", argNodes.count == 3 {
+                let cond = eval(argNodes[0], &vars)
+                return cond != 0 ? eval(argNodes[1], &vars) : eval(argNodes[2], &vars)
+            }
             // Every supported builtin below takes at most 3 arguments, evaluated inline instead of
             // via `argNodes.map { ... }` — that `.map` used to heap-allocate a fresh `[Float]` array
             // on *every single function call*, which dominates real cost here: a per_pixel_N= mesh

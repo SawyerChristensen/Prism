@@ -9,19 +9,27 @@
 //  much simpler than MilkdropShaderTranslator.swift's HLSL-source-text translation, since the
 //  input here is already a structured tree, not text to scan/pattern-match.
 //
-//  THE SINGLE MOST IMPORTANT CORRECTNESS RULE HERE: `if`/`above`/`below`/`equal`/`band`/`bor`/
-//  `bnot`, and the `&&`/`||` binary operators, must all become ordinary MSL *function calls* —
-//  never MSL's native `?:`/`&&`/`||`. Those MSL operators are short-circuit/lazily evaluated;
-//  NS-EEL's are not — confirmed directly against `MilkdropExpressionEvaluator.eval`'s `.call` case
-//  (evaluates `a0`/`a1`/`a2` unconditionally before `callFunction` even looks at which builtin it
-//  is) and its `.binary` case (evaluates `left`/`right` unconditionally before the operator
-//  switch). `if(x>0, y=1, z=2)` must always assign *both* y and z; a naive "looks like C, translate
-//  directly" mapping to `x>0 ? (y=1) : (z=2)` would silently drop the untaken branch's side effect
-//  on real GPU hardware. Every builtin below — even natively-1:1 ones like `sin`/`cos` — routes
-//  through a small `milkdrop_fn_*` shim function taking exactly 3 `float` parameters (unused
-//  ones padded with a `0.0f` literal, not an expression), so that MSL's own eager, always-evaluate-
-//  every-argument call semantics reproduce NS-EEL's "always evaluate up to 3 arguments regardless
-//  of which builtin ignores which" contract uniformly, with no special-casing per builtin.
+//  THE SINGLE MOST IMPORTANT CORRECTNESS RULE HERE (corrected 7/26 — see below): `if(cond,a,b)` and
+//  the `&&`/`||` binary operators DO short-circuit in real NS-EEL (`vendor/projectm-eval/
+//  TreeFunctions.c`'s `prjm_eval_func_if`/`_and`/`_or` — only the taken branch, or the right operand
+//  when it's actually needed, evaluates at all) — confirmed 7/26 directly against upstream, catching
+//  a previously-wrong assumption here (this file used to eagerly evaluate every branch/operand
+//  through a `milkdrop_fn_if`/`milkdrop_fn_and`/`milkdrop_fn_or` shim specifically to *avoid* MSL's
+//  native short-circuiting `?:`/`&&`/`||`, believing NS-EEL didn't short-circuit; it does).
+//  `if`/`&&`/`||` are now transpiled to MSL's own native `?:`/`&&`/`||` instead — which happens to
+//  be a genuine simplification, not new complexity, since MSL's own short-circuit semantics for
+//  those three constructs already match NS-EEL's exactly, once each is properly targeted (see
+//  `transpileCall`'s `if` special case and `transpileBinary`'s `&&`/`||` cases below).
+//  `above`/`below`/`equal`/`band`/`bor`/`bnot` are NOT control-flow constructs — real NS-EEL treats
+//  them as ordinary eager 2-argument functions with no short-circuit contract at all (only the
+//  operator forms `&&`/`||` short-circuit; the function forms `band`/`bor` explicitly don't, per
+//  upstream's own comment on `prjm_eval_func_boolean_and_op`) — so those five keep routing through
+//  their existing `milkdrop_fn_*` shim, unchanged. Every OTHER builtin below — even natively-1:1
+//  ones like `sin`/`cos` — still routes through a small `milkdrop_fn_*` shim function taking exactly
+//  3 `float` parameters (unused ones padded with a `0.0f` literal, not an expression), so that
+//  MSL's own eager, always-evaluate-every-argument call semantics reproduce NS-EEL's "always
+//  evaluate up to 3 arguments regardless of which builtin ignores which" contract uniformly, with
+//  no special-casing needed for any of those.
 //
 //  Other guard formulas (`/`, `%`, `sqrt`, `log`, `log10`) reproduce
 //  `MilkdropExpressionEvaluator.callFunction`'s exact guards verbatim (e.g. `right == 0 ? 0 :
@@ -79,7 +87,6 @@ enum MilkdropExpressionMSLTranspiler {
     inline float milkdrop_fn_max(float a0, float a1, float a2) { return max(a0, a1); }
     inline float milkdrop_fn_sign(float a0, float a1, float a2) { return a0 > 0.0 ? 1.0 : (a0 < 0.0 ? -1.0 : 0.0); }
     inline float milkdrop_fn_int(float a0, float a1, float a2) { return trunc(a0); }
-    inline float milkdrop_fn_if(float a0, float a1, float a2) { return a0 != 0.0 ? a1 : a2; }
     inline float milkdrop_fn_above(float a0, float a1, float a2) { return a0 > a1 ? 1.0 : 0.0; }
     inline float milkdrop_fn_below(float a0, float a1, float a2) { return a0 < a1 ? 1.0 : 0.0; }
     inline float milkdrop_fn_equal(float a0, float a1, float a2) { return a0 == a1 ? 1.0 : 0.0; }
@@ -88,8 +95,6 @@ enum MilkdropExpressionMSLTranspiler {
     inline float milkdrop_fn_bnot(float a0, float a1, float a2) { return a0 == 0.0 ? 1.0 : 0.0; }
     inline float milkdrop_fn_unsupported(float a0, float a1, float a2) { return 0.0; }
     inline float milkdrop_fn_not(float a0) { return a0 == 0.0 ? 1.0 : 0.0; }
-    inline float milkdrop_fn_and(float a0, float a1) { return (a0 != 0.0 && a1 != 0.0) ? 1.0 : 0.0; }
-    inline float milkdrop_fn_or(float a0, float a1) { return (a0 != 0.0 || a1 != 0.0) ? 1.0 : 0.0; }
     inline float milkdrop_fn_div(float a, float b) { return b == 0.0 ? 0.0 : a / b; }
     inline float milkdrop_fn_mod(float a, float b) { return b == 0.0 ? 0.0 : fmod(a, b); }
     """
@@ -143,8 +148,11 @@ enum MilkdropExpressionMSLTranspiler {
     /// both operands in both languages). Comparisons are an explicit ternary on the comparison
     /// itself (safe: the comparison IS the condition, always evaluated, unlike a ternary's
     /// branches) rather than a shim, since MSL has no native "returns 1.0/0.0" comparison form.
-    /// `/`/`%`/`&&`/`||` route through shims — `/`/`%` for the guard formula, `&&`/`||` for eager
-    /// (non-short-circuit) evaluation — see this file's header.
+    /// `/`/`%` route through shims for their guard formula. `&&`/`||` are native MSL `&&`/`||` on a
+    /// `!= 0.0f` boolean of each side (still real short-circuiting — MSL only evaluates the right
+    /// side's `!= 0.0f`, and therefore `rhs` itself, when the left side doesn't already determine
+    /// the result), matching real NS-EEL's own short-circuit contract for these two operators
+    /// specifically — see this file's header (corrected 7/26 from the previous, wrong assumption).
     private static func transpileBinary(_ op: String, _ lhs: String, _ rhs: String) -> String {
         switch op {
         case "+": return "(\(lhs) + \(rhs))"
@@ -158,23 +166,35 @@ enum MilkdropExpressionMSLTranspiler {
         case ">=": return "((\(lhs)) >= (\(rhs)) ? 1.0f : 0.0f)"
         case "==": return "((\(lhs)) == (\(rhs)) ? 1.0f : 0.0f)"
         case "!=": return "((\(lhs)) != (\(rhs)) ? 1.0f : 0.0f)"
-        case "&&": return "milkdrop_fn_and(\(lhs), \(rhs))"
-        case "||": return "milkdrop_fn_or(\(lhs), \(rhs))"
+        case "&&": return "(((\(lhs)) != 0.0f && (\(rhs)) != 0.0f) ? 1.0f : 0.0f)"
+        case "||": return "(((\(lhs)) != 0.0f || (\(rhs)) != 0.0f) ? 1.0f : 0.0f)"
         default: return "0.0f"
         }
     }
 
-    /// Every builtin dispatches to a fixed-3-parameter shim (see this file's header on why, even
-    /// for natively-1:1 ones). Missing arguments (fewer than 3 supplied) are padded with a literal
-    /// `0.0f` — nothing to evaluate there, matching the evaluator's own `argNodes.count > 0 ? ... :
-    /// 0` default. A 4th+ argument (no real builtin needs one, but the parser doesn't forbid it) is
-    /// still evaluated for its side effects, sequenced via MSL's comma operator ahead of the actual
-    /// call — matching the evaluator's own `if argNodes.count > 3 { for i in 3..<argNodes.count { _
-    /// = eval(...) } }` tail loop.
+    /// Every builtin except `if` dispatches to a fixed-3-parameter shim (see this file's header on
+    /// why, even for natively-1:1 ones). Missing arguments (fewer than 3 supplied) are padded with
+    /// a literal `0.0f` — nothing to evaluate there, matching the evaluator's own `argNodes.count >
+    /// 0 ? ... : 0` default. A 4th+ argument (no real builtin needs one, but the parser doesn't
+    /// forbid it) is still evaluated for its side effects, sequenced via MSL's comma operator ahead
+    /// of the actual call — matching the evaluator's own `if argNodes.count > 3 { for i in
+    /// 3..<argNodes.count { _ = eval(...) } }` tail loop.
+    ///
+    /// `if(cond,a,b)` is the one exception: real NS-EEL short-circuits it (only the taken branch's
+    /// side effects run — see this file's header), so it becomes a native MSL ternary rather than
+    /// an eager shim call — `cond != 0.0f` is always evaluated (matching `a0` always running), but
+    /// only one of `a`/`b` ever does, exactly matching upstream. Still uses the same `0.0f`-padding
+    /// convention as every other builtin for a missing argument.
     private static func transpileCall(_ name: String, _ argExprs: [String]) -> String {
         let a0 = argExprs.count > 0 ? argExprs[0] : "0.0f"
         let a1 = argExprs.count > 1 ? argExprs[1] : "0.0f"
         let a2 = argExprs.count > 2 ? argExprs[2] : "0.0f"
+        if name == "if" {
+            let ternary = "((\(a0)) != 0.0f ? (\(a1)) : (\(a2)))"
+            guard argExprs.count > 3 else { return ternary }
+            let extras = argExprs[3...].joined(separator: ", ")
+            return "(\(extras), \(ternary))"
+        }
         let call = "\(shimName(for: name))(\(a0), \(a1), \(a2))"
         guard argExprs.count > 3 else { return call }
         let extras = argExprs[3...].joined(separator: ", ")
@@ -201,7 +221,8 @@ enum MilkdropExpressionMSLTranspiler {
         case "max": return "milkdrop_fn_max"
         case "sign": return "milkdrop_fn_sign"
         case "int": return "milkdrop_fn_int"
-        case "if": return "milkdrop_fn_if"
+        // "if" is intercepted at the top of transpileCall (native ternary, not a shim) — never
+        // reaches here in practice; no case needed since there's no `milkdrop_fn_if` shim anymore.
         case "above": return "milkdrop_fn_above"
         case "below": return "milkdrop_fn_below"
         case "equal": return "milkdrop_fn_equal"

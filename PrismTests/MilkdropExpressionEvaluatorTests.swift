@@ -78,4 +78,47 @@ struct MilkdropExpressionEvaluatorTests {
     @Test func undeclaredVariableReadsAsZero() {
         #expect(run("a=neverAssigned+1;")["a"] == 1)
     }
+
+    // MARK: - if/&&/|| short-circuit (fixed 7/26 — see MilkdropExpressionEvaluator.swift's header:
+    // real NS-EEL short-circuits these three, confirmed against vendor/projectm-eval/TreeFunctions.c
+    // rather than the previous, wrong "both sides always run" assumption).
+
+    @Test func ifOnlyEvaluatesTheTakenBranchsSideEffect() {
+        let trueBranch = run("s1=0; s2=0; a=if(1, s1=1, s2=1);")
+        #expect(trueBranch["s1"] == 1)
+        #expect(trueBranch["s2"] == 0, "the untaken branch's assignment must not have run")
+
+        let falseBranch = run("s1=0; s2=0; a=if(0, s1=1, s2=1);")
+        #expect(falseBranch["s1"] == 0, "the untaken branch's assignment must not have run")
+        #expect(falseBranch["s2"] == 1)
+    }
+
+    @Test func andOnlyEvaluatesRightSideWhenLeftIsTrue() {
+        let leftFalse = run("s=0; a = (0 && (s=1));")
+        #expect(leftFalse["s"] == 0, "right side must not evaluate when the left is already false")
+        #expect(leftFalse["a"] == 0)
+
+        let leftTrue = run("s=0; a = (1 && (s=1));")
+        #expect(leftTrue["s"] == 1, "right side must evaluate when the left doesn't decide the result")
+        #expect(leftTrue["a"] == 1)
+    }
+
+    @Test func orOnlyEvaluatesRightSideWhenLeftIsFalse() {
+        let leftTrue = run("s=0; a = (1 || (s=1));")
+        #expect(leftTrue["s"] == 0, "right side must not evaluate when the left is already true")
+        #expect(leftTrue["a"] == 1)
+
+        let leftFalse = run("s=0; a = (0 || (s=1));")
+        #expect(leftFalse["s"] == 1, "right side must evaluate when the left doesn't decide the result")
+        #expect(leftFalse["a"] == 1)
+    }
+
+    @Test func bandAndBorFunctionFormsDoNotShortCircuit() {
+        // Unlike the `&&`/`||` operators just above, the `band`/`bor` *function* forms are ordinary
+        // eager 2-argument functions in real NS-EEL — no short-circuit contract at all (confirmed
+        // against vendor/projectm-eval/TreeFunctions.c's own comment distinguishing the two).
+        let vars = run("s1=0; s2=0; a=band(0, s1=1); b=bor(1, s2=1);")
+        #expect(vars["s1"] == 1, "band's second argument must still evaluate even though the first is falsy")
+        #expect(vars["s2"] == 1, "bor's second argument must still evaluate even though the first is truthy")
+    }
 }
