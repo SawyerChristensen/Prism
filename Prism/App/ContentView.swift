@@ -32,8 +32,17 @@ struct ContentView: View {
     @State private var showSavedConfirmation = false
     @FocusState private var isFocused: Bool
 
+    // Temporarily off (TO DO.md Phase 3, 7/26): the true window background (and, via
+    // `.windowStyle(.hiddenTitleBar)` in PrismApp.swift, the apparent title bar) was inheriting
+    // the album art's dominant color, which needs revisiting. NowPlayingManager's own computation
+    // (`albumBackgroundColor`/`albumForegroundColor`) is left completely untouched -- this is a
+    // one-line flip back on, not a removed feature -- so the piping is ready for whenever this
+    // gets picked back up.
+    private static let useAlbumArtBackgroundColor = false
+
     var body: some View {
-        let bgColor = nowPlaying.albumBackgroundColor.map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
+        let bgColor = (Self.useAlbumArtBackgroundColor ? nowPlaying.albumBackgroundColor : nil)
+            .map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
         let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
 
         let bassEnergy = audioEngine.levels.prefix(4).reduce(0, +) / 4
