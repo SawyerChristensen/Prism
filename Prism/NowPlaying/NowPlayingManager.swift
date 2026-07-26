@@ -440,11 +440,22 @@ final class NowPlayingManager {
 
         Task.detached(priority: .userInitiated) { [weak self] in
             let composited = Self.compositeArtwork(cachedRawArtwork, colors: colors, subjectMasked: subjectMasked, textLines: textLines, mode: mode, includeText: includeText, processingEnabled: processing)
-            await MainActor.run {
-                guard let self, self.recompositeGeneration == generation else { return }
-                self.artwork = composited
-            }
+            // `guard let self` here (in the still-nonisolated detached-task body), not inside the
+            // nested `MainActor.run` closure — capturing the already-unwrapped, non-optional `self`
+            // into that nested closure type-checks cleanly; referencing the outer closure's own
+            // `weak self` optional from within a nested closure is what triggered the "captured var
+            // in concurrently-executing code" warning (an error under strict Swift 6 concurrency).
+            guard let self else { return }
+            await self.applyRecomposited(composited, ifStillCurrent: generation)
         }
+    }
+
+    /// Applies a background-composited image back onto `artwork`, but only if `generation` still
+    /// matches the most recent `recomposite()` call — a slower-to-finish stale composite (e.g. from
+    /// a track already skipped past) must never clobber a newer one that finished first.
+    private func applyRecomposited(_ composited: NSImage, ifStillCurrent generation: Int) {
+        guard recompositeGeneration == generation else { return }
+        artwork = composited
     }
 
     /// Composites the final artwork from already-computed ingredients (color-keying is the one

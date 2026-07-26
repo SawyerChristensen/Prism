@@ -604,7 +604,10 @@ final class MilkdropMetalRenderer: NSObject {
     // Not `private`, same reason as buildCompositeShaderSource/buildWarpShaderSource above:
     // PrismTests compiles this generated MSL through a real MTLDevice.
     static func buildPerPixelMeshVertexSource(_ transpiled: MilkdropExpressionMSLTranspiler.Result) -> String {
-        let id = MilkdropExpressionMSLTranspiler.mslIdentifier(for:)
+        // A closure literal, not a bare `Type.mslIdentifier(for:)` reference — see this file's
+        // other such fixes (e.g. MilkdropVisualizerView.swift's `.map { Type(preset: $0) }`) for
+        // why a first-class reference to an isolated static method doesn't type-check the same way.
+        let id: (String) -> String = { MilkdropExpressionMSLTranspiler.mslIdentifier(for: $0) }
         var uniformSeeds: [String] = []
         for (i, name) in MilkdropPerPixelMeshRuntime.perFrameUniformBuiltinNames.enumerated() {
             uniformSeeds.append("    float \(id(name)) = meshUniforms[\(i)];")
@@ -1081,7 +1084,7 @@ final class MilkdropMetalRenderer: NSObject {
                 )
             }
         } else if let compiledWarp, let resolvedWarpTextures {
-            var meshVertices = meshVerticesFromScript ?? MilkdropPerPixelMeshRuntime.trivialVertices(
+            let meshVertices = meshVerticesFromScript ?? MilkdropPerPixelMeshRuntime.trivialVertices(
                 aspectX: aspectXY.x, aspectY: aspectXY.y,
                 zoom: zoom, zoomExp: zoomExponent, rot: rot, warp: warpAmount,
                 cx: cx, cy: cy, dx: dx, dy: dy, sx: sx, sy: sy

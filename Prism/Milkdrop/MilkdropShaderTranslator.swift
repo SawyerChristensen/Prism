@@ -52,11 +52,10 @@ enum MilkdropShaderTranslator {
         /// The resolved base resource: `.main` (the feedback texture), `.noise(baseName)` where
         /// `baseName` is one of MilkdropNoiseTextures' catalog keys (`noise_lq`, `noisevol_hq`,
         /// etc), or `.blur(level)` for the `GetBlur1`/`GetBlur2`/`GetBlur3` helper functions (see
-        /// this file's header on `GetPixel`/`GetBlurN` below) — currently resolved to the same
-        /// unblurred main texture as `.main` (MilkdropMetalRenderer.metalTexture(for:mainTexture:)),
-        /// a documented approximation until a real blur-texture pipeline exists (measured 7/25:
-        /// `GetBlur*`/`GetPixel` account for 73% of real warp-shader compile failures, so shipping
-        /// this approximation now matters far more than waiting for true blur).
+        /// this file's header on `GetPixel`/`GetBlurN` below) — resolved to a real, genuinely
+        /// blurred/downsampled cascade texture (MilkdropMetalRenderer.updateBlurTextures, done
+        /// 7/26; MilkdropMetalRenderer.metalTexture(for:mainTexture:) does the actual lookup, with
+        /// an unblurred-`main`-texture fallback only if a level hasn't been generated yet).
         var resource: Resource
         var filter: Filter
         var wrap: Wrap
@@ -71,9 +70,13 @@ enum MilkdropShaderTranslator {
         /// make `classify`/`translate` return `nil` for the whole shader — a preset pack missing
         /// even one referenced texture file (common — see MilkdropCustomTextureManager.swift's
         /// header) shouldn't lose 100% of that shader's other effects over it.
-        enum Resource: Equatable { case main, noise(String), blur(Int), custom(String) }
-        enum Filter { case linear, nearest }
-        enum Wrap { case repeatWrap, clampToEdge }
+        // `nonisolated` on all three — plain value types with no UI/main-thread state, compared via
+        // `==` from test code that runs in a nonisolated context; without this, the project-wide
+        // default MainActor isolation would apply even to their (explicit or synthesized)
+        // `Equatable` conformance, same fix as AlbumColors.swift's `BackgroundTone`.
+        nonisolated enum Resource: Equatable { case main, noise(String), blur(Int), custom(String) }
+        nonisolated enum Filter { case linear, nearest }
+        nonisolated enum Wrap { case repeatWrap, clampToEdge }
     }
 
     /// Reserved, collision-proof parameter names for the implicit `GetPixel`/`GetBlurN` textures

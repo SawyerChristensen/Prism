@@ -16,7 +16,11 @@ private struct KMeansPoint {
     var z: Double
 }
 
-private func distanceSquared(_ a: KMeansPoint, _ b: KMeansPoint) -> Double {
+// `nonisolated` on these three (matching `extractColors()`'s own explicit nonisolation below) —
+// pure computation, no UI/main-thread state, meant to run off the main thread as part of the
+// heavy pixel-crunching/k-means work; without this they'd default to MainActor isolation like
+// everything else in this project, forcing that work back onto the main thread.
+private nonisolated func distanceSquared(_ a: KMeansPoint, _ b: KMeansPoint) -> Double {
     let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
     return dx * dx + dy * dy + dz * dz
 }
@@ -33,7 +37,7 @@ private func distanceSquared(_ a: KMeansPoint, _ b: KMeansPoint) -> Double {
 /// membership test — "is this pixel actually in a corner, yes or no" — sidesteps that: it lets the
 /// corners be judged on their own, undiluted by how much area the centered subject takes up
 /// elsewhere in the frame. See `pickBackgroundColor` for how that verdict is used.
-private func isCornerPixel(row: Int, col: Int, size: Int, cornerFraction: Double = 0.18) -> Bool {
+private nonisolated func isCornerPixel(row: Int, col: Int, size: Int, cornerFraction: Double = 0.18) -> Bool {
     let cornerSize = Int(Double(size) * cornerFraction)
     guard cornerSize > 0 else { return false }
     let nearLeftOrRight = col < cornerSize || col >= size - cornerSize
@@ -55,7 +59,7 @@ private func isCornerPixel(row: Int, col: Int, size: Int, cornerFraction: Double
 /// flickering — measured 342ms combined on the same image and same accuracy. `moveThreshold` is in
 /// the same units as the points, so callers in different feature spaces (e.g. chromaticity's ~0-1
 /// range vs raw RGB's 0-255) need different values.
-private func kmeans(_ points: [KMeansPoint], k: Int, moveThreshold: Double, iterations: Int = 15) -> [Int] {
+private nonisolated func kmeans(_ points: [KMeansPoint], k: Int, moveThreshold: Double, iterations: Int = 15) -> [Int] {
     guard points.count > k else { return Array(points.indices) }
 
     var rng = SystemRandomNumberGenerator()
@@ -363,7 +367,11 @@ extension NSImage {
 /// Thresholds deliberately match `pickBackgroundColor`'s own nearBlack/nearWhite pool definitions
 /// above, so "detected as black/white" means the same thing here as it does during background
 /// extraction.
-enum BackgroundTone {
+// `nonisolated` — a plain value type with no UI/main-thread state, compared (via its synthesized
+// `Equatable` conformance) from `NowPlayingManager.compositeArtwork`'s `nonisolated` background
+// work; without this, the default project-wide MainActor isolation would apply even to the
+// synthesized `==`, making it unusable from a nonisolated context.
+nonisolated enum BackgroundTone {
     case black, white, other
 }
 

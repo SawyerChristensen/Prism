@@ -221,9 +221,13 @@ final class MilkdropVisualizerModel {
             // rest of the codebase after this change rather than being the one holdout still on the
             // string-keyed path.
             perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)?.resolved(against: presetVariables)
-            shapes = file.shapes.map(MilkdropShapeRuntime.init(preset:))
+            // Explicit closures, not a bare `Type.init(preset:)` reference — passing an isolated
+            // initializer as a first-class function value converts it to a nonisolated function
+            // type, which the compiler can't prove safe even though this call site is already on
+            // the right actor; a closure literal captures the ambient isolation directly instead.
+            shapes = file.shapes.map { MilkdropShapeRuntime(preset: $0) }
             perPixelMesh = MilkdropPerPixelMeshRuntime(source: file.perPixelProgram)
-            customWaves = file.customWaves.map(MilkdropCustomWaveformRuntime.init(preset:))
+            customWaves = file.customWaves.map { MilkdropCustomWaveformRuntime(preset: $0) }
             warpAnimSpeed = file.warpAnimSpeed
             warpScale = file.warpScale
             compositeShaderSource = file.compositeShaderSource

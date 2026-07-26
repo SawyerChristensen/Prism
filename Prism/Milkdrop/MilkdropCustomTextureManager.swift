@@ -65,7 +65,10 @@ final class MilkdropCustomTextureManager {
         scannedRoot = root
         cache.removeAll()
         randomSlotChoices.removeAll()
-        scannedFiles = root.map(Self.scan(_:)) ?? []
+        // A closure literal, not a bare `Self.scan(_:)` reference — see MilkdropVisualizerView
+        // .swift's matching fix for why a first-class reference to an isolated static method
+        // doesn't type-check the same way a closure literal calling it directly does.
+        scannedFiles = root.map { Self.scan($0) } ?? []
     }
 
     /// Resolves an already qualifier-stripped, lowercased base name (see
