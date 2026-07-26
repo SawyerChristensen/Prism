@@ -253,7 +253,11 @@ final class MilkdropResolvedProgram {
 /// A parsed, ready-to-evaluate per-frame program. Parsing happens once at load time; `evaluate`
 /// just walks the AST, so running it every rendered frame is cheap.
 final class MilkdropExpressionProgram {
-    fileprivate let statements: [Node]
+    /// Not `fileprivate`: consumed directly by MilkdropExpressionParallelSafetyAnalyzer.swift and
+    /// MilkdropExpressionMSLTranspiler.swift (both need the original, unresolved `[Node]` tree,
+    /// not the resolved-slot form `resolved(against:)` below produces) — same module, so `internal`
+    /// (the default) is the right visibility rather than a bespoke accessor method.
+    let statements: [Node]
 
     /// `nil` if the source contains no usable statements (e.g. comments-only or empty).
     init?(source: String) {

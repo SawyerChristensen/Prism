@@ -138,8 +138,10 @@ final class MilkdropVisualizerModel {
     // The scripted warp mesh (`per_pixel_N=`) for the loaded preset, if it has any — see
     // MilkdropPerPixelMesh.swift. `nil` for the majority of presets (no per_pixel code at all),
     // in which case MilkdropMetalRenderer keeps using its existing per-pixel-exact fixed-formula
-    // warp path rather than downgrading to a coarse mesh for no reason.
-    private var perPixelMesh: MilkdropPerPixelMeshRuntime?
+    // warp path rather than downgrading to a coarse mesh for no reason. Not `private`: read (not
+    // written) by MilkdropMetalRenderer.draw(in:) — both to call `calculate()` for the CPU path
+    // and, since 7/26, to attempt a GPU-compiled vertex function via `compilePerPixelMeshVertex`.
+    private(set) var perPixelMesh: MilkdropPerPixelMeshRuntime?
 
     // Custom waveforms (`wavecode_N_*`) loaded alongside the built-in waveform above — see
     // MilkdropCustomWaveform.swift. Always 4 slots, same disabled-by-default pattern as `shapes`.

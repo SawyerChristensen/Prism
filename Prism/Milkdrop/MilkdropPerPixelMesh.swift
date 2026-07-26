@@ -37,6 +37,17 @@ struct MilkdropMeshVertexAttributes {
     var stretch: SIMD2<Float>     // sx, sy
 }
 
+/// Only the *static* per-vertex geometry (position + radius/angle) — what a GPU-compiled
+/// `per_pixel_N=` vertex function needs as input (see MilkdropMetalRenderer.swift's
+/// `compilePerPixelMeshVertex`), since zoom/zoomExp/rot/warp/center/distance/stretch are computed
+/// by the compiled script itself, on GPU, instead of being precomputed on CPU into the full
+/// `MilkdropMeshVertexAttributes` struct above. Field order/types must match the Metal-side
+/// `MeshStaticVertex` struct byte-for-byte.
+struct MilkdropMeshStaticVertex {
+    var position: SIMD2<Float>
+    var radiusAngle: SIMD2<Float>
+}
+
 final class MilkdropPerPixelMeshRuntime {
     static let gridSizeX = 32
     static let gridSizeY = 24
@@ -62,6 +73,34 @@ final class MilkdropPerPixelMeshRuntime {
         }
         return idx
     }()
+
+    /// Every built-in name `calculate` below seeds/reads every vertex, EXCEPT `x`/`y`/`rad`/`ang`
+    /// (see `perVertexBuiltinNames`) — ordered so MilkdropMetalRenderer's GPU uniform buffer
+    /// layout (`compilePerPixelMeshVertex`'s `meshUniforms`) has a single source of truth for
+    /// index-to-name mapping, shared with `MilkdropExpressionParallelSafetyAnalyzer`/
+    /// `MilkdropExpressionMSLTranspiler` (via `builtinNames` below) so the safety check, the
+    /// transpile, and the compiled vertex function's uniform layout can never drift out of sync
+    /// with what this CPU runtime actually seeds.
+    static let perFrameUniformBuiltinNames: [String] = [
+        "time", "fps", "frame", "bass", "mid", "treb", "bass_att", "mid_att", "treb_att",
+        "meshx", "meshy", "pixelsx", "pixelsy", "aspectx", "aspecty",
+        "zoom", "zoomexp", "rot", "warp", "cx", "cy", "dx", "dy", "sx", "sy",
+    ] + (1...32).map { "q\($0)" }
+
+    /// Computed per-vertex from the static geometry buffer + aspect ratio (see `calculate`'s own
+    /// per-vertex seeding and `compilePerPixelMeshVertex`'s equivalent GPU-side computation), not
+    /// read from a uniform — still genuine per-vertex built-ins from the script's own point of
+    /// view, just not part of `perFrameUniformBuiltinNames`' buffer layout.
+    static let perVertexBuiltinNames: [String] = ["x", "y", "rad", "ang"]
+
+    /// The full built-in set — what `MilkdropExpressionParallelSafetyAnalyzer`/
+    /// `MilkdropExpressionMSLTranspiler` actually need (order doesn't matter for either of those).
+    static let builtinNames: Set<String> = Set(perFrameUniformBuiltinNames + perVertexBuiltinNames)
+
+    /// The original, unresolved AST — exposed so MilkdropMetalRenderer can run it through
+    /// `MilkdropExpressionParallelSafetyAnalyzer`/`MilkdropExpressionMSLTranspiler` (Tier 3's
+    /// GPU-compile attempt) without re-parsing the source text a second time.
+    let statements: [Node]
 
     private let program: MilkdropResolvedProgram
     // One persistent environment reused across every vertex *and* every frame — matching
@@ -117,6 +156,7 @@ final class MilkdropPerPixelMeshRuntime {
     /// existing full-screen fragment-shader warp path in that case (see Shaders.metal's header).
     init?(source: String) {
         guard let parsed = MilkdropExpressionProgram(source: source) else { return nil }
+        statements = parsed.statements
 
         let variables = MilkdropVariableSlots()
         self.variables = variables
@@ -206,10 +246,29 @@ final class MilkdropPerPixelMeshRuntime {
         }
     }
 
+    /// Mirrors `baseVertices` as `MilkdropMeshStaticVertex` structs, ready to upload to GPU as-is —
+    /// cached alongside `baseVertices` (rebuilt only on an actual aspect-ratio change, not
+    /// remapped fresh every frame) since a GPU-compiled `per_pixel_N=` vertex function
+    /// (`compilePerPixelMeshVertex` in MilkdropMetalRenderer.swift) needs exactly this static
+    /// geometry as its per-vertex input buffer.
+    private var staticVertexBuffer: [MilkdropMeshStaticVertex] = []
+
     private func rebuildBaseVertices(aspectX: Float, aspectY: Float) {
         lastAspectX = aspectX
         lastAspectY = aspectY
         baseVertices = Self.gridPositions(aspectX: aspectX, aspectY: aspectY)
+        staticVertexBuffer = baseVertices.map {
+            MilkdropMeshStaticVertex(position: $0.position, radiusAngle: SIMD2($0.radius, $0.angle))
+        }
+    }
+
+    /// The static per-vertex geometry a GPU-compiled `per_pixel_N=` vertex function needs as its
+    /// input buffer — see `staticVertexBuffer`'s doc comment.
+    func staticVertices(aspectX: Float, aspectY: Float) -> [MilkdropMeshStaticVertex] {
+        if aspectX != lastAspectX || aspectY != lastAspectY {
+            rebuildBaseVertices(aspectX: aspectX, aspectY: aspectY)
+        }
+        return staticVertexBuffer
     }
 
     /// Evaluates the per-pixel script at every mesh vertex for this frame, seeded with the current

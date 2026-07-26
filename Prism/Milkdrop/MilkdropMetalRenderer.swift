@@ -115,6 +115,14 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     // compileWarpShader below) — same reasoning as feedbackVertexFunction above, just for the mesh
     // vertex stage instead of the full-screen quad.
     private let feedbackMeshVertexFunction: MTLFunction
+    // Reused (paired with a GPU-compiled per_pixel_N= vertex function — see
+    // compiledPerPixelMeshOnlyPipeline below) for a preset with a scripted mesh but no warp_N=
+    // shader of its own — same reasoning as feedbackMeshVertexFunction above, just the fragment
+    // side of that same pairing instead of the vertex side. `feedbackMeshPipeline` above already
+    // bundles this same function with the static `feedback_mesh_vertex`, but doesn't expose it
+    // separately for reuse in a different pairing the way feedbackVertexFunction/
+    // feedbackMeshVertexFunction already had to.
+    private let feedbackMeshFragmentFunction: MTLFunction
     // The four filter/wrap combinations MilkdropShaderTranslator's qualifier-prefix parsing can
     // resolve a texture to (TextureManager.cpp:355-401) — created once and picked per texture
     // binding at draw time, rather than one MTLSamplerState per compiled shader.
@@ -153,6 +161,20 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     /// doc comment on why, even for presets with no `per_pixel_N=` script of their own).
     private var compiledWarp: CompiledMilkdropShader?
     private var compiledWarpGeneration = -1
+
+    /// A `per_pixel_N=` script compiled directly into a GPU vertex function (Tier 3 of TO DO.md's
+    /// performance-pass notes) — `nil` whenever the loaded preset has no per-pixel script, its
+    /// script isn't provably safe to evaluate in parallel, or it uses an unsupported construct
+    /// (see `compilePerPixelMeshVertex`'s own doc comment) — in which case the existing CPU
+    /// `MilkdropPerPixelMeshRuntime.calculate()` path keeps being used, unchanged.
+    private var compiledPerPixelMeshVertex: MTLFunction?
+    private var compiledPerPixelMeshVertexGeneration = -1
+    /// Pairs `compiledPerPixelMeshVertex` with the static `feedback_mesh_fragment` — for a preset
+    /// with a GPU-compiled per-pixel script but no `warp_N=` shader of its own (the `compiledWarp`
+    /// pipeline above already handles the "has both" case, since it's built with
+    /// `compiledPerPixelMeshVertex` as its vertex function whenever one is available). Rebuilt
+    /// alongside `compiledPerPixelMeshVertex`, `nil` under the same conditions.
+    private var compiledPerPixelMeshOnlyPipeline: MTLRenderPipelineState?
 
     // Ping-pong feedback textures: textures[sourceIndex] is "what was on screen last frame" (read
     // this frame), textures[1 - sourceIndex] is this frame's render target. Swapped every frame.
@@ -289,6 +311,11 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             fatalError("Could not load Shaders.metal's feedback_mesh_vertex function")
         }
         self.feedbackMeshVertexFunction = feedbackMeshVertexFunction
+
+        guard let feedbackMeshFragmentFunction = library.makeFunction(name: "feedback_mesh_fragment") else {
+            fatalError("Could not load Shaders.metal's feedback_mesh_fragment function")
+        }
+        self.feedbackMeshFragmentFunction = feedbackMeshFragmentFunction
 
         let meshIndices = MilkdropPerPixelMeshRuntime.sharedIndices
         guard let meshIndexBuffer = device.makeBuffer(
@@ -587,7 +614,15 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
 
     /// Translates, compiles, and links a preset's `warp_N=` source into a ready-to-draw pipeline —
     /// same fallback contract as `compileCompositeShader` (`nil` on any failure, never a crash).
-    private func compileWarpShader(source: String) -> CompiledMilkdropShader? {
+    /// `vertexFunction` is normally the static `feedbackMeshVertexFunction`, but becomes a
+    /// GPU-compiled `per_pixel_N=` vertex function instead whenever one is available for the same
+    /// preset (see `compilePerPixelMeshVertex` below and draw(in:)'s compile-gating section) —
+    /// real Milkdrop always draws a warp shader through the mesh regardless of whether the mesh's
+    /// own per-vertex attributes come from a script or a uniform value, so the two features
+    /// compose freely; this just lets a compiled per-pixel vertex function replace whichever
+    /// vertex stage a compiled warp fragment pairs with, same as it already replaces the
+    /// CPU-computed `MilkdropMeshVertexAttributes` buffer for the mesh-only path.
+    private func compileWarpShader(source: String, vertexFunction: MTLFunction) -> CompiledMilkdropShader? {
         guard let translated = MilkdropShaderTranslator.translate(source) else { return nil }
         let mslSource = Self.buildWarpShaderSource(translated)
         guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: nil),
@@ -595,13 +630,176 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         else { return nil }
 
         let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = feedbackMeshVertexFunction
+        descriptor.vertexFunction = vertexFunction
         descriptor.fragmentFunction = fragmentFunction
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         guard let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
 
         let randPreset = SIMD4<Float>(.random(in: 0...1), .random(in: 0...1), .random(in: 0...1), .random(in: 0...1))
         return CompiledMilkdropShader(pipelineState: pipelineState, textures: translated.textures, randPreset: randPreset)
+    }
+
+    // MARK: - Dynamic shader compilation (per_pixel_N= -> GPU vertex function — Tier 3 of TO DO.md's
+    // performance-pass notes)
+
+    /// `MTLCompileOptions` shared by every dynamically-compiled NS-EEL-derived library in this
+    /// file (currently just `compilePerPixelMeshVertex` below) — `mathMode = .safe` (fast-math
+    /// off) specifically because this feature's whole safety contract depends on GPU output
+    /// matching what the CPU fallback (`MilkdropExpressionEvaluator`) would have produced for the
+    /// same preset; fast-math's looser IEEE guarantees risk masking a real transpiler bug as
+    /// "close enough," or genuinely diverging preset-to-preset across different GPU hardware. Not
+    /// applied (yet) to `compileCompositeShader`/`compileWarpShader`'s HLSL-derived shaders above —
+    /// those have no CPU-reference-equivalence contract to protect, just a visual-fidelity one.
+    private static var perPixelMeshCompileOptions: MTLCompileOptions {
+        let options = MTLCompileOptions()
+        options.mathMode = .safe
+        return options
+    }
+
+    /// Attempts to compile a preset's `per_pixel_N=` script directly into a GPU vertex function,
+    /// replacing up to 825 CPU tree-interpreter evaluations/frame (`MilkdropPerPixelMeshRuntime.
+    /// calculate()`) with one GPU-parallel dispatch. `nil` on any failure — the script uses a
+    /// cross-vertex-unsafe pattern (`MilkdropExpressionParallelSafetyAnalyzer` rejects it — e.g. a
+    /// `hue=hue+0.05;`-style accumulator that depends on evaluation order between vertices, which a
+    /// parallel GPU dispatch can't reproduce), an unsupported construct (`MilkdropExpressionMSL
+    /// Transpiler` rejects it — currently just `rand()`), or a genuine Metal compiler rejection —
+    /// all fall back identically, to the existing CPU `MilkdropPerPixelMeshRuntime.calculate()`
+    /// path, never a crash or a visual regression. Measured 7/26 against the real ~9,795-file
+    /// preset pack: 86.7% of files with `per_pixel_N=` code (5,244 of 6,049) pass the safety check
+    /// — see TO DO.md for the full corpus measurement.
+    private func compilePerPixelMeshVertex(_ mesh: MilkdropPerPixelMeshRuntime) -> MTLFunction? {
+        guard MilkdropExpressionParallelSafetyAnalyzer.isSweepParallelSafe(
+            mesh.statements, builtins: MilkdropPerPixelMeshRuntime.builtinNames
+        ) else { return nil }
+        guard let transpiled = MilkdropExpressionMSLTranspiler.transpile(
+            mesh.statements, builtins: MilkdropPerPixelMeshRuntime.builtinNames
+        ) else { return nil }
+        let mslSource = Self.buildPerPixelMeshVertexSource(transpiled)
+        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: Self.perPixelMeshCompileOptions)
+        else { return nil }
+        return dynamicLibrary.makeFunction(name: "milkdrop_per_pixel_mesh_vertex")
+    }
+
+    /// Wraps a transpiled `per_pixel_N=` body into a complete MSL vertex function. The warp math
+    /// below (`zoom2`/UV-warp/rotate/translate) is a direct, deliberate duplicate of
+    /// Shaders.metal's `feedback_mesh_vertex` — separately-compiled `MTLLibrary` sources can't
+    /// share a function across libraries (same constraint `shaderShimHeader`'s struct
+    /// redeclarations above already document), so if that shared math ever changes,
+    /// `feedback_mesh_vertex` and this generator must be updated together. Reads
+    /// zoom/zoomExp/rot/warp/cx/cy/dx/dy/sx/sy from the transpiled script's own locals (seeded from
+    /// `meshUniforms`, then possibly overwritten by the script) instead of a per-vertex input
+    /// struct's fields, since those are exactly what a `per_pixel_N=` script differentiates
+    /// per-vertex.
+    // Not `private`, same reason as buildCompositeShaderSource/buildWarpShaderSource above:
+    // PrismTests compiles this generated MSL through a real MTLDevice.
+    static func buildPerPixelMeshVertexSource(_ transpiled: MilkdropExpressionMSLTranspiler.Result) -> String {
+        let id = MilkdropExpressionMSLTranspiler.mslIdentifier(for:)
+        var uniformSeeds: [String] = []
+        for (i, name) in MilkdropPerPixelMeshRuntime.perFrameUniformBuiltinNames.enumerated() {
+            uniformSeeds.append("    float \(id(name)) = meshUniforms[\(i)];")
+        }
+        var customDecls: [String] = []
+        for name in transpiled.customVariableNames {
+            customDecls.append("    float \(id(name)) = 0.0f;")
+        }
+
+        return """
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct MeshStaticVertex {
+            float2 position;
+            float2 radiusAngle;
+        };
+
+        struct MeshVertexOut {
+            float4 position [[position]];
+            float2 uv;
+            float2 uvOrig;
+            float2 radiusAngle;
+        };
+
+        \(MilkdropExpressionMSLTranspiler.shimFunctions)
+
+        vertex MeshVertexOut milkdrop_per_pixel_mesh_vertex(
+            const device MeshStaticVertex *vertices [[buffer(0)]],
+            constant float *meshUniforms [[buffer(1)]],
+            constant float &warpTime [[buffer(2)]],
+            constant float &warpScaleInverse [[buffer(3)]],
+            constant float4 &warpFactors [[buffer(4)]],
+            constant float2 &aspect [[buffer(5)]],
+            constant float2 &invAspect [[buffer(6)]],
+            uint vid [[vertex_id]]
+        ) {
+            MeshStaticVertex vert = vertices[vid];
+            float2 pos = vert.position;
+
+        \(uniformSeeds.joined(separator: "\n"))
+            float \(id("x")) = pos.x * 0.5 * aspect.x + 0.5;
+            float \(id("y")) = pos.y * 0.5 * aspect.y + 0.5;
+            float \(id("rad")) = vert.radiusAngle.x;
+            float \(id("ang")) = -vert.radiusAngle.y;
+
+        \(customDecls.joined(separator: "\n"))
+        \(transpiled.body)
+
+            float zoom2 = pow(\(id("zoom")), pow(\(id("zoomexp")), vert.radiusAngle.x * 2.0 - 1.0));
+            float zoom2Inverse = 1.0 / zoom2;
+
+            float u = pos.x * aspect.x * 0.5 * zoom2Inverse + 0.5;
+            float v = pos.y * aspect.y * 0.5 * zoom2Inverse + 0.5;
+
+            u = (u - \(id("cx"))) / \(id("sx")) + \(id("cx"));
+            v = (v - \(id("cy"))) / \(id("sy")) + \(id("cy"));
+
+            u += \(id("warp")) * 0.0035 * sin(warpTime * 0.333 + warpScaleInverse * (pos.x * warpFactors.x - pos.y * warpFactors.w));
+            v += \(id("warp")) * 0.0035 * cos(warpTime * 0.375 - warpScaleInverse * (pos.x * warpFactors.z + pos.y * warpFactors.y));
+            u += \(id("warp")) * 0.0035 * cos(warpTime * 0.753 - warpScaleInverse * (pos.x * warpFactors.y - pos.y * warpFactors.z));
+            v += \(id("warp")) * 0.0035 * sin(warpTime * 0.825 + warpScaleInverse * (pos.x * warpFactors.x + pos.y * warpFactors.w));
+
+            float u2 = u - \(id("cx"));
+            float v2 = v - \(id("cy"));
+            float cosRot = cos(\(id("rot")));
+            float sinRot = sin(\(id("rot")));
+            u = u2 * cosRot - v2 * sinRot + \(id("cx"));
+            v = u2 * sinRot + v2 * cosRot + \(id("cy"));
+
+            u -= \(id("dx"));
+            v -= \(id("dy"));
+
+            u = (u - 0.5) * invAspect.x + 0.5;
+            v = (v - 0.5) * invAspect.y + 0.5;
+
+            MeshVertexOut out;
+            out.position = float4(pos, 0.0, 1.0);
+            out.uv = float2(u, v);
+            out.uvOrig = pos * 0.5 + 0.5;
+            out.radiusAngle = vert.radiusAngle;
+            return out;
+        }
+        """
+    }
+
+    /// Builds the flat uniform array `buildPerPixelMeshVertexSource`'s `meshUniforms[i]` reads —
+    /// index order must exactly match `MilkdropPerPixelMeshRuntime.perFrameUniformBuiltinNames`.
+    private func buildPerPixelMeshUniforms(
+        time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy,
+        aspectX: Float, aspectY: Float, qVars: [Float],
+        zoom: Float, zoomExp: Float, rot: Float, warp: Float,
+        cx: Float, cy: Float, dx: Float, dy: Float, sx: Float, sy: Float
+    ) -> [Float] {
+        var uniforms: [Float] = [
+            Float(time), Float(fps), Float(frame),
+            energy.bass, energy.mid, energy.treb, energy.bassAtt, energy.midAtt, energy.trebAtt,
+            Float(MilkdropPerPixelMeshRuntime.gridSizeX), Float(MilkdropPerPixelMeshRuntime.gridSizeY),
+            aspectX, aspectY, aspectX, aspectY,
+            zoom, zoomExp, rot, warp, cx, cy, dx, dy, sx, sy,
+        ]
+        uniforms.reserveCapacity(uniforms.count + 32)
+        for i in 0..<32 {
+            uniforms.append(i < qVars.count ? qVars[i] : 0)
+        }
+        return uniforms
     }
 
     /// Shared by both dynamically-compiled shader draws (composite and warp) — the flat uniform
@@ -750,8 +948,24 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             compiledComposite = model.compositeShaderSource.isEmpty ? nil : compileCompositeShader(source: model.compositeShaderSource)
             compiledCompositeGeneration = model.loadGeneration
         }
+        // Compiled BEFORE compiledWarp below, since a compiled warp_N= fragment's own pipeline
+        // needs to know whether to pair with this (when available) or the static
+        // feedbackMeshVertexFunction — see compileWarpShader's doc comment.
+        if compiledPerPixelMeshVertexGeneration != model.loadGeneration {
+            compiledPerPixelMeshVertex = model.perPixelMesh.flatMap(compilePerPixelMeshVertex)
+            compiledPerPixelMeshOnlyPipeline = compiledPerPixelMeshVertex.flatMap { vertexFunction -> MTLRenderPipelineState? in
+                let descriptor = MTLRenderPipelineDescriptor()
+                descriptor.vertexFunction = vertexFunction
+                descriptor.fragmentFunction = feedbackMeshFragmentFunction
+                descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+                return try? device.makeRenderPipelineState(descriptor: descriptor)
+            }
+            compiledPerPixelMeshVertexGeneration = model.loadGeneration
+        }
+        let meshVertexFunction = compiledPerPixelMeshVertex ?? feedbackMeshVertexFunction
         if compiledWarpGeneration != model.loadGeneration {
-            compiledWarp = model.warpShaderSource.isEmpty ? nil : compileWarpShader(source: model.warpShaderSource)
+            compiledWarp = model.warpShaderSource.isEmpty
+                ? nil : compileWarpShader(source: model.warpShaderSource, vertexFunction: meshVertexFunction)
             compiledWarpGeneration = model.loadGeneration
         }
         let aspect = pixelSize.width > 0 ? Float(pixelSize.height / pixelSize.width) : 1
@@ -833,7 +1047,17 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         //     simplification, not a quality compromise).
         //  2. A per_pixel_N= script with no warp shader — the existing scripted-mesh path.
         //  3. Neither — the existing per-pixel-exact fixed-formula path.
-        let meshVerticesFromScript = model.updatePerPixelMesh(
+        //
+        // Within (1)/(2), a per_pixel_N= script that compiled to a GPU vertex function
+        // (`compiledPerPixelMeshVertex` — see the compile-gating section above) runs entirely on
+        // GPU instead: the CPU `MilkdropPerPixelMeshRuntime.calculate()` tree-interpreter sweep
+        // (up to 825 evaluations/frame — see TO DO.md's performance-pass notes) is skipped
+        // entirely, replaced by a small per-frame uniform buffer + the cached static vertex
+        // geometry. `usingGPUPerPixelMesh` implies `model.perPixelMesh != nil` (the compile step
+        // is itself `model.perPixelMesh.flatMap(...)`), so `model.updatePerPixelMesh` — which
+        // would otherwise run that same CPU sweep for nothing — is only called when this is false.
+        let usingGPUPerPixelMesh = compiledPerPixelMeshVertex != nil
+        let meshVerticesFromScript = usingGPUPerPixelMesh ? nil : model.updatePerPixelMesh(
             aspectX: aspectXY.x, aspectY: aspectXY.y, time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
             qVars: qVars
         )
@@ -848,7 +1072,64 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             return resolved.map { ($0.0, $0.1!) }
         }
 
-        if let compiledWarp, let resolvedWarpTextures {
+        if usingGPUPerPixelMesh, let perPixelMesh = model.perPixelMesh,
+           let staticVertexBuffer = transientBuffers.buffer(
+               for: perPixelMesh.staticVertices(aspectX: aspectXY.x, aspectY: aspectXY.y), device: device
+           )
+        {
+            // `milkdrop_per_pixel_mesh_vertex`'s buffer layout has one extra slot (`meshUniforms`,
+            // buffer(1)) ahead of warpTime/warpScaleInverse/warpFactors/aspect/invAspect compared
+            // to the static `feedback_mesh_vertex` — see buildPerPixelMeshVertexSource — so every
+            // index below is shifted by +1 relative to the CPU-mesh branches further down.
+            var meshUniforms = buildPerPixelMeshUniforms(
+                time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
+                aspectX: aspectXY.x, aspectY: aspectXY.y, qVars: qVars,
+                zoom: zoom, zoomExp: zoomExponent, rot: rot, warp: warpAmount,
+                cx: cx, cy: cy, dx: dx, dy: dy, sx: sx, sy: sy
+            )
+            if let compiledWarp, let resolvedWarpTextures {
+                // compiledWarp.pipelineState already pairs compiledPerPixelMeshVertex as its
+                // vertex function (see the compile-gating section above), so this is the same
+                // pipeline the CPU-mesh + compiled-warp branch below would use, just fed
+                // GPU-computed per-vertex attributes instead of a CPU-built buffer.
+                encoder.setRenderPipelineState(compiledWarp.pipelineState)
+                encoder.setVertexBuffer(staticVertexBuffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&meshUniforms, length: MemoryLayout<Float>.stride * meshUniforms.count, index: 1)
+                encoder.setVertexBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 2)
+                encoder.setVertexBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 3)
+                encoder.setVertexBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 4)
+                encoder.setVertexBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 5)
+                encoder.setVertexBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 6)
+                var warpUniforms = buildDynamicShaderUniforms(
+                    time: time, frame: frameCounter, energy: energy, randPreset: compiledWarp.randPreset, pixelSize: pixelSize,
+                    aspect: aspectXY, invAspect: invAspectXY, qVars: qVars
+                )
+                encoder.setFragmentBytes(&warpUniforms, length: MemoryLayout<Float>.stride * warpUniforms.count, index: 0)
+                for (i, (binding, texture)) in resolvedWarpTextures.enumerated() {
+                    encoder.setFragmentTexture(texture, index: i)
+                    encoder.setFragmentSamplerState(samplerState(for: binding), index: i)
+                }
+                encoder.drawIndexedPrimitives(
+                    type: .triangle, indexCount: MilkdropPerPixelMeshRuntime.sharedIndices.count,
+                    indexType: .uint16, indexBuffer: meshIndexBuffer, indexBufferOffset: 0
+                )
+            } else if let compiledPerPixelMeshOnlyPipeline {
+                encoder.setRenderPipelineState(compiledPerPixelMeshOnlyPipeline)
+                encoder.setFragmentTexture(sourceTexture, index: 0)
+                encoder.setVertexBuffer(staticVertexBuffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&meshUniforms, length: MemoryLayout<Float>.stride * meshUniforms.count, index: 1)
+                encoder.setVertexBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 2)
+                encoder.setVertexBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 3)
+                encoder.setVertexBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 4)
+                encoder.setVertexBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 5)
+                encoder.setVertexBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 6)
+                encoder.setFragmentBytes(&decay, length: MemoryLayout<Float>.stride, index: 0)
+                encoder.drawIndexedPrimitives(
+                    type: .triangle, indexCount: MilkdropPerPixelMeshRuntime.sharedIndices.count,
+                    indexType: .uint16, indexBuffer: meshIndexBuffer, indexBufferOffset: 0
+                )
+            }
+        } else if let compiledWarp, let resolvedWarpTextures {
             var meshVertices = meshVerticesFromScript ?? MilkdropPerPixelMeshRuntime.trivialVertices(
                 aspectX: aspectXY.x, aspectY: aspectXY.y,
                 zoom: zoom, zoomExp: zoomExponent, rot: rot, warp: warpAmount,
