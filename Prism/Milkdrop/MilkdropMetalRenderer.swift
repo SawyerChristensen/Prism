@@ -37,8 +37,16 @@ final class MilkdropBeatState {
     private let onsetThreshold: Float = 0.55
     private let minimumBassFloor: Float = 1.05
     private let warmUpInterval: TimeInterval = 0.75
-    private let refractoryInterval: TimeInterval = 0.11
-    private let punchHalfLife: TimeInterval = 0.09
+    // 0.11s (was) allows a new trigger up to ~9x/sec — well above any real musical beat rate (even
+    // 240 BPM, an extreme tempo, is 4/sec) — so on dense/bassy material this could re-trigger on
+    // sub-beat transients (hi-hats, texture) rather than settling on the actual beat, adding to the
+    // "everything way too fast/spazzy" report alongside the zoom/rotation magnitude reduction just
+    // below. Raised to 0.16s (~6.25/sec ceiling) — still generous for fast electronic music, just
+    // no longer faster than music itself can be.
+    private let refractoryInterval: TimeInterval = 0.16
+    // Slightly longer than before (was 0.09s) so a hit reads as a brief, smooth swell rather than a
+    // one-frame flash — a secondary, smaller part of the same "tune down the spazz" pass.
+    private let punchHalfLife: TimeInterval = 0.12
 
     /// Last frame's FPS estimate, for feeding a loaded preset's per-frame `fps` variable — see
     /// MilkdropVisualizerModel.updatePresetPerFrame.
@@ -53,7 +61,14 @@ final class MilkdropBeatState {
         let dt = lastFrameDate.map { now.timeIntervalSince($0) } ?? (1.0 / 60.0)
         lastFrameDate = now
         if startDate == nil { startDate = now }
-        let fps = dt > 0 ? min(240.0, max(1.0, 1.0 / dt)) : 60.0
+        // Floor of 20 (not 1) — a stall/hitch frame (resize, thermal throttle, background/resume)
+        // otherwise reports fps as low as 1, and every preset's `1/fps`-style per-frame accumulator
+        // (e.g. `rott = rott + 1/fps*sin(...)`) then advances by up to a full unit in that single
+        // step: a visible flash/snap. `time` (wall-clock elapsed) is untouched by this. This exact
+        // fix was already described as done in an earlier commit's message (and in TO DO.md) but
+        // never actually landed in the code — caught and actually applied 7/26 while investigating
+        // the "still too jittery" follow-up report.
+        let fps = dt > 0 ? min(240.0, max(20.0, 1.0 / dt)) : 60.0
         lastFPS = fps
 
         let energy = analyzer.process(left: left, right: right, sampleRate: sampleRate, fps: fps)
@@ -952,25 +967,31 @@ final class MilkdropMetalRenderer: NSObject {
         // preset's own animation still gets a little extra life on a hit rather than being
         // replaced by it.
         //
-        // The 1.006/0.0025 constants below read as tuned for a ~60fps reference (60 render calls
-        // of 1.006x compounding to a plausible ~1.43x zoom/sec) but MilkdropMetalView sets
-        // `preferredFramesPerSecond = 120`, and this nudge was being applied once per *rendered*
-        // frame with no time-normalization at all — at the actual 120fps this runs at, it silently
-        // compounded to ~2.05x zoom/sec (double the apparent reference tuning) and rotation ran 2x
-        // real-world speed too, regardless of what any given preset's own per-frame script asked
-        // for (those already normalize via `1/fps`, so they were unaffected — only this fixed
-        // Prism-specific nudge wasn't, which is why the whole scene reads as "too fast and
-        // chaotic" beyond just any one preset's own animation). `rateScale` rescales both back to
-        // a true 60fps-equivalent per-second rate at whatever `beat.lastFPS` actually is this
-        // frame (exponent for the multiplicative zoom rate, linear multiplier for the additive rot
-        // rate — see MilkdropAudioSignals.swift's `adjustRateToFPS` for the same technique) —
-        // identical output to before at exactly 60fps, half the growth per frame at 120fps for the
-        // same real-world-per-second result.
+        // `rateScale` pins both to a true 60fps-equivalent per-second rate at whatever
+        // `beat.lastFPS` actually is this frame (exponent for the multiplicative zoom rate, linear
+        // multiplier for the additive rot rate — see MilkdropAudioSignals.swift's
+        // `adjustRateToFPS` for the same technique), since `MilkdropMetalView.preferredFramesPerSecond`
+        // is 120 and this nudge runs once per *rendered* frame — without this it would silently
+        // run at whatever multiple of the tuned rate the display's actual refresh rate implies.
+        //
+        // Baseline/punch magnitudes reduced 7/26 (reported "everything moving at a million miles a
+        // second... way too much stimulation" even after the frame-rate fix above landed) — the
+        // *previous* 60fps-reference values (1.006 baseline, +0.035 at full punch) compounded to
+        // ~1.43x zoom/sec baseline and, at a full beat hit, ~11.1x zoom/sec / ~43°/sec rotation
+        // (verified by direct calculation, not estimated) — an extreme, unconditional multiply
+        // layered on top of *every* loaded preset's own already-authored zoom, regardless of what
+        // that preset's own animation intended (real Milkdrop has no "punch" concept at all — this
+        // whole nudge is a Prism-only addition, so toning it down doesn't cost any preset
+        // fidelity). New values, same verification method: baseline ~1.10x zoom/sec / ~2.1°/sec
+        // (was ~1.43x / ~8.6°), full-punch ~2.0x zoom/sec / ~12.4°/sec (was ~11.1x / ~43°) — still
+        // a distinctly felt pop on a real beat, just not a jump-cut. Tune by ear from here rather
+        // than assuming these are final; unlike the frame-rate-scale fix above, "how strong should
+        // this feel" has no objectively-correct answer to verify against.
         let rateScale = Float(60.0 / beat.lastFPS)
         let punchF = Float(punch)
-        var zoom = model.warpParams.zoom * powf(1.006 + punchF * 0.035, rateScale)
+        var zoom = model.warpParams.zoom * powf(1.0016 + punchF * 0.010, rateScale)
         var zoomExponent = model.warpParams.zoomExponent
-        var rot = model.warpParams.rot + (0.0025 + punchF * 0.01) * rateScale
+        var rot = model.warpParams.rot + (0.0006 + punchF * 0.003) * rateScale
         var warpAmount = model.warpParams.warpAmount
         var cx = model.warpParams.rotCX
         var cy = model.warpParams.rotCY
