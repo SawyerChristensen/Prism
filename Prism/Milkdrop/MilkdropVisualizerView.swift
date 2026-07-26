@@ -11,6 +11,7 @@
 //
 
 import SwiftUI
+import simd
 
 /// Per-frame feedback-transform state (Milkdrop's `zoom`/`rot`/`cx`/`cy`/`dx`/`dy`/`sx`/`sy`/`warp`/
 /// `decay` per-frame variables) — what drives the warped background trail, distinct from the
@@ -31,25 +32,78 @@ struct MilkdropWarpParams {
     var decay: Float = 0.98
 }
 
+/// Per-frame Border.cpp/DarkenCenter.cpp state — the two nested-square border outlines and the
+/// small dark center smudge, both drawn on top of the shape/waveform layer (see
+/// MilkdropMetalRenderer.swift's border/darken-center draw call). Defaults match PresetState.hpp
+/// exactly, same as MilkdropWarpParams above.
+struct MilkdropBorderParams {
+    var outerSize: Float = 0.01
+    var outerR: Float = 0.0
+    var outerG: Float = 0.0
+    var outerB: Float = 0.0
+    var outerA: Float = 0.0
+    var innerSize: Float = 0.01
+    var innerR: Float = 0.25
+    var innerG: Float = 0.25
+    var innerB: Float = 0.25
+    var innerA: Float = 0.0
+    /// `darken_center` upstream — a plain per-frame float gated on `> 0`, not a bool, since a
+    /// script can toggle it frame-to-frame (see PerFrameContext.cpp's REG_VAR(darken_center)).
+    var darkenCenter: Float = 0.0
+}
+
+/// Per-frame VideoEcho.cpp/Filters.cpp state — real Milkdrop's "old-school" final-composite path,
+/// used instead of a `comp_N=` shader for presets with no composite shader at all (see
+/// MilkdropPresetFile.swift's `usesOldStyleFinalComposite`). Defaults match PresetState.hpp exactly:
+/// note `gammaAdj` defaults to 2.0, not 1.0 — every old-style preset's output is brightness-doubled
+/// by default, not just optionally adjusted.
+struct MilkdropOldStyleCompositeParams {
+    var gammaAdj: Float = 2.0
+    var videoEchoZoom: Float = 2.0
+    var videoEchoAlpha: Float = 0.0
+    var videoEchoOrientation: Float = 0.0
+    var brighten: Float = 0.0
+    var darken: Float = 0.0
+    var solarize: Float = 0.0
+    var invert: Float = 0.0
+}
+
 @Observable
 final class MilkdropVisualizerModel {
     var mode: MilkdropWaveMode = .line
     var params = MilkdropWaveformParams()
+    /// Smoothed (exponential moving average, not instantaneous) frames-per-second, written by
+    /// MilkdropMetalRenderer once per frame — read by ContentView's on-screen performance counter.
+    /// Smoothed rather than raw 1/dt so the displayed number doesn't jitter every single frame.
+    var displayFPS: Double = 60
     /// Read every frame by MilkdropMetalRenderer to drive the feedback pass's warp transform — see
     /// updatePresetPerFrame below.
     private(set) var warpParams = MilkdropWarpParams()
+    /// Read every frame by MilkdropMetalRenderer to draw the border/darken-center overlay — see
+    /// updatePresetPerFrame below.
+    private(set) var borderParams = MilkdropBorderParams()
+    /// Read every frame by MilkdropMetalRenderer to draw the old-style final-composite pass — see
+    /// updatePresetPerFrame below. Only actually used when `usesOldStyleFinalComposite` is true.
+    private(set) var oldStyleCompositeParams = MilkdropOldStyleCompositeParams()
+    /// Set once per `loadPreset(from:)` call (not per-frame-scriptable — it's a structural fact
+    /// about the preset's format, not a tunable). Gates whether MilkdropMetalRenderer runs the
+    /// VideoEcho/Filters pass at all.
+    private(set) var usesOldStyleFinalComposite = false
+    /// `hueRandomOffsets` upstream (PresetState.cpp) — 4 random phase offsets for VideoEcho's
+    /// per-corner hue-cycling tint, freshly rolled once per preset load and fixed for its lifetime
+    /// (same role as `MilkdropMetalRenderer`'s own `randPreset` for compiled shaders).
+    private(set) var hueRandomOffsets = SIMD4<Float>(0, 0, 0, 0)
     /// Static per-preset constants (not per-frame-scriptable — see MilkdropPresetFile.swift) that
     /// shape the warp-wiggle animation's speed/scale. Read directly by MilkdropMetalRenderer.
     private(set) var warpAnimSpeed: Float = 1.0
     private(set) var warpScale: Float = 1.0
-    /// Raw HLSL `comp_N=` source (see MilkdropPresetFile.swift), compiled by MilkdropMetalRenderer —
-    /// the model has no Metal device, so it only carries the source text. `warpShaderSource` is
-    /// parsed too but not yet compiled/used anywhere (see MilkdropShaderTranslator.swift's header
-    /// for why composite shaders shipped first: they're a clean additional pass on plain screen UV,
-    /// while a custom warp shader needs to duplicate the geometric zoom/rotate/stretch/wiggle math
-    /// mid-shader to receive the same per-pixel UV the mesh already computes — real, but more
-    /// involved, and deliberately deferred rather than shipped as a rougher approximation).
+    /// Raw HLSL `comp_N=`/`warp_N=` source (see MilkdropPresetFile.swift), compiled by
+    /// MilkdropMetalRenderer — the model has no Metal device, so it only carries the source text.
     private(set) var compositeShaderSource: String = ""
+    /// See `compositeShaderSource` above. A compiled `warp_N=` shader replaces the feedback pass's
+    /// default warp transform entirely (unlike `comp_N=`, which is an additional pass on top) — see
+    /// MilkdropMetalRenderer.buildWarpShaderSource.
+    private(set) var warpShaderSource: String = ""
     /// Bumped on every `loadPreset(from:)` call — MilkdropMetalRenderer compares this against the
     /// generation it last compiled shaders for, recompiling only on an actual preset change rather
     /// than every frame (dynamic Metal shader compilation is not something to do 60x/sec).
@@ -58,6 +112,9 @@ final class MilkdropVisualizerModel {
     /// File name of the currently loaded .milk preset, or nil if none was ever loaded (Prism runs
     /// fine with just the built-in modes/params above — a preset is an optional override).
     private(set) var presetName: String?
+    /// Full URL of the currently loaded .milk preset — read by MilkdropCustomTextureManager to find
+    /// the pack's `Textures/` folder relative to wherever this file actually lives.
+    private(set) var presetURL: URL?
     /// Not private(set): the view clears this once the user dismisses the load-failure alert.
     var presetLoadError: String?
 
@@ -73,11 +130,15 @@ final class MilkdropVisualizerModel {
     // MilkdropMetalRenderer never needs to check `enabled` itself).
     private var shapes: [MilkdropShapeRuntime] = []
 
-    func cycleMode() {
-        let all = MilkdropWaveMode.allCases
-        let idx = all.firstIndex(of: mode) ?? 0
-        mode = all[(idx + 1) % all.count]
-    }
+    // The scripted warp mesh (`per_pixel_N=`) for the loaded preset, if it has any — see
+    // MilkdropPerPixelMesh.swift. `nil` for the majority of presets (no per_pixel code at all),
+    // in which case MilkdropMetalRenderer keeps using its existing per-pixel-exact fixed-formula
+    // warp path rather than downgrading to a coarse mesh for no reason.
+    private var perPixelMesh: MilkdropPerPixelMeshRuntime?
+
+    // Custom waveforms (`wavecode_N_*`) loaded alongside the built-in waveform above — see
+    // MilkdropCustomWaveform.swift. Always 4 slots, same disabled-by-default pattern as `shapes`.
+    private var customWaves: [MilkdropCustomWaveformRuntime] = []
 
     /// Loads a .milk preset's wave-related constants into `mode`/`params` and, if the preset has a
     /// per-frame program, prepares it for `updatePresetPerFrame` to drive each frame. Only the
@@ -105,17 +166,32 @@ final class MilkdropVisualizerModel {
                 "zoom": file.zoom, "zoomexp": file.zoomExponent, "rot": file.rot,
                 "cx": file.rotCX, "cy": file.rotCY, "dx": file.xPush, "dy": file.yPush,
                 "warp": file.warpAmount, "sx": file.stretchX, "sy": file.stretchY, "decay": file.decay,
+                "ob_size": file.outerBorderSize, "ob_r": file.outerBorderR, "ob_g": file.outerBorderG,
+                "ob_b": file.outerBorderB, "ob_a": file.outerBorderA,
+                "ib_size": file.innerBorderSize, "ib_r": file.innerBorderR, "ib_g": file.innerBorderG,
+                "ib_b": file.innerBorderB, "ib_a": file.innerBorderA,
+                "darken_center": file.darkenCenter ? 1 : 0,
+                "gamma": file.gammaAdj, "echo_zoom": file.videoEchoZoom, "echo_alpha": file.videoEchoAlpha,
+                "echo_orient": Float(file.videoEchoOrientation),
+                "brighten": file.brighten ? 1 : 0, "darken": file.darken ? 1 : 0,
+                "solarize": file.solarize ? 1 : 0, "invert": file.invert ? 1 : 0,
             ]
             // Runs once, immediately — seeds any custom variables (e.g. `SPEED=10;`) the per-frame
             // program below expects to already exist on its first evaluation.
             MilkdropExpressionProgram(source: file.perFrameInitProgram)?.evaluate(&presetVariables)
             perFrameProgram = MilkdropExpressionProgram(source: file.perFrameProgram)
             shapes = file.shapes.map(MilkdropShapeRuntime.init(preset:))
+            perPixelMesh = MilkdropPerPixelMeshRuntime(source: file.perPixelProgram)
+            customWaves = file.customWaves.map(MilkdropCustomWaveformRuntime.init(preset:))
             warpAnimSpeed = file.warpAnimSpeed
             warpScale = file.warpScale
             compositeShaderSource = file.compositeShaderSource
+            warpShaderSource = file.warpShaderSource
+            usesOldStyleFinalComposite = file.usesOldStyleFinalComposite
+            hueRandomOffsets = SIMD4<Float>(.random(in: 0...648.41), .random(in: 0...537.51), .random(in: 0...426.61), .random(in: 0...315.71))
             loadGeneration += 1
             presetName = url.deletingPathExtension().lastPathComponent
+            presetURL = url
             presetLoadError = nil
         } catch {
             presetLoadError = "Couldn't load \(url.lastPathComponent): \(error)"
@@ -170,6 +246,27 @@ final class MilkdropVisualizerModel {
         if let sx = presetVariables["sx"] { warpParams.stretchX = sx }
         if let sy = presetVariables["sy"] { warpParams.stretchY = sy }
         if let decay = presetVariables["decay"] { warpParams.decay = decay }
+
+        if let obSize = presetVariables["ob_size"] { borderParams.outerSize = obSize }
+        if let obR = presetVariables["ob_r"] { borderParams.outerR = obR }
+        if let obG = presetVariables["ob_g"] { borderParams.outerG = obG }
+        if let obB = presetVariables["ob_b"] { borderParams.outerB = obB }
+        if let obA = presetVariables["ob_a"] { borderParams.outerA = obA }
+        if let ibSize = presetVariables["ib_size"] { borderParams.innerSize = ibSize }
+        if let ibR = presetVariables["ib_r"] { borderParams.innerR = ibR }
+        if let ibG = presetVariables["ib_g"] { borderParams.innerG = ibG }
+        if let ibB = presetVariables["ib_b"] { borderParams.innerB = ibB }
+        if let ibA = presetVariables["ib_a"] { borderParams.innerA = ibA }
+        if let darkenCenter = presetVariables["darken_center"] { borderParams.darkenCenter = darkenCenter }
+
+        if let gamma = presetVariables["gamma"] { oldStyleCompositeParams.gammaAdj = gamma }
+        if let echoZoom = presetVariables["echo_zoom"] { oldStyleCompositeParams.videoEchoZoom = echoZoom }
+        if let echoAlpha = presetVariables["echo_alpha"] { oldStyleCompositeParams.videoEchoAlpha = echoAlpha }
+        if let echoOrient = presetVariables["echo_orient"] { oldStyleCompositeParams.videoEchoOrientation = echoOrient }
+        if let brighten = presetVariables["brighten"] { oldStyleCompositeParams.brighten = brighten }
+        if let darken = presetVariables["darken"] { oldStyleCompositeParams.darken = darken }
+        if let solarize = presetVariables["solarize"] { oldStyleCompositeParams.solarize = solarize }
+        if let invert = presetVariables["invert"] { oldStyleCompositeParams.invert = invert }
     }
 
     /// Resolves every loaded shape's per-frame script for this frame, one instance array per shape
@@ -179,6 +276,64 @@ final class MilkdropVisualizerModel {
     func updateShapesPerFrame(time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy) -> [[MilkdropShapeInstance]] {
         shapes.map { $0.resolveInstances(time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy) }
     }
+
+    /// The per-frame script's `q1`-`q32` values (e.g. a script that does `q1=bass;`), read back for
+    /// anything downstream that needs them — composite-shader uniforms and the per-pixel mesh below.
+    /// These are plain named variables in `presetVariables` like any other (see
+    /// MilkdropExpressionEvaluator.swift's header on NS-EEL's "undeclared = 0" semantics), not a
+    /// distinct storage mechanism, so a preset that never touches q-vars just reads back all zeros.
+    var qVariables: [Float] {
+        (1...32).map { presetVariables["q\($0)"] ?? 0 }
+    }
+
+    /// Resolves this frame's warp mesh vertices, or `nil` if the loaded preset has no `per_pixel_N=`
+    /// code (the common case — see `perPixelMesh`'s doc comment). `aspectX`/`aspectY` match
+    /// MilkdropMetalRenderer's own aspect-ratio correction (see its `aspectXY`), so the mesh's
+    /// static radius/angle geometry lines up with the fixed-formula path's.
+    func updatePerPixelMesh(
+        aspectX: Float, aspectY: Float, time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy
+    ) -> [MilkdropMeshVertexAttributes]? {
+        perPixelMesh?.calculate(
+            aspectX: aspectX, aspectY: aspectY,
+            time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy, qVars: qVariables,
+            zoom: warpParams.zoom, zoomExp: warpParams.zoomExponent, rot: warpParams.rot, warp: warpParams.warpAmount,
+            cx: warpParams.rotCX, cy: warpParams.rotCY, dx: warpParams.xPush, dy: warpParams.yPush,
+            sx: warpParams.stretchX, sy: warpParams.stretchY
+        )
+    }
+
+    /// Resolves every loaded custom waveform's points for this frame, one array per slot (disabled
+    /// slots contribute an empty array — see MilkdropCustomWaveform.swift). `pcmLeft`/`pcmRight`
+    /// and `spectrumLeft`/`spectrumRight` are raw audio sample data, not yet scaled/smoothed by
+    /// anything (each custom waveform does its own scaling/smoothing, separate from the built-in
+    /// waveform's — see MilkdropCustomWaveformRuntime.resolvePoints).
+    func updateCustomWaveforms(
+        pcmLeft: [Float], pcmRight: [Float], spectrumLeft: [Float], spectrumRight: [Float],
+        time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy
+    ) -> [MilkdropCustomWaveformDrawData] {
+        let qVars = qVariables
+        return customWaves.map { wave in
+            let (left, right) = wave.preset.spectrum ? (spectrumLeft, spectrumRight) : (pcmLeft, pcmRight)
+            let points = wave.resolvePoints(
+                left: left, right: right, waveScale: params.scale,
+                time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy, qVars: qVars
+            )
+            return MilkdropCustomWaveformDrawData(
+                points: points, additive: wave.preset.additive,
+                useDots: wave.preset.useDots, drawThick: wave.preset.drawThick
+            )
+        }
+    }
+}
+
+/// A resolved custom waveform's points plus the rendering flags MilkdropMetalRenderer needs to
+/// pick the right pipeline/geometry — `MilkdropCustomWaveformRuntime` itself only knows about
+/// per-frame/per-point evaluation, not how Metal ends up drawing the result.
+struct MilkdropCustomWaveformDrawData {
+    var points: [MilkdropCustomWaveformPoint]
+    var additive: Bool
+    var useDots: Bool
+    var drawThick: Bool
 }
 
 struct MilkdropVisualizerView: View {
@@ -186,13 +341,15 @@ struct MilkdropVisualizerView: View {
     var color: Color
     /// 0...1 bass energy, used to thicken the line the way MilkDrop's mod-alpha-by-volume does.
     var bassEnergy: CGFloat = 0
-    /// Owned by the caller (ContentView) so a keyboard shortcut can drive mode-cycling too, not
-    /// just the tap gesture below.
     var model: MilkdropVisualizerModel
+    /// Called on tap — owned by the caller (ContentView), which also drives the same action from
+    /// the spacebar shortcut. Used to cycle to a random preset from the loaded library; see
+    /// MilkdropPresetLibrary.swift.
+    var onTap: () -> Void
 
     var body: some View {
         MilkdropMetalView(audioEngine: audioEngine, color: color, bassEnergy: bassEnergy, model: model)
             .contentShape(Rectangle())
-            .onTapGesture { model.cycleMode() }
+            .onTapGesture(perform: onTap)
     }
 }

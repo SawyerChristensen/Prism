@@ -76,40 +76,53 @@ final class MilkdropExpressionProgram {
             default: return 0
             }
         case .call(let name, let argNodes):
-            let args = argNodes.map { eval($0, &vars) }
-            return callFunction(name, args)
+            // Every supported builtin below takes at most 3 arguments, evaluated inline instead of
+            // via `argNodes.map { ... }` — that `.map` used to heap-allocate a fresh `[Float]` array
+            // on *every single function call*, which dominates real cost here: a per_pixel_N= mesh
+            // sweep alone runs ~800 evaluations/frame, each typically containing several sin/cos/if
+            // calls, so this was tens of thousands of avoidable allocations per second even at a
+            // modest frame rate. A call with more than 3 arguments (not used by any builtin here,
+            // but the parser doesn't forbid it) still evaluates every extra argument for its side
+            // effects — matching the original's behavior of always evaluating every argument node,
+            // regardless of whether callFunction below actually reads it — just without allocating.
+            let a0: Float = argNodes.count > 0 ? eval(argNodes[0], &vars) : 0
+            let a1: Float = argNodes.count > 1 ? eval(argNodes[1], &vars) : 0
+            let a2: Float = argNodes.count > 2 ? eval(argNodes[2], &vars) : 0
+            if argNodes.count > 3 {
+                for i in 3..<argNodes.count { _ = eval(argNodes[i], &vars) }
+            }
+            return callFunction(name, a0, a1, a2)
         }
     }
 
-    private static func callFunction(_ name: String, _ args: [Float]) -> Float {
-        func arg(_ i: Int) -> Float { i < args.count ? args[i] : 0 }
+    private static func callFunction(_ name: String, _ a0: Float, _ a1: Float, _ a2: Float) -> Float {
         switch name {
-        case "sin": return sin(arg(0))
-        case "cos": return cos(arg(0))
-        case "tan": return tan(arg(0))
-        case "asin": return asin(arg(0))
-        case "acos": return acos(arg(0))
-        case "atan": return atan(arg(0))
-        case "atan2": return atan2(arg(0), arg(1))
-        case "abs": return abs(arg(0))
-        case "sqrt": return arg(0) < 0 ? 0 : sqrt(arg(0))
-        case "sqr": return arg(0) * arg(0)
-        case "pow": return pow(arg(0), arg(1))
-        case "exp": return exp(arg(0))
-        case "log": return arg(0) > 0 ? log(arg(0)) : 0
-        case "log10": return arg(0) > 0 ? log10(arg(0)) : 0
-        case "min": return Swift.min(arg(0), arg(1))
-        case "max": return Swift.max(arg(0), arg(1))
-        case "sign": return arg(0) > 0 ? 1 : (arg(0) < 0 ? -1 : 0)
-        case "int": return arg(0).rounded(.towardZero)
-        case "if": return arg(0) != 0 ? arg(1) : arg(2)
-        case "above": return arg(0) > arg(1) ? 1 : 0
-        case "below": return arg(0) < arg(1) ? 1 : 0
-        case "equal": return arg(0) == arg(1) ? 1 : 0
-        case "band": return (arg(0) != 0 && arg(1) != 0) ? 1 : 0
-        case "bor": return (arg(0) != 0 || arg(1) != 0) ? 1 : 0
-        case "bnot": return arg(0) == 0 ? 1 : 0
-        case "rand": return arg(0) <= 0 ? 0 : Float.random(in: 0..<arg(0))
+        case "sin": return sin(a0)
+        case "cos": return cos(a0)
+        case "tan": return tan(a0)
+        case "asin": return asin(a0)
+        case "acos": return acos(a0)
+        case "atan": return atan(a0)
+        case "atan2": return atan2(a0, a1)
+        case "abs": return abs(a0)
+        case "sqrt": return a0 < 0 ? 0 : sqrt(a0)
+        case "sqr": return a0 * a0
+        case "pow": return pow(a0, a1)
+        case "exp": return exp(a0)
+        case "log": return a0 > 0 ? log(a0) : 0
+        case "log10": return a0 > 0 ? log10(a0) : 0
+        case "min": return Swift.min(a0, a1)
+        case "max": return Swift.max(a0, a1)
+        case "sign": return a0 > 0 ? 1 : (a0 < 0 ? -1 : 0)
+        case "int": return a0.rounded(.towardZero)
+        case "if": return a0 != 0 ? a1 : a2
+        case "above": return a0 > a1 ? 1 : 0
+        case "below": return a0 < a1 ? 1 : 0
+        case "equal": return a0 == a1 ? 1 : 0
+        case "band": return (a0 != 0 && a1 != 0) ? 1 : 0
+        case "bor": return (a0 != 0 || a1 != 0) ? 1 : 0
+        case "bnot": return a0 == 0 ? 1 : 0
+        case "rand": return a0 <= 0 ? 0 : Float.random(in: 0..<a0)
         default: return 0 // Unsupported builtin (warp/shader-only helpers, custom shapes, etc.).
         }
     }

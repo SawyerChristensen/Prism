@@ -149,6 +149,11 @@
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "l.p. rhythm|versatile (slowed)" : {
+    "includesTextOverlay" : true,
+    "maskingMode" : "combined",
+    "processingEnabled" : false
+  },
   "lil uzi vert|pink tape" : {
     "includesTextOverlay" : false,
     "maskingMode" : "visionAloneElseColorKey",
@@ -186,6 +191,11 @@
   },
   "miss monique|nomacita (extended)" : {
     "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
+  "mr.kitty|time" : {
+    "includesTextOverlay" : true,
     "maskingMode" : "combined",
     "processingEnabled" : true
   },

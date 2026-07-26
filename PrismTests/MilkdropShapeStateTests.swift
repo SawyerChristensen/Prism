@@ -134,4 +134,52 @@ struct MilkdropShapeStateTests {
         let instances = runtime.resolveInstances(time: 0, fps: 60, frame: 1, energy: energy)
         #expect(abs(instances[0].rad - 0.1) < 0.0001)
     }
+
+    // MARK: - Textured shapes (`textured=1` — CustomShape.cpp:145-201)
+
+    @Test func defaultPresetIsUntexturedWithNeutralTexTransform() {
+        let preset = MilkdropShapePreset()
+        #expect(preset.textured == false)
+        #expect(preset.texAng == 0)
+        #expect(preset.texZoom == 1)
+        #expect(preset.image == "")
+    }
+
+    @Test func texturedFlagAndTransformThreadThroughToTheResolvedInstance() {
+        var preset = MilkdropShapePreset()
+        preset.enabled = true
+        preset.textured = true
+        preset.texAng = 0.25
+        preset.texZoom = 1.5
+        let instances = MilkdropShapeRuntime(preset: preset).resolveInstances(time: 0, fps: 60, frame: 1, energy: MilkdropBandEnergy())
+        #expect(instances[0].textured == true)
+        #expect(abs(instances[0].texAng - 0.25) < 0.0001)
+        #expect(abs(instances[0].texZoom - 1.5) < 0.0001)
+    }
+
+    @Test func perFrameScriptCanAnimateTexAngAndToggleTextured() {
+        // `tex_ang`/`tex_zoom`/`textured` are real per-frame-scriptable variables upstream
+        // (ShapePerFrameContext::RegisterBuiltinVariables), same as sides/x/y/etc. — a preset that
+        // spins its shape's texture independently of the polygon itself relies on this.
+        var preset = MilkdropShapePreset()
+        preset.enabled = true
+        preset.perFrameProgram = "textured = 1; tex_ang = tex_ang + 0.1;"
+        let runtime = MilkdropShapeRuntime(preset: preset)
+        let frame1 = runtime.resolveInstances(time: 0, fps: 60, frame: 1, energy: MilkdropBandEnergy())
+        let frame2 = runtime.resolveInstances(time: 1.0 / 60, fps: 60, frame: 2, energy: MilkdropBandEnergy())
+        #expect(frame1[0].textured == true)
+        #expect(abs(frame1[0].texAng - 0.1) < 0.0001)
+        #expect(abs(frame2[0].texAng - 0.2) < 0.0001)
+    }
+
+    @Test func texZoomOfZeroFallsBackToOneInsteadOfDividingByZeroLater() {
+        // tex_zoom feeds a UV division downstream (MilkdropMetalRenderer's
+        // shapeTexturedFillVertices) — a script driving it to exactly 0 must not survive into that
+        // math as a literal zero, matching this file's other finite-value guards.
+        var preset = MilkdropShapePreset()
+        preset.enabled = true
+        preset.perFrameProgram = "tex_zoom = 0;"
+        let instances = MilkdropShapeRuntime(preset: preset).resolveInstances(time: 0, fps: 60, frame: 1, energy: MilkdropBandEnergy())
+        #expect(instances[0].texZoom == 1)
+    }
 }

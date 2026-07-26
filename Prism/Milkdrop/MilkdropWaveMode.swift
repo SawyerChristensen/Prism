@@ -19,6 +19,14 @@ enum MilkdropWaveMode: Int, CaseIterable {
                         // rather than the point-based waveform pipeline below (see
                         // MilkdropVisualizerView, which special-cases this mode).
 
+    // Ports of the remaining stock Milkdrop modes (projectM's Waveforms/DerivativeLine.cpp,
+    // ExplosiveHash.cpp, SpectrumLine.cpp) that used to fall back to .line — see
+    // init(presetWaveMode:).
+    case derivativeLine // MilkDrop mode 4: "script" trace with a momentum/feedback term.
+    case explosiveHash  // MilkDrop mode 5: time-rotated complex-product trace, mostly decorative.
+    case spectrumLine   // MilkDrop mode 8: same shape as .line, driven by the FFT magnitude
+                        // spectrum instead of raw PCM. Upstream's own header calls this UNFINISHED.
+
     // Ports of the extra hand-written modes from projectM's Milkdrop2077Wave*.cpp (not part of
     // stock Milkdrop's mode 0-7 set, but built on the same clipped-line/polar primitives).
     case crossX        // Milkdrop2077WaveX: L/R drawn as two lines clipped at mirrored angles, crossing in an X.
@@ -49,6 +57,9 @@ enum MilkdropWaveMode: Int, CaseIterable {
         case .spiral: return "Spiral"
         case .spiro: return "Spiro"
         case .spectrumBars: return "Spectrum"
+        case .derivativeLine: return "Derivative"
+        case .explosiveHash: return "Explosive"
+        case .spectrumLine: return "Spectrum Line"
         case .crossX: return "Cross"
         case .wideLine: return "Wide"
         case .dualParallel: return "Parallel"
@@ -60,16 +71,17 @@ enum MilkdropWaveMode: Int, CaseIterable {
     }
 
     /// Maps Milkdrop's `nWaveMode` preset constant (0-15, wrapped mod 16 by the original engine)
-    /// onto the closest mode Prism has. Stock Milkdrop modes 4 (DerivativeLine), 5 (ExplosiveHash)
-    /// and 8 (SpectrumLine, unfinished upstream too) have no Prism equivalent yet and fall back to
-    /// .line rather than failing preset load over an unsupported wave mode.
+    /// onto the closest mode Prism has.
     init(presetWaveMode raw: Int) {
         let wrapped = ((raw % 16) + 16) % 16
         switch wrapped {
         case 0: self = .circular
         case 1: self = .spiral
         case 2, 3: self = .spiro
+        case 4: self = .derivativeLine
+        case 5: self = .explosiveHash
         case 7: self = .dualLine
+        case 8: self = .spectrumLine
         case 9: self = .wideLine
         case 10: self = .crossX
         case 11: self = .dualParallel
@@ -77,7 +89,7 @@ enum MilkdropWaveMode: Int, CaseIterable {
         case 13: self = .star
         case 14: self = .flower
         case 15: self = .lasso
-        default: self = .line // 4, 5, 6, 8
+        default: self = .line // 6
         }
     }
 }

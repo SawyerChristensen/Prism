@@ -34,6 +34,22 @@ struct MilkdropPresetFileTests {
         #expect(MilkdropExpressionProgram(source: file.perFrameProgram) == nil)
     }
 
+    @Test func crlfLineEndingsParseCorrectly() {
+        // Every real .milk file sampled from an actual Milkdrop/NestDrop preset pack (Windows-
+        // authored, near-universally CRLF-terminated) failed to parse *at all* before this fix:
+        // Swift's String treats "\r\n" as a single Character (an extended grapheme cluster —
+        // `"\r\n".count == 1`), so splitting on the Character "\n" alone never finds a split point
+        // in a CRLF file, and the entire file comes back as one unparseable "line." Built with
+        // explicit "\r\n" here rather than a `"""`-literal, since triple-quoted Swift string
+        // literals always normalize to plain "\n" regardless of this source file's own line
+        // endings — the exact reason every other test in this file missed this bug.
+        let text = "[preset00]\r\nnWaveMode=7\r\nper_frame_1=zoom=zoom+0.01;\r\nper_pixel_1=zoom=1;\r\n"
+        let file = MilkdropPresetFile(text: text)
+        #expect(file.waveMode == 7)
+        #expect(file.perFrameProgram.contains("zoom=zoom+0.01"))
+        #expect(file.perPixelProgram == "zoom=1;")
+    }
+
     @Test func caseInsensitiveKeysMatchRealPresetFile() {
         // Real content of projectM's presets/tests/001-line.milk — mixes `fdecay` (lowercase) and
         // `fwavesmoothing` (all-lowercase) with `nWaveMode`/`wave_x` (mixed case). Milkdrop itself
@@ -111,9 +127,8 @@ struct MilkdropPresetFileTests {
         #expect(file.perFrameInitProgram == "x=1;")
     }
 
-    @Test func unrelatedCustomWaveformKeysDontCrashParsingOrLeakIntoPerFrame() {
-        // Real content (trimmed) of projectM's presets/tests/252-wavecode-spectrum2.milk: keys for
-        // the (unimplemented) custom-waveform per-point system shouldn't be mistaken for per_frame_.
+    @Test func customWaveformKeysDontLeakIntoPerFrameAndParseIntoTheirOwnSlots() {
+        // Real content (trimmed) of projectM's presets/tests/252-wavecode-spectrum2.milk.
         let file = MilkdropPresetFile(text: """
         [preset00]
         fDecay=0
@@ -127,6 +142,83 @@ struct MilkdropPresetFileTests {
         // fWaveAlpha (the key MilkdropPresetFile actually maps) wasn't set — `wave_a` alone,
         // matching real upstream semantics, is inert. Default stays.
         #expect(file.waveAlpha == 0.8)
+        // wave_0/wave_1's per_point code correctly lands in their own custom-waveform slots now.
+        #expect(file.customWaves[0].enabled == true)
+        #expect(file.customWaves[0].perPointProgram.contains("x=sample"))
+        #expect(file.customWaves[1].enabled == false) // Only wavecode_0_enabled was set.
+        #expect(file.customWaves[1].perPointProgram.contains("if(sw,osa,sample)"))
+    }
+
+    // MARK: - Custom waveforms (wavecode_N_*)
+
+    @Test func parsesWavecodeConstants() {
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        wavecode_2_enabled=1
+        wavecode_2_samples=256
+        wavecode_2_sep=4
+        wavecode_2_bSpectrum=1
+        wavecode_2_bUseDots=1
+        wavecode_2_bDrawThick=1
+        wavecode_2_bAdditive=1
+        wavecode_2_scaling=2.5
+        wavecode_2_smoothing=0.25
+        wavecode_2_r=0.1
+        wavecode_2_g=0.2
+        wavecode_2_b=0.3
+        wavecode_2_a=0.4
+        """)
+        let wave = file.customWaves[2]
+        #expect(wave.enabled == true)
+        #expect(wave.samples == 256)
+        #expect(wave.sep == 4)
+        #expect(wave.spectrum == true)
+        #expect(wave.useDots == true)
+        #expect(wave.drawThick == true)
+        #expect(wave.additive == true)
+        #expect(wave.scaling == 2.5)
+        #expect(wave.smoothing == 0.25)
+        #expect(wave.r == 0.1)
+        #expect(wave.g == 0.2)
+        #expect(wave.b == 0.3)
+        #expect(wave.a == 0.4)
+        // Untouched slots keep CustomWaveform.hpp's own defaults.
+        #expect(file.customWaves[0].enabled == false)
+        #expect(file.customWaves[0].samples == 512)
+        #expect(file.customWaves[0].scaling == 1.0)
+    }
+
+    @Test func waveCodeSlotsHaveNoUnderscoreBeforeTheDigitUnlikeMainPerFrame() {
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        wavecode_0_enabled=1
+        wave_0_init1=SPEED=2;
+        wave_0_per_frame1=a=0.5+0.1*sin(time*SPEED);
+        wave_0_per_point1=x=0.5+0.1*
+        wave_0_per_point2=  sin(time*SPEED);
+        """)
+        #expect(file.customWaves[0].initProgram.contains("SPEED=2"))
+        #expect(file.customWaves[0].perFrameProgram.contains("sin(time*SPEED)"))
+        #expect(file.customWaves[0].perPointProgram.contains("sin(time*SPEED)"))
+    }
+
+    @Test func wavecodeDoesNotCollideWithUnindexedWaveConstants() {
+        // wave_x/wave_y/wave_r/wave_g/wave_b (no digit right after `wave_`) are the *main*
+        // preset's plain top-level wave constants, not a custom-waveform code slot — confirming
+        // splitIndexedKey correctly rejects them (no numeric prefix to find) rather than
+        // misparsing "x"/"y"/"r"/"g"/"b" as a code-family name with no digit suffix.
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        wave_x=0.25
+        wave_y=0.75
+        wave_r=0.5
+        wavecode_0_enabled=1
+        """)
+        #expect(file.waveX == 0.25)
+        #expect(file.waveY == 0.75)
+        #expect(file.waveR == 0.5)
+        #expect(file.customWaves[0].enabled == true)
+        #expect(file.customWaves.allSatisfy { $0.initProgram.isEmpty && $0.perFrameProgram.isEmpty && $0.perPointProgram.isEmpty })
     }
 
     @Test func malformedExpressionDoesNotCrashAndLaterStatementsStillRun() {
@@ -180,6 +272,31 @@ struct MilkdropPresetFileTests {
         // Untouched fields keep CustomShape.cpp's own defaults.
         #expect(shape.y == 0.5)
         #expect(shape.g2 == 1.0)
+    }
+
+    /// `textured`/`tex_ang`/`tex_zoom`/`image` — CustomShape.cpp:37-59's projectM-specific/textured
+    /// fields, added alongside the textured shape rendering path in MilkdropMetalRenderer.swift.
+    @Test func parsesTexturedShapecodeFields() {
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        shapecode_0_enabled=1
+        shapecode_0_textured=1
+        shapecode_0_tex_ang=0.5
+        shapecode_0_tex_zoom=2.0
+        shapecode_0_image=worms.jpg
+        shapecode_2_enabled=1
+        shapecode_2_textured=0
+        """)
+        #expect(file.shapes[0].textured == true)
+        #expect(file.shapes[0].texAng == 0.5)
+        #expect(file.shapes[0].texZoom == 2.0)
+        #expect(file.shapes[0].image == "worms.jpg")
+        #expect(file.shapes[2].textured == false)
+        // A preset with no shapecode_N_textured/tex_ang/tex_zoom keys at all keeps the untextured,
+        // no-zoom defaults (confirmed against CustomShape.cpp's own member initializers).
+        #expect(file.shapes[1].textured == false)
+        #expect(file.shapes[1].texZoom == 1.0)
+        #expect(file.shapes[1].image == "")
     }
 
     @Test func shapeCodeSlotsHaveNoUnderscoreBeforeTheDigitUnlikeMainPerFrame() {
@@ -275,6 +392,109 @@ struct MilkdropPresetFileTests {
         #expect(file.decay == 0.98)
         #expect(file.warpAnimSpeed == 1.0)
         #expect(file.warpScale == 1.0)
+    }
+
+    // MARK: - Border / darken-center (Border.cpp / DarkenCenter.cpp)
+
+    @Test func parsesBorderAndDarkenCenterConstants() {
+        // Key names confirmed against projectM's PresetState.cpp: ob_*/ib_* are plain lowercase
+        // (same convention as zoom/rot/cx/cy above), bDarkenCenter uses the `b`-prefixed boolean
+        // naming convention (matching shapecode's bAdditive/bThickOutline elsewhere).
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        ob_size=0.02
+        ob_r=0.1
+        ob_g=0.2
+        ob_b=0.3
+        ob_a=0.9
+        ib_size=0.03
+        ib_r=0.4
+        ib_g=0.5
+        ib_b=0.6
+        ib_a=0.8
+        bDarkenCenter=1
+        """)
+        #expect(file.outerBorderSize == 0.02)
+        #expect(file.outerBorderR == 0.1)
+        #expect(file.outerBorderG == 0.2)
+        #expect(file.outerBorderB == 0.3)
+        #expect(file.outerBorderA == 0.9)
+        #expect(file.innerBorderSize == 0.03)
+        #expect(file.innerBorderR == 0.4)
+        #expect(file.innerBorderG == 0.5)
+        #expect(file.innerBorderB == 0.6)
+        #expect(file.innerBorderA == 0.8)
+        #expect(file.darkenCenter == true)
+    }
+
+    @Test func borderAndDarkenCenterDefaultToRealMilkdropValuesWhenAbsent() {
+        // Defaults confirmed against PresetState.hpp: both borders' alpha default to 0 (invisible),
+        // but the inner border's *color* still defaults to a visible gray (0.25/0.25/0.25) — a
+        // preset that sets only ib_a relies on that gray, not black.
+        let file = MilkdropPresetFile(text: "[preset00]\nnWaveMode=0\n")
+        #expect(file.outerBorderSize == 0.01)
+        #expect(file.outerBorderR == 0.0)
+        #expect(file.outerBorderG == 0.0)
+        #expect(file.outerBorderB == 0.0)
+        #expect(file.outerBorderA == 0.0)
+        #expect(file.innerBorderSize == 0.01)
+        #expect(file.innerBorderR == 0.25)
+        #expect(file.innerBorderG == 0.25)
+        #expect(file.innerBorderB == 0.25)
+        #expect(file.innerBorderA == 0.0)
+        #expect(file.darkenCenter == false)
+    }
+
+    // MARK: - Old-style final composite (VideoEcho.cpp/Filters.cpp)
+
+    @Test func noMilkdropPresetVersionKeyMeansOldStyle() {
+        // Confirmed against PresetState.hpp: `presetVersion` defaults to 100 (not "unknown"/absent
+        // as a distinct state) — every 1.x-era preset predates this key entirely, so its absence is
+        // itself the old-style signal, the same as PresetState::Initialize's own version-gating.
+        let file = MilkdropPresetFile(text: "[preset00]\nnWaveMode=0\n")
+        #expect(file.presetVersion == 100)
+        #expect(file.usesOldStyleFinalComposite == true)
+    }
+
+    @Test func presetVersionAtOrAboveTwoHundredIsNotOldStyle() {
+        let file = MilkdropPresetFile(text: "[preset00]\nMILKDROP_PRESET_VERSION=201\n")
+        #expect(file.usesOldStyleFinalComposite == false)
+    }
+
+    @Test func parsesVideoEchoAndGammaAndFilterConstants() {
+        let file = MilkdropPresetFile(text: """
+        [preset00]
+        fGammaAdj=1.5
+        fVideoEchoZoom=3.0
+        fVideoEchoAlpha=0.4
+        nVideoEchoOrientation=2
+        bBrighten=1
+        bDarken=1
+        bSolarize=1
+        bInvert=1
+        """)
+        #expect(file.gammaAdj == 1.5)
+        #expect(file.videoEchoZoom == 3.0)
+        #expect(file.videoEchoAlpha == 0.4)
+        #expect(file.videoEchoOrientation == 2)
+        #expect(file.brighten == true)
+        #expect(file.darken == true)
+        #expect(file.solarize == true)
+        #expect(file.invert == true)
+    }
+
+    @Test func videoEchoAndFilterConstantsDefaultToRealMilkdropValuesWhenAbsent() {
+        // Confirmed against PresetState.hpp: gammaAdj defaults to 2.0 (not 1.0) and videoEchoZoom
+        // to 2.0 — an old-style preset that sets nothing still gets brightness-doubled output.
+        let file = MilkdropPresetFile(text: "[preset00]\nnWaveMode=0\n")
+        #expect(file.gammaAdj == 2.0)
+        #expect(file.videoEchoZoom == 2.0)
+        #expect(file.videoEchoAlpha == 0.0)
+        #expect(file.videoEchoOrientation == 0)
+        #expect(file.brighten == false)
+        #expect(file.darken == false)
+        #expect(file.solarize == false)
+        #expect(file.invert == false)
     }
 
     @Test func shapeIndexOutOfRangeIsIgnoredNotCrashed() {

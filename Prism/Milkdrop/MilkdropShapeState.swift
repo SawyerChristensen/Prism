@@ -7,9 +7,10 @@
 //  oscilloscope waveform (see MilkdropWaveMode.swift). Ported from projectM's CustomShape.cpp /
 //  ShapePerFrameContext.cpp as a spec, not copied — see MilkdropPresetFile.swift's header for why.
 //
-//  Untextured shapes only for now: `textured=true` swaps in a second shader and a UV pass in real
-//  Milkdrop, which Prism has no texture-sampling path for yet (see CustomShape.cpp:145-201 for
-//  that split — it's cleanly separable from the untextured gradient-fill path ported here).
+//  Textured shapes (`textured=1`, CustomShape.cpp:145-201) sample a texture instead of the flat
+//  gradient fill; per real Milkdrop's own behavior, the per-vertex color above still applies as a
+//  multiplicative tint on top of the sampled texel. See MilkdropMetalRenderer.swift's
+//  shapeTextured* pipelines for the actual sampling/UV math.
 //
 
 import Foundation
@@ -38,6 +39,9 @@ struct MilkdropShapeInstance {
     var borderA: Float
     var additive: Bool
     var thickOutline: Bool
+    var textured: Bool
+    var texAng: Float
+    var texZoom: Float
 }
 
 /// Load-time state for one `shapecode_N` slot: the parsed preset constants, compiled expression
@@ -66,6 +70,9 @@ final class MilkdropShapeRuntime {
             "additive": preset.additive ? 1 : 0,
             "thick": preset.thickOutline ? 1 : 0,
             "num_inst": Float(preset.numInst),
+            "textured": preset.textured ? 1 : 0,
+            "tex_ang": preset.texAng,
+            "tex_zoom": preset.texZoom,
         ]
         // Runs once, immediately — same role as the main preset's perFrameInitProgram (see
         // MilkdropVisualizerView.swift's loadPreset).
@@ -126,7 +133,15 @@ final class MilkdropShapeRuntime {
                 borderR: colorWrapped("border_r", preset.borderR), borderG: colorWrapped("border_g", preset.borderG),
                 borderB: colorWrapped("border_b", preset.borderB), borderA: colorWrapped("border_a", preset.borderA),
                 additive: (variables["additive"] ?? (preset.additive ? 1 : 0)) != 0,
-                thickOutline: (variables["thick"] ?? (preset.thickOutline ? 1 : 0)) != 0
+                thickOutline: (variables["thick"] ?? (preset.thickOutline ? 1 : 0)) != 0,
+                textured: (variables["textured"] ?? (preset.textured ? 1 : 0)) != 0,
+                texAng: variables["tex_ang"] ?? preset.texAng,
+                // A script-driven tex_zoom of exactly 0 (or non-finite) would divide-by-zero into
+                // the UV math below — fall back to 1 (no zoom) rather than propagate Inf/NaN UVs.
+                texZoom: {
+                    let z = variables["tex_zoom"] ?? preset.texZoom
+                    return z.isFinite && z != 0 ? z : 1
+                }()
             ))
         }
         return results

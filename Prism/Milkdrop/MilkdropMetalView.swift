@@ -40,9 +40,9 @@ struct MilkdropMetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
-        // `model` is a reference type, so mutations (e.g. cycleMode()) are already visible to the
-        // renderer without re-pushing it; `color`/`bassEnergy` are value types and do need pushing
-        // through on every SwiftUI update.
+        // `model` is a reference type, so mutations (e.g. loadPreset(from:)) are already visible to
+        // the renderer without re-pushing it; `color`/`bassEnergy` are value types and do need
+        // pushing through on every SwiftUI update.
         context.coordinator.color = color
         context.coordinator.bassEnergy = bassEnergy
     }

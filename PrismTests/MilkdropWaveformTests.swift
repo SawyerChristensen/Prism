@@ -14,6 +14,9 @@ struct MilkdropWaveformTests {
     static let sampleCount = 200
     static let left = (0..<sampleCount).map { i in Float(sin(Double(i) * 0.1)) * 0.5 }
     static let right = (0..<sampleCount).map { i in Float(cos(Double(i) * 0.13)) * 0.5 }
+    /// .spectrumLine needs >= 512 magnitude bins (see MilkdropAudioSignals.swift's
+    /// lastMagnitudeSpectrum); everything else ignores this.
+    static let spectrum = (0..<512).map { i in Float(abs(sin(Double(i) * 0.05))) * 2 + 0.1 }
 
     /// Regression for a real reported bug: .circular/.star/.flower swept angle across
     /// `i/(n-1)*2*pi`, so the last raw sample landed at angle exactly 2*pi — the same angle as
@@ -73,7 +76,7 @@ struct MilkdropWaveformTests {
         let params = MilkdropWaveformParams()
         #expect(params.waveX == 0 && params.waveY == 0)
         for mode in MilkdropWaveMode.allCases where mode != .spectrumBars {
-            let (points, _) = MilkdropWaveform.points(mode: mode, left: Self.left, right: Self.right, params: params, time: 12.34, aspect: 0.8)
+            let (points, _) = MilkdropWaveform.points(mode: mode, left: Self.left, right: Self.right, spectrum: Self.spectrum, params: params, time: 12.34, aspect: 0.8)
             #expect(!points.isEmpty, "\(mode) produced no points")
         }
     }
@@ -134,5 +137,54 @@ struct MilkdropWaveformTests {
 
         let moved = abs(baseFirst.x - offsetFirst.x) > 1e-4 || abs(baseFirst.y - offsetFirst.y) > 1e-4
         #expect(moved)
+    }
+
+    /// Modes 4/5/8 used to have no Prism equivalent and silently fell back to .line (see
+    /// MilkdropWaveMode's init(presetWaveMode:)). Pins the real Milkdrop mode numbers to their new,
+    /// distinct cases so a preset with `nWaveMode=4/5/8` doesn't quietly render as mode 6 again.
+    @Test func stockWaveModesMapToTheirOwnCases() {
+        #expect(MilkdropWaveMode(presetWaveMode: 4) == .derivativeLine)
+        #expect(MilkdropWaveMode(presetWaveMode: 5) == .explosiveHash)
+        #expect(MilkdropWaveMode(presetWaveMode: 6) == .line)
+        #expect(MilkdropWaveMode(presetWaveMode: 8) == .spectrumLine)
+    }
+
+    @Test func derivativeLineProducesAContiguousTrace() {
+        let (pts, brk) = MilkdropWaveform.points(mode: .derivativeLine, left: Self.left, right: Self.right, params: MilkdropWaveformParams(), time: 1.0, aspect: 1.0)
+        #expect(brk == nil)
+        #expect(pts.count == Self.sampleCount - 25)
+        #expect(pts.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
+
+    /// Regression for the out-of-range mystery-param wraparound (WaveformMath's
+    /// UsesNormalizedMysteryParam branch, only applied when the raw value strays outside -1...1) —
+    /// a preset pushing wave_mystery to an extreme value shouldn't blow up the momentum term into
+    /// non-finite output.
+    @Test func derivativeLineToleratesOutOfRangeMysteryParam() {
+        var params = MilkdropWaveformParams()
+        params.mysteryParam = 37.5
+        let (pts, _) = MilkdropWaveform.points(mode: .derivativeLine, left: Self.left, right: Self.right, params: params, time: 1.0, aspect: 1.0)
+        #expect(!pts.isEmpty)
+        #expect(pts.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
+
+    @Test func explosiveHashProducesAContiguousTrace() {
+        let (pts, brk) = MilkdropWaveform.points(mode: .explosiveHash, left: Self.left, right: Self.right, params: MilkdropWaveformParams(), time: 2.5, aspect: 0.75)
+        #expect(brk == nil)
+        #expect(pts.count == Self.sampleCount - 32)
+        #expect(pts.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
+
+    @Test func spectrumLineNeedsAFullSpectrumBuffer() {
+        // Fewer than 512 bins (SpectrumSamples upstream) isn't enough for the i*2/i*2+1 pairing —
+        // must degrade to no points rather than crash on an out-of-range index.
+        let (pts, _) = MilkdropWaveform.points(mode: .spectrumLine, left: Self.left, right: Self.right, spectrum: Array(Self.spectrum.prefix(100)), params: MilkdropWaveformParams(), time: 0, aspect: 1.0)
+        #expect(pts.isEmpty)
+    }
+
+    @Test func spectrumLineProducesTwoHundredFiftySixPoints() {
+        let (pts, _) = MilkdropWaveform.points(mode: .spectrumLine, left: Self.left, right: Self.right, spectrum: Self.spectrum, params: MilkdropWaveformParams(), time: 0, aspect: 1.0)
+        #expect(pts.count == 256)
+        #expect(pts.allSatisfy { $0.x.isFinite && $0.y.isFinite })
     }
 }

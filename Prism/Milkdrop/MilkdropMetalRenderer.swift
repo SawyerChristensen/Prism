@@ -44,6 +44,10 @@ final class MilkdropBeatState {
     /// MilkdropVisualizerModel.updatePresetPerFrame.
     private(set) var lastFPS: Double = 60
 
+    /// Passthrough to the analyzer's raw magnitude spectrum — see MilkdropCustomWaveform.swift's
+    /// spectrum-mode path.
+    var magnitudeSpectrum: [Float] { analyzer.lastMagnitudeSpectrum }
+
     @discardableResult
     func update(left: [Float], right: [Float], sampleRate: Float, now: Date) -> MilkdropBandEnergy {
         let dt = lastFrameDate.map { now.timeIntervalSince($0) } ?? (1.0 / 60.0)
@@ -79,6 +83,17 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     private let solidPipeline: MTLRenderPipelineState
     private let feedbackPipeline: MTLRenderPipelineState
     private let presentPipeline: MTLRenderPipelineState
+    // VideoEcho.cpp/Filters.cpp's "old-school" final-composite path (see MilkdropPresetFile.swift's
+    // usesOldStyleFinalComposite) — a fixed Metal shader, not dynamically compiled per preset like
+    // compiledComposite/compiledWarp, since it's the same closed-form function for every old-style
+    // preset regardless of which of its knobs are set.
+    private let oldStyleCompositePipeline: MTLRenderPipelineState
+    // The scripted warp-mesh path (per_pixel_N= — see MilkdropPerPixelMesh.swift), used instead of
+    // feedbackPipeline's full-screen quad only when the loaded preset actually has per-pixel code.
+    // The mesh's triangle connectivity never changes (fixed 32x24 grid), so its index buffer is
+    // built once here rather than every frame like the (per-preset-varying) vertex buffer.
+    private let feedbackMeshPipeline: MTLRenderPipelineState
+    private let meshIndexBuffer: MTLBuffer
     // Custom shapes (shapecode_N_*) use their own pipelines: per-vertex color (for the fill
     // gradient, unlike solidPipeline's uniform color) and blend factors that don't match
     // solidPipeline's fixed (One,One) — Milkdrop's shape blend is (SourceAlpha,One) when additive,
@@ -86,12 +101,20 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     // 101-105 in projectM, and MilkdropShapeState.swift for the rest of the port.
     private let shapeAdditivePipeline: MTLRenderPipelineState
     private let shapeAlphaPipeline: MTLRenderPipelineState
+    // `textured=1` shapes (CustomShape.cpp:145-201) — same blend factors as the pair above, just a
+    // different vertex/fragment pair that samples a texture instead of the flat gradient fill.
+    private let shapeTexturedAdditivePipeline: MTLRenderPipelineState
+    private let shapeTexturedAlphaPipeline: MTLRenderPipelineState
 
     // Paired with a dynamically-compiled composite fragment function at draw time (see
     // compileCompositeShader below) — MTLRenderPipelineDescriptor doesn't require its vertex and
     // fragment functions to come from the same MTLLibrary, so the static full-screen-quad vertex
     // shader is reused as-is rather than duplicated into every generated shader source.
     private let feedbackVertexFunction: MTLFunction
+    // Reused when dynamically compiling a `warp_N=` shader's fragment function (see
+    // compileWarpShader below) — same reasoning as feedbackVertexFunction above, just for the mesh
+    // vertex stage instead of the full-screen quad.
+    private let feedbackMeshVertexFunction: MTLFunction
     // The four filter/wrap combinations MilkdropShaderTranslator's qualifier-prefix parsing can
     // resolve a texture to (TextureManager.cpp:355-401) — created once and picked per texture
     // binding at draw time, rather than one MTLSamplerState per compiled shader.
@@ -102,6 +125,14 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     // Milkdrop's built-in noise textures (sampler_noise_lq, etc.) — generated once here, not
     // per-preset, since their content isn't preset-specific (see MilkdropNoiseTextures.swift).
     private let noiseTextures: MilkdropNoiseTextures?
+    // Preset-pack `Textures/` lookups for custom sampler names (`sampler_worms`, `sampler_rand00`,
+    // etc. — see MilkdropShaderTranslator's `.custom` resource case). One instance for the
+    // renderer's lifetime (not per-preset) since it internally caches by scanned root already.
+    private let customTextures: MilkdropCustomTextureManager
+    /// The `model.loadGeneration` `customTextures` last (re)scanned for — same gating pattern as
+    /// `compiledCompositeGeneration`/`compiledWarpGeneration`, so a folder walk + directory scan
+    /// happens on an actual preset change, never every frame.
+    private var customTextureGeneration = -1
 
     /// A dynamically-translated-and-compiled `comp_N=` composite shader, ready to draw with.
     private struct CompiledMilkdropShader {
@@ -116,6 +147,13 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     /// is stale, never every frame (see MilkdropVisualizerModel.loadGeneration).
     private var compiledCompositeGeneration = -1
 
+    /// Same idea as `compiledComposite`, for `warp_N=` — a dynamically-compiled shader that
+    /// *replaces* the feedback pass's default warp fragment entirely (not an extra pass like
+    /// composite), always drawn via the mesh path (see MilkdropPerPixelMeshRuntime.trivialVertices'
+    /// doc comment on why, even for presets with no `per_pixel_N=` script of their own).
+    private var compiledWarp: CompiledMilkdropShader?
+    private var compiledWarpGeneration = -1
+
     // Ping-pong feedback textures: textures[sourceIndex] is "what was on screen last frame" (read
     // this frame), textures[1 - sourceIndex] is this frame's render target. Swapped every frame.
     private var textures: [MTLTexture?] = [nil, nil]
@@ -127,6 +165,10 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     private var scratchTexture: MTLTexture?
     private var textureSize: CGSize = .zero
     private var frameCounter = 0
+    /// Exponential moving average of `beat.lastFPS` (itself instantaneous, `1/dt` per frame) —
+    /// pushed into `model.displayFPS` once per frame for the on-screen performance counter. EMA
+    /// rather than raw so the displayed number is stable enough to actually read.
+    private var smoothedFPS: Double = 60
 
     // First-draw timestamp, so `time` below is small and near-zero (like projectM's own
     // TimeKeeper::GetRunningTime(), elapsed seconds since the renderer started) rather than an
@@ -202,6 +244,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         // plus a full-screen quad), so blending would be a no-op — left off for clarity/cost.
         self.feedbackPipeline = makePipeline(vertex: "feedback_vertex", fragment: "feedback_fragment", additiveBlend: false)
         self.presentPipeline = makePipeline(vertex: "feedback_vertex", fragment: "present_fragment", additiveBlend: false)
+        self.oldStyleCompositePipeline = makePipeline(vertex: "feedback_vertex", fragment: "milkdrop_old_style_final_composite", additiveBlend: false)
 
         func makeBlendedPipeline(vertex: String, fragment: String, sourceFactor: MTLBlendFactor, destFactor: MTLBlendFactor) -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
@@ -228,11 +271,32 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         self.shapeAlphaPipeline = makeBlendedPipeline(
             vertex: "shape_vertex", fragment: "shape_fragment", sourceFactor: .sourceAlpha, destFactor: .oneMinusSourceAlpha
         )
+        self.shapeTexturedAdditivePipeline = makeBlendedPipeline(
+            vertex: "shape_textured_vertex", fragment: "shape_textured_fragment", sourceFactor: .sourceAlpha, destFactor: .one
+        )
+        self.shapeTexturedAlphaPipeline = makeBlendedPipeline(
+            vertex: "shape_textured_vertex", fragment: "shape_textured_fragment", sourceFactor: .sourceAlpha, destFactor: .oneMinusSourceAlpha
+        )
 
         guard let feedbackVertexFunction = library.makeFunction(name: "feedback_vertex") else {
             fatalError("Could not load Shaders.metal's feedback_vertex function")
         }
         self.feedbackVertexFunction = feedbackVertexFunction
+
+        self.feedbackMeshPipeline = makePipeline(vertex: "feedback_mesh_vertex", fragment: "feedback_mesh_fragment", additiveBlend: false)
+
+        guard let feedbackMeshVertexFunction = library.makeFunction(name: "feedback_mesh_vertex") else {
+            fatalError("Could not load Shaders.metal's feedback_mesh_vertex function")
+        }
+        self.feedbackMeshVertexFunction = feedbackMeshVertexFunction
+
+        let meshIndices = MilkdropPerPixelMeshRuntime.sharedIndices
+        guard let meshIndexBuffer = device.makeBuffer(
+            bytes: meshIndices, length: MemoryLayout<UInt16>.stride * meshIndices.count, options: .storageModeShared
+        ) else {
+            fatalError("Could not allocate the per-pixel warp mesh's index buffer")
+        }
+        self.meshIndexBuffer = meshIndexBuffer
 
         func makeSampler(filter: MTLSamplerMinMagFilter, address: MTLSamplerAddressMode) -> MTLSamplerState {
             let descriptor = MTLSamplerDescriptor()
@@ -250,6 +314,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         self.samplerNearestClamp = makeSampler(filter: .nearest, address: .clampToEdge)
 
         self.noiseTextures = MilkdropNoiseTextures(device: device)
+        self.customTextures = MilkdropCustomTextureManager(device: device)
 
         super.init()
     }
@@ -295,15 +360,23 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
 
     /// Uniform layout shared between the generated MSL `#define` header (`uniformDefines()`) and
     /// draw(in:)'s flat uniform-array construction — a single source of truth for both sides'
-    /// indices, so they can't drift apart. `q1`-`q32` are always 0 for now: Prism's per-frame
-    /// expression evaluator can already store them (a script writing `q1=bass;` just becomes a
-    /// dict entry, same as any other variable), but that value isn't threaded through to here yet
-    /// — a shader reading a q-var the main preset script sets just sees 0, not a crash.
+    /// indices, so they can't drift apart. `q1`-`q32` come from the per-frame script's own
+    /// variables (see MilkdropVisualizerModel.qVariables) — a script that never touches a given
+    /// q-var just leaves it at 0, same as an unset NS-EEL variable would.
     private static let uniformLayout: [(name: String, count: Int)] =
         [("time", 1), ("fps", 1), ("frame", 1), ("progress", 1),
          ("bass", 1), ("mid", 1), ("treb", 1),
          ("bass_att", 1), ("mid_att", 1), ("treb_att", 1),
-         ("rand_preset", 4), ("rand_frame", 4), ("texsize", 4)]
+         ("rand_preset", 4), ("rand_frame", 4), ("texsize", 4),
+         // `_c0` in projectM's PresetShaderHeaderGlsl330.inc — aspect ratio + its inverse, exactly
+         // MilkdropMetalRenderer's own aspectXY/invAspectXY (see draw(in:)'s aspect-ratio-correction
+         // comment) already computed for the vertex stage, just also exposed to the fragment here.
+         ("aspect", 4),
+         // Four slowly/quickly-drifting cosine/sine quadruplets — real Milkdrop uniforms
+         // (`_c8`-`_c11` in projectM's PresetShaderHeaderGlsl330.inc), exact formula confirmed
+         // against MilkdropShader::LoadVariables and reproduced verbatim in
+         // `buildDynamicShaderUniforms` below.
+         ("roam_cos", 4), ("roam_sin", 4), ("slow_roam_cos", 4), ("slow_roam_sin", 4)]
         + (1...32).map { ("q\($0)", 1) }
 
     private static var totalUniformCount: Int { uniformLayout.reduce(0) { $0 + $1.count } }
@@ -319,6 +392,48 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                 lines.append("#define \(name) float\(count)(\(components))")
             }
             index += count
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Fixed pixel dimensions for MilkdropNoiseTextures' catalog — generated once at startup, never
+    /// resized, so these are safe to bake in as compile-time constants (unlike `main`/`blur`, whose
+    /// size changes on window resize — see below).
+    private static let noiseTextureSizes: [String: (width: Float, height: Float)] = [
+        "noise_lq": (256, 256), "noise_mq": (256, 256), "noise_hq": (256, 256),
+        "noisevol_lq": (32, 32), "noisevol_hq": (32, 32),
+    ]
+
+    private static func textureResourceBaseName(_ resource: MilkdropShaderTranslator.TextureBinding.Resource) -> String {
+        switch resource {
+        case .main: return "main"
+        case .noise(let name): return name
+        case .blur(let level): return "blur\(level)"
+        case .custom(let name): return name
+        }
+    }
+
+    /// Per-texture `texsize_<baseName>` defines (measured 7/25: referenced by 62% of remaining
+    /// real warp-shader compile failures after the GetPixel/GetBlurN and float4->float3 fixes
+    /// landed — clearly the next-biggest lever, not a minor gap). `main`/`blurN` alias the
+    /// existing generic `texsize` uniform rather than a fixed literal — their pixel size changes on
+    /// window resize, and `texsize` is already a genuine per-frame uniform (not a compile-time
+    /// constant) for exactly that reason; only the noise catalog's fixed, never-resized textures
+    /// get baked-in literal values. `.custom` (MilkdropCustomTextureManager) textures fall into
+    /// this same generic-`texsize` branch too — their real on-disk dimensions aren't threaded
+    /// through as a uniform, a documented approximation in the same spirit as `.blur`'s.
+    private static func textureSizeDefines(_ textures: [MilkdropShaderTranslator.TextureBinding]) -> String {
+        var lines: [String] = []
+        var seen: Set<String> = []
+        for texture in textures {
+            let base = textureResourceBaseName(texture.resource)
+            guard !seen.contains(base) else { continue }
+            seen.insert(base)
+            if let size = noiseTextureSizes[base] {
+                lines.append("#define texsize_\(base) float4(\(size.width), \(size.height), \(1.0 / size.width), \(1.0 / size.height))")
+            } else {
+                lines.append("#define texsize_\(base) texsize")
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -351,6 +466,10 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
     float3 milkdrop_lerp(float3 a, float3 b, float3 t) { return mix(a, b, t); }
     float4 milkdrop_lerp(float4 a, float4 b, float t) { return mix(a, b, t); }
     float4 milkdrop_lerp(float4 a, float4 b, float4 t) { return mix(a, b, t); }
+    // Real Milkdrop's exact luminance-weighting formula — confirmed against projectM's
+    // PresetShaderHeaderGlsl330.inc (`#define lum(x) (dot(x,float3(0.32,0.49,0.29)))`). A pure
+    // math macro (no texture involved), unlike GetPixel/GetBlurN, so a plain #define here is safe.
+    #define lum(x) (dot(x, float3(0.32, 0.49, 0.29)))
     """
 
     /// Wraps a translated shader body into a complete MSL fragment function. Composite shaders run
@@ -375,6 +494,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         \(shaderShimHeader)
 
         \(uniformDefines())
+        \(textureSizeDefines(translated.textures))
 
         fragment float4 milkdrop_composite_main(
             FullscreenVertexOut in [[stage_in]],
@@ -414,6 +534,133 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         return CompiledMilkdropShader(pipelineState: pipelineState, textures: translated.textures, randPreset: randPreset)
     }
 
+    /// Wraps a translated `warp_N=` shader body into a complete MSL fragment function, drawn via
+    /// the mesh path (`feedback_mesh_vertex` — see MilkdropPerPixelMeshRuntime.trivialVertices' doc
+    /// comment on why even a script-less preset still goes through the mesh when a warp shader is
+    /// present). Confirmed against projectM's MilkdropShader.cpp: unlike `comp_N=`, `uv`/`uv_orig`
+    /// are genuinely different here (`uv` is the *already-warped* mesh UV, `uv_orig` the plain
+    /// pre-warp one), and `rad`/`ang` come from the mesh's static per-vertex buffer rather than
+    /// being re-derived from `uv_orig` like the composite wrapper above does. There's also no
+    /// automatic decay multiplication: real Milkdrop hands the shader body a raw `ret` with no
+    /// built-in fade, so a preset relying on decay must (and often does — e.g. `ret = ret - 0.002;`
+    /// in a real corpus sample) apply its own; multiplying by `decay` here on top would double it.
+    // Not `private`, same reason as buildCompositeShaderSource above.
+    static func buildWarpShaderSource(_ translated: MilkdropShaderTranslator.Result) -> String {
+        var params = ["constant float *uniforms [[buffer(0)]]"]
+        for (i, texture) in translated.textures.enumerated() {
+            let textureType = texture.isVolume ? "texture3d<float>" : "texture2d<float>"
+            params.append("\(textureType) \(texture.declaredName) [[texture(\(i))]]")
+            params.append("sampler \(texture.declaredName)_smp [[sampler(\(i))]]")
+        }
+        let signature = params.joined(separator: ",\n    ")
+
+        return """
+        \(shaderShimHeader)
+
+        // Mirrors Shaders.metal's real MeshVertexOut layout — separately-compiled MTLLibrary
+        // sources don't share declarations, only ABI-compatible ones (same reasoning as
+        // FullscreenVertexOut in shaderShimHeader above).
+        struct MeshVertexOut {
+            float4 position [[position]];
+            float2 uv;
+            float2 uvOrig;
+            float2 radiusAngle;
+        };
+
+        \(uniformDefines())
+        \(textureSizeDefines(translated.textures))
+
+        fragment float4 milkdrop_warp_main(
+            MeshVertexOut in [[stage_in]],
+            \(signature)
+        ) {
+            float2 uv = in.uv;
+            float2 uv_orig = in.uvOrig;
+            float rad = in.radiusAngle.x;
+            float ang = in.radiusAngle.y;
+            float3 ret = float3(0.0);
+        \(translated.body)
+            return float4(ret, 1.0);
+        }
+        """
+    }
+
+    /// Translates, compiles, and links a preset's `warp_N=` source into a ready-to-draw pipeline —
+    /// same fallback contract as `compileCompositeShader` (`nil` on any failure, never a crash).
+    private func compileWarpShader(source: String) -> CompiledMilkdropShader? {
+        guard let translated = MilkdropShaderTranslator.translate(source) else { return nil }
+        let mslSource = Self.buildWarpShaderSource(translated)
+        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: nil),
+              let fragmentFunction = dynamicLibrary.makeFunction(name: "milkdrop_warp_main")
+        else { return nil }
+
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = feedbackMeshVertexFunction
+        descriptor.fragmentFunction = fragmentFunction
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        guard let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor) else { return nil }
+
+        let randPreset = SIMD4<Float>(.random(in: 0...1), .random(in: 0...1), .random(in: 0...1), .random(in: 0...1))
+        return CompiledMilkdropShader(pipelineState: pipelineState, textures: translated.textures, randPreset: randPreset)
+    }
+
+    /// Shared by both dynamically-compiled shader draws (composite and warp) — the flat uniform
+    /// array `uniformDefines()`'s `#define`s index into, built fresh each frame/draw since
+    /// `rand_frame` (indices 14-17) must be freshly random every call, not just every frame (warp
+    /// and composite each get their own independent draw, same as upstream's MilkdropShader
+    /// instances each calling their own `floatRand()`).
+    private func buildDynamicShaderUniforms(
+        time: Double, frame: Int, energy: MilkdropBandEnergy, randPreset: SIMD4<Float>, pixelSize: CGSize,
+        aspect: SIMD2<Float>, invAspect: SIMD2<Float>
+    ) -> [Float] {
+        var uniforms = [Float](repeating: 0, count: Self.totalUniformCount)
+        uniforms[0] = Float(time)
+        uniforms[1] = Float(beat.lastFPS)
+        uniforms[2] = Float(frame)
+        uniforms[3] = 0 // progress: no preset-to-preset blend/fade in Prism yet.
+        uniforms[4] = energy.bass
+        uniforms[5] = energy.mid
+        uniforms[6] = energy.treb
+        uniforms[7] = energy.bassAtt
+        uniforms[8] = energy.midAtt
+        uniforms[9] = energy.trebAtt
+        uniforms[10] = randPreset.x
+        uniforms[11] = randPreset.y
+        uniforms[12] = randPreset.z
+        uniforms[13] = randPreset.w
+        uniforms[14] = .random(in: 0...1)
+        uniforms[15] = .random(in: 0...1)
+        uniforms[16] = .random(in: 0...1)
+        uniforms[17] = .random(in: 0...1)
+        uniforms[18] = Float(pixelSize.width)
+        uniforms[19] = Float(pixelSize.height)
+        uniforms[20] = pixelSize.width > 0 ? 1 / Float(pixelSize.width) : 0
+        uniforms[21] = pixelSize.height > 0 ? 1 / Float(pixelSize.height) : 0
+        uniforms[22] = aspect.x
+        uniforms[23] = aspect.y
+        uniforms[24] = invAspect.x
+        uniforms[25] = invAspect.y
+
+        // roam_cos/roam_sin/slow_roam_cos/slow_roam_sin — exact frequencies/phases ported verbatim
+        // from MilkdropShader::LoadVariables (`_c8`-`_c11`), not the header comment's rounded
+        // "~0.3, ~1.3, ~5, ~20" documentation values.
+        let t = Float(time)
+        let roamFreqs: [Float] = [0.329, 1.293, 5.070, 20.051]
+        let roamPhases: [Float] = [1.2, 3.9, 2.5, 5.4]
+        let slowRoamFreqs: [Float] = [0.0050, 0.0085, 0.0133, 0.0217]
+        let slowRoamPhases: [Float] = [2.7, 5.3, 4.5, 3.8]
+        for i in 0..<4 {
+            uniforms[26 + i] = 0.5 + 0.5 * cosf(t * roamFreqs[i] + roamPhases[i])
+            uniforms[30 + i] = 0.5 + 0.5 * sinf(t * roamFreqs[i] + roamPhases[i])
+            uniforms[34 + i] = 0.5 + 0.5 * cosf(t * slowRoamFreqs[i] + slowRoamPhases[i])
+            uniforms[38 + i] = 0.5 + 0.5 * sinf(t * slowRoamFreqs[i] + slowRoamPhases[i])
+        }
+
+        let qVars = model.qVariables
+        for i in 0..<qVars.count { uniforms[42 + i] = qVars[i] }
+        return uniforms
+    }
+
     private func samplerState(for binding: MilkdropShaderTranslator.TextureBinding) -> MTLSamplerState {
         switch (binding.filter, binding.wrap) {
         case (.linear, .repeatWrap): return samplerLinearRepeat
@@ -425,10 +672,14 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
 
     /// Resolves one binding's actual Metal texture: `.main` is *this frame's* pre-composite result
     /// (passed in, since it changes every frame — unlike the noise catalog, generated once).
+    /// `.blur` (the `GetBlur1`/`GetBlur2`/`GetBlur3` helper functions) resolves to that same
+    /// unblurred texture too — see MilkdropShaderTranslator.TextureBinding's doc comment on why
+    /// that's a deliberate, documented approximation rather than a real blur pipeline.
     private func metalTexture(for binding: MilkdropShaderTranslator.TextureBinding, mainTexture: MTLTexture) -> MTLTexture? {
         switch binding.resource {
-        case .main: return mainTexture
+        case .main, .blur: return mainTexture
         case .noise(let name): return noiseTextures?.texture(named: name)
+        case .custom(let name): return customTextures.texture(named: name)
         }
     }
 
@@ -461,13 +712,32 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let energy = beat.update(left: left, right: right, sampleRate: 44100, now: now)
         let punch = beat.punch
 
+        smoothedFPS = smoothedFPS * 0.9 + beat.lastFPS * 0.1
+        model.displayFPS = smoothedFPS
+
         if renderStartDate == nil { renderStartDate = now }
         let time = now.timeIntervalSince(renderStartDate!)
         frameCounter += 1
+        transientBuffers.beginFrame(generation: frameCounter)
         // Drives a loaded preset's per-frame expression program (if any) before this frame's
         // points get generated below, so mode/params reflect this frame's evaluated values.
         model.updatePresetPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
         let shapeInstancesByShape = model.updateShapesPerFrame(time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy)
+        // Mono spectrum reused for both channels (see MilkdropAudioSignals.swift's
+        // lastMagnitudeSpectrum doc comment on why there's no true stereo spectrum here).
+        let magnitudeSpectrum = beat.magnitudeSpectrum
+        let customWavePointsByWave = model.updateCustomWaveforms(
+            pcmLeft: left, pcmRight: right, spectrumLeft: magnitudeSpectrum, spectrumRight: magnitudeSpectrum,
+            time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy
+        )
+
+        // Re-scan for a Textures/ folder only on an actual preset change too — same reasoning as
+        // the shader recompilation below, and `customTextures` internally no-ops anyway if the
+        // resolved root hasn't actually changed (e.g. two presets from the same pack in a row).
+        if customTextureGeneration != model.loadGeneration {
+            customTextures.prepareForPreset(at: model.presetURL)
+            customTextureGeneration = model.loadGeneration
+        }
 
         // Recompile only on an actual preset change (model.loadGeneration bumps once per
         // loadPreset(from:) call), never every frame — dynamic Metal shader compilation is a
@@ -476,9 +746,13 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             compiledComposite = model.compositeShaderSource.isEmpty ? nil : compileCompositeShader(source: model.compositeShaderSource)
             compiledCompositeGeneration = model.loadGeneration
         }
+        if compiledWarpGeneration != model.loadGeneration {
+            compiledWarp = model.warpShaderSource.isEmpty ? nil : compileWarpShader(source: model.warpShaderSource)
+            compiledWarpGeneration = model.loadGeneration
+        }
         let aspect = pixelSize.width > 0 ? Float(pixelSize.height / pixelSize.width) : 1
         let (rawPoints, rawBreak) = MilkdropWaveform.points(
-            mode: model.mode, left: scaledLeft, right: scaledRight,
+            mode: model.mode, left: scaledLeft, right: scaledRight, spectrum: magnitudeSpectrum,
             params: model.params, time: time, aspect: aspect
         )
         let isLoop = model.mode.isLoop
@@ -546,25 +820,94 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         var aspectXY = SIMD2<Float>(heightF > widthF ? widthF / heightF : 1.0, widthF > heightF ? heightF / widthF : 1.0)
         var invAspectXY = SIMD2<Float>(1.0 / aspectXY.x, 1.0 / aspectXY.y)
 
-        encoder.setRenderPipelineState(feedbackPipeline)
-        encoder.setFragmentTexture(sourceTexture, index: 0)
-        encoder.setFragmentBytes(&zoom, length: MemoryLayout<Float>.stride, index: 0)
-        encoder.setFragmentBytes(&zoomExponent, length: MemoryLayout<Float>.stride, index: 1)
-        encoder.setFragmentBytes(&rot, length: MemoryLayout<Float>.stride, index: 2)
-        encoder.setFragmentBytes(&warpAmount, length: MemoryLayout<Float>.stride, index: 3)
-        encoder.setFragmentBytes(&cx, length: MemoryLayout<Float>.stride, index: 4)
-        encoder.setFragmentBytes(&cy, length: MemoryLayout<Float>.stride, index: 5)
-        encoder.setFragmentBytes(&dx, length: MemoryLayout<Float>.stride, index: 6)
-        encoder.setFragmentBytes(&dy, length: MemoryLayout<Float>.stride, index: 7)
-        encoder.setFragmentBytes(&sx, length: MemoryLayout<Float>.stride, index: 8)
-        encoder.setFragmentBytes(&sy, length: MemoryLayout<Float>.stride, index: 9)
-        encoder.setFragmentBytes(&decay, length: MemoryLayout<Float>.stride, index: 10)
-        encoder.setFragmentBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 11)
-        encoder.setFragmentBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 12)
-        encoder.setFragmentBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 13)
-        encoder.setFragmentBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 14)
-        encoder.setFragmentBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 15)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        // Scripted warp mesh (per_pixel_N=) and/or a compiled warp_N= shader. Priority, matching
+        // real Milkdrop's own architecture (PerPixelMesh::WarpedBlit always draws the mesh; a
+        // custom warp shader only ever replaces *which fragment shader* processes it):
+        //  1. A compiled warp_N= shader — ALWAYS drawn via the mesh path, even for the 32.5% of
+        //     the corpus with warp_N= but no per_pixel_N= of their own (see
+        //     MilkdropPerPixelMeshRuntime.trivialVertices' doc comment on why that's a deliberate
+        //     simplification, not a quality compromise).
+        //  2. A per_pixel_N= script with no warp shader — the existing scripted-mesh path.
+        //  3. Neither — the existing per-pixel-exact fixed-formula path.
+        let meshVerticesFromScript = model.updatePerPixelMesh(
+            aspectX: aspectXY.x, aspectY: aspectXY.y, time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy
+        )
+
+        // Resolved before committing to the warp-shader branch: if a texture genuinely fails to
+        // resolve (shouldn't happen — MilkdropShaderTranslator already validated every reference
+        // before this shader compiled at all), fall through to the default paths below rather than
+        // issue a draw call with a missing binding Metal would render as undefined.
+        let resolvedWarpTextures: [(MilkdropShaderTranslator.TextureBinding, MTLTexture)]? = compiledWarp.flatMap { warp in
+            let resolved = warp.textures.map { ($0, metalTexture(for: $0, mainTexture: sourceTexture)) }
+            guard resolved.allSatisfy({ $0.1 != nil }) else { return nil }
+            return resolved.map { ($0.0, $0.1!) }
+        }
+
+        if let compiledWarp, let resolvedWarpTextures {
+            var meshVertices = meshVerticesFromScript ?? MilkdropPerPixelMeshRuntime.trivialVertices(
+                aspectX: aspectXY.x, aspectY: aspectXY.y,
+                zoom: zoom, zoomExp: zoomExponent, rot: rot, warp: warpAmount,
+                cx: cx, cy: cy, dx: dx, dy: dy, sx: sx, sy: sy
+            )
+            if let meshVertexBuffer = transientBuffers.buffer(for: meshVertices, device: device) {
+                encoder.setRenderPipelineState(compiledWarp.pipelineState)
+                encoder.setVertexBuffer(meshVertexBuffer, offset: 0, index: 0)
+                encoder.setVertexBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 1)
+                encoder.setVertexBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 2)
+                encoder.setVertexBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
+                encoder.setVertexBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 4)
+                encoder.setVertexBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 5)
+                var warpUniforms = buildDynamicShaderUniforms(
+                    time: time, frame: frameCounter, energy: energy, randPreset: compiledWarp.randPreset, pixelSize: pixelSize,
+                    aspect: aspectXY, invAspect: invAspectXY
+                )
+                encoder.setFragmentBytes(&warpUniforms, length: MemoryLayout<Float>.stride * warpUniforms.count, index: 0)
+                for (i, (binding, texture)) in resolvedWarpTextures.enumerated() {
+                    encoder.setFragmentTexture(texture, index: i)
+                    encoder.setFragmentSamplerState(samplerState(for: binding), index: i)
+                }
+                encoder.drawIndexedPrimitives(
+                    type: .triangle, indexCount: MilkdropPerPixelMeshRuntime.sharedIndices.count,
+                    indexType: .uint16, indexBuffer: meshIndexBuffer, indexBufferOffset: 0
+                )
+            }
+        } else if let meshVerticesFromScript, !meshVerticesFromScript.isEmpty,
+           let meshVertexBuffer = transientBuffers.buffer(for: meshVerticesFromScript, device: device)
+        {
+            encoder.setRenderPipelineState(feedbackMeshPipeline)
+            encoder.setFragmentTexture(sourceTexture, index: 0)
+            encoder.setVertexBuffer(meshVertexBuffer, offset: 0, index: 0)
+            encoder.setVertexBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 1)
+            encoder.setVertexBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 2)
+            encoder.setVertexBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 3)
+            encoder.setVertexBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 4)
+            encoder.setVertexBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 5)
+            encoder.setFragmentBytes(&decay, length: MemoryLayout<Float>.stride, index: 0)
+            encoder.drawIndexedPrimitives(
+                type: .triangle, indexCount: MilkdropPerPixelMeshRuntime.sharedIndices.count,
+                indexType: .uint16, indexBuffer: meshIndexBuffer, indexBufferOffset: 0
+            )
+        } else {
+            encoder.setRenderPipelineState(feedbackPipeline)
+            encoder.setFragmentTexture(sourceTexture, index: 0)
+            encoder.setFragmentBytes(&zoom, length: MemoryLayout<Float>.stride, index: 0)
+            encoder.setFragmentBytes(&zoomExponent, length: MemoryLayout<Float>.stride, index: 1)
+            encoder.setFragmentBytes(&rot, length: MemoryLayout<Float>.stride, index: 2)
+            encoder.setFragmentBytes(&warpAmount, length: MemoryLayout<Float>.stride, index: 3)
+            encoder.setFragmentBytes(&cx, length: MemoryLayout<Float>.stride, index: 4)
+            encoder.setFragmentBytes(&cy, length: MemoryLayout<Float>.stride, index: 5)
+            encoder.setFragmentBytes(&dx, length: MemoryLayout<Float>.stride, index: 6)
+            encoder.setFragmentBytes(&dy, length: MemoryLayout<Float>.stride, index: 7)
+            encoder.setFragmentBytes(&sx, length: MemoryLayout<Float>.stride, index: 8)
+            encoder.setFragmentBytes(&sy, length: MemoryLayout<Float>.stride, index: 9)
+            encoder.setFragmentBytes(&decay, length: MemoryLayout<Float>.stride, index: 10)
+            encoder.setFragmentBytes(&warpTime, length: MemoryLayout<Float>.stride, index: 11)
+            encoder.setFragmentBytes(&warpScaleInverse, length: MemoryLayout<Float>.stride, index: 12)
+            encoder.setFragmentBytes(&warpFactors, length: MemoryLayout<SIMD4<Float>>.stride, index: 13)
+            encoder.setFragmentBytes(&aspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 14)
+            encoder.setFragmentBytes(&invAspectXY, length: MemoryLayout<SIMD2<Float>>.stride, index: 15)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
 
         encoder.setRenderPipelineState(solidPipeline)
         var viewport = SIMD2<Float>(Float(pixelSize.width), Float(pixelSize.height))
@@ -573,7 +916,7 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
 
         if model.mode == .spectrumBars {
             let verts = Self.barVertices(bands: audioEngine.levels, pixelSize: pixelSize)
-            Self.draw(verts, as: .triangle, on: encoder, device: device)
+            draw(verts, as: .triangle, on: encoder, device: device)
         } else {
             let halfWidth = lineWidthPx * 0.5
             var segments: [[WavePoint]] = []
@@ -585,25 +928,80 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             }
             for segment in segments {
                 let verts = Self.lineStripVertices(points: segment, pixelSize: pixelSize, halfWidth: halfWidth, isLoop: isLoop)
-                Self.draw(verts, as: .triangleStrip, on: encoder, device: device)
+                draw(verts, as: .triangleStrip, on: encoder, device: device)
             }
         }
 
         for shapeInstances in shapeInstancesByShape {
             for instance in shapeInstances {
-                let pipeline = instance.additive ? shapeAdditivePipeline : shapeAlphaPipeline
-                encoder.setRenderPipelineState(pipeline)
-                let fillVerts = Self.shapeFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
-                Self.drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+                if instance.textured {
+                    // Real Milkdrop textures a shape from its own `image=` key or, since that's
+                    // effectively unused across the real corpus (see TO DO.md's Phase 2 notes),
+                    // from the "main texture" — the same last-frame content `sourceTexture` already
+                    // is here (this pass reads it as the feedback source, exactly the role
+                    // CustomShape.cpp's mainTexture plays upstream).
+                    let pipeline = instance.additive ? shapeTexturedAdditivePipeline : shapeTexturedAlphaPipeline
+                    encoder.setRenderPipelineState(pipeline)
+                    encoder.setFragmentTexture(sourceTexture, index: 0)
+                    encoder.setFragmentSamplerState(samplerLinearRepeat, index: 0)
+                    let fillVerts = Self.shapeTexturedFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
+                    drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+                } else {
+                    let pipeline = instance.additive ? shapeAdditivePipeline : shapeAlphaPipeline
+                    encoder.setRenderPipelineState(pipeline)
+                    let fillVerts = Self.shapeFillVertices(instance, pixelSize: pixelSize, aspect: aspect)
+                    drawShape(fillVerts, as: .triangle, on: encoder, device: device)
+                }
 
                 if instance.borderA > 0 {
+                    // The border always draws through the plain (untextured) shape pipeline, even
+                    // when the fill above was textured — CustomShape.cpp's outline pass always
+                    // binds untexturedShader regardless of m_textured. Re-bind explicitly rather
+                    // than relying on whatever pipeline the fill above happened to leave current:
+                    // the textured fill's pipeline expects ShapeTexturedVertex's stride, and
+                    // shapeOutlineVertices below produces plain ShapeVertex data.
+                    encoder.setRenderPipelineState(instance.additive ? shapeAdditivePipeline : shapeAlphaPipeline)
                     let outlineHalfWidth = Float(instance.thickOutline ? 3.0 : 1.5) * Float(backingScale)
                     let outlineVerts = Self.shapeOutlineVertices(
                         instance, pixelSize: pixelSize, aspect: aspect, halfWidth: outlineHalfWidth
                     )
-                    Self.drawShape(outlineVerts, as: .triangleStrip, on: encoder, device: device)
+                    drawShape(outlineVerts, as: .triangleStrip, on: encoder, device: device)
                 }
             }
+        }
+
+        // Custom waveforms (wavecode_N_* — see MilkdropCustomWaveform.swift), drawn on top of the
+        // shapes and built-in waveform, reusing the shape pipelines (per-vertex color, same
+        // additive/alpha blend choice) since a custom waveform is likewise a colored line/dot trace.
+        for waveData in customWavePointsByWave {
+            let minPoints = waveData.useDots ? 1 : 2
+            guard waveData.points.count >= minPoints else { continue }
+            let pipeline = waveData.additive ? shapeAdditivePipeline : shapeAlphaPipeline
+            encoder.setRenderPipelineState(pipeline)
+            if waveData.useDots {
+                let dotHalfSize = Float(waveData.drawThick ? 2.5 : 1.5) * Float(backingScale)
+                let verts = Self.customWaveformDotVertices(waveData.points, pixelSize: pixelSize, halfSize: dotHalfSize)
+                drawShape(verts, as: .triangle, on: encoder, device: device)
+            } else {
+                let halfWidth = Float(waveData.drawThick ? 2.0 : 1.0) * Float(backingScale)
+                let verts = Self.customWaveformRibbonVertices(waveData.points, pixelSize: pixelSize, halfWidth: halfWidth)
+                drawShape(verts, as: .triangleStrip, on: encoder, device: device)
+            }
+        }
+
+        // Darken-center (DarkenCenter.cpp) + border (Border.cpp), drawn last in this pass — same
+        // ordering as real Milkdrop's per-frame draw loop (shapes/waveforms, then darken-center,
+        // then border, all before the final composite pass). Both are always-alpha-blend, never
+        // additive, matching upstream's own fixed blend mode for these two.
+        if model.borderParams.darkenCenter > 0 {
+            encoder.setRenderPipelineState(shapeAlphaPipeline)
+            let verts = Self.darkenCenterVertices(aspect: aspectXY.y, pixelSize: pixelSize)
+            drawShape(verts, as: .triangle, on: encoder, device: device)
+        }
+        let borderVerts = Self.borderVertices(model.borderParams, pixelSize: pixelSize)
+        if !borderVerts.isEmpty {
+            encoder.setRenderPipelineState(shapeAlphaPipeline)
+            drawShape(borderVerts, as: .triangle, on: encoder, device: device)
         }
 
         encoder.endEncoding()
@@ -617,29 +1015,11 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
             compositePass.colorAttachments[0].storeAction = .store
 
             if let compositeEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: compositePass) {
-                var uniforms = [Float](repeating: 0, count: Self.totalUniformCount)
-                uniforms[0] = Float(time)
-                uniforms[1] = Float(beat.lastFPS)
-                uniforms[2] = Float(frameCounter)
-                uniforms[3] = 0 // progress: no preset-to-preset blend/fade in Prism yet.
-                uniforms[4] = energy.bass
-                uniforms[5] = energy.mid
-                uniforms[6] = energy.treb
-                uniforms[7] = energy.bassAtt
-                uniforms[8] = energy.midAtt
-                uniforms[9] = energy.trebAtt
-                uniforms[10] = compiledComposite.randPreset.x
-                uniforms[11] = compiledComposite.randPreset.y
-                uniforms[12] = compiledComposite.randPreset.z
-                uniforms[13] = compiledComposite.randPreset.w
-                uniforms[14] = .random(in: 0...1) // rand_frame: fresh every frame, unlike rand_preset.
-                uniforms[15] = .random(in: 0...1)
-                uniforms[16] = .random(in: 0...1)
-                uniforms[17] = .random(in: 0...1)
-                uniforms[18] = Float(pixelSize.width)
-                uniforms[19] = Float(pixelSize.height)
-                uniforms[20] = pixelSize.width > 0 ? 1 / Float(pixelSize.width) : 0
-                uniforms[21] = pixelSize.height > 0 ? 1 / Float(pixelSize.height) : 0
+                var uniforms = buildDynamicShaderUniforms(
+                    time: time, frame: frameCounter, energy: energy,
+                    randPreset: compiledComposite.randPreset, pixelSize: pixelSize,
+                    aspect: aspectXY, invAspect: invAspectXY
+                )
 
                 // A texture this preset needed (e.g. a noise texture) failing to resolve here would
                 // be a Prism bug, not a bad preset — MilkdropShaderTranslator already rejected
@@ -669,6 +1049,49 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
                     compositeEncoder.endEncoding()
                 }
             }
+        } else if model.usesOldStyleFinalComposite, let scratchTexture {
+            // Real Milkdrop's "old-school" (no comp_N= shader at all) final-composite path — see
+            // Shaders.metal's milkdrop_old_style_final_composite and MilkdropPresetFile.swift's
+            // usesOldStyleFinalComposite. Mutually exclusive with compiledComposite above (a preset
+            // is either modern-shader-based or old-style, never both), so this can't double-apply.
+            let oldStylePass = MTLRenderPassDescriptor()
+            oldStylePass.colorAttachments[0].texture = scratchTexture
+            oldStylePass.colorAttachments[0].loadAction = .dontCare
+            oldStylePass.colorAttachments[0].storeAction = .store
+
+            if let oldStyleEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: oldStylePass) {
+                let params = model.oldStyleCompositeParams
+                var timeF = Float(time)
+                var hueOffsets = model.hueRandomOffsets
+                var echoZoom = params.videoEchoZoom != 0 ? params.videoEchoZoom : 1
+                var echoAlpha = params.videoEchoAlpha
+                var flipUV = SIMD2<Float>(
+                    Int(params.videoEchoOrientation) % 2 == 1 ? 1 : 0,
+                    Int(params.videoEchoOrientation) >= 2 ? 1 : 0
+                )
+                var gammaAdj = params.gammaAdj
+                var filterFlags = SIMD4<Float>(params.brighten, params.darken, params.solarize, params.invert)
+
+                oldStyleEncoder.setRenderPipelineState(oldStyleCompositePipeline)
+                oldStyleEncoder.setFragmentTexture(destTexture, index: 0)
+                oldStyleEncoder.setFragmentBytes(&timeF, length: MemoryLayout<Float>.stride, index: 0)
+                oldStyleEncoder.setFragmentBytes(&hueOffsets, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
+                oldStyleEncoder.setFragmentBytes(&echoZoom, length: MemoryLayout<Float>.stride, index: 2)
+                oldStyleEncoder.setFragmentBytes(&echoAlpha, length: MemoryLayout<Float>.stride, index: 3)
+                oldStyleEncoder.setFragmentBytes(&flipUV, length: MemoryLayout<SIMD2<Float>>.stride, index: 4)
+                oldStyleEncoder.setFragmentBytes(&gammaAdj, length: MemoryLayout<Float>.stride, index: 5)
+                oldStyleEncoder.setFragmentBytes(&filterFlags, length: MemoryLayout<SIMD4<Float>>.stride, index: 6)
+                oldStyleEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+                oldStyleEncoder.endEncoding()
+
+                // Same reasoning as the compiledComposite branch above: destTexture must hold the
+                // true final frame afterward, both for presenting below and for next frame's
+                // feedback pass to read as "previous frame".
+                if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                    blitEncoder.copy(from: scratchTexture, to: destTexture)
+                    blitEncoder.endEncoding()
+                }
+            }
         }
 
         // MARK: Pass 2 — present destTexture to the drawable
@@ -688,12 +1111,70 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         sourceIndex = 1 - sourceIndex
     }
 
+    // MARK: - Transient vertex buffer pool (waveform/shape/custom-waveform geometry, rebuilt every frame)
+
+    /// Replaces a fresh `device.makeBuffer` call on *every single draw call, every frame* (a real,
+    /// measured cost — easily 5-20+ allocations/frame for a preset with several shapes and custom
+    /// waveforms) with reused, grow-only-when-needed buffers — the same pattern projectM's own
+    /// Renderer/VertexBuffer.cpp uses (`glBufferSubData` when the size hasn't changed, `glBufferData`
+    /// only when it has — see `VertexBuffer<VT>::Update()`), just via a direct `.contents()` memcpy
+    /// instead of a driver call, since Metal's `.storageModeShared` buffers are already CPU-writable.
+    ///
+    /// Triple-buffered (3 rotating generations, indexed by `frameCounter % 3`), not just one reused
+    /// buffer per draw-call slot: a `.storageModeShared` `MTLBuffer` is plain shared memory with no
+    /// automatic protection against the CPU overwriting a buffer the GPU hasn't finished reading yet
+    /// from an *earlier* frame's draw call — rotating across 3 generations gives the GPU two frames'
+    /// worth of headroom before the same underlying buffer is reused, the standard "triple buffering"
+    /// hazard-avoidance pattern for exactly this situation. Within one frame, each draw call still
+    /// gets its own distinct buffer (never aliased with another draw call's data, which a single
+    /// shared "current" buffer could not guarantee) via a per-frame, per-generation slot counter.
+    private final class TransientBufferPool {
+        private final class Slot {
+            var buffer: MTLBuffer?
+            var capacity = 0
+        }
+        private var generations: [[Slot]] = [[], [], []]
+        private var generationIndex = 0
+        private var nextSlotIndex = 0
+
+        /// Call once at the top of each frame, before any draw calls that will request a buffer.
+        func beginFrame(generation: Int) {
+            generationIndex = generation % generations.count
+            nextSlotIndex = 0
+        }
+
+        /// Copies `values` into the next available buffer for this frame's generation, growing that
+        /// slot only if it isn't already big enough (mirrors `VertexBuffer::Update`'s size check).
+        /// `nil` for empty input, matching the draw helpers' own empty-input guards.
+        func buffer<T>(for values: [T], device: MTLDevice) -> MTLBuffer? {
+            guard !values.isEmpty else { return nil }
+            if nextSlotIndex >= generations[generationIndex].count {
+                generations[generationIndex].append(Slot())
+            }
+            let slot = generations[generationIndex][nextSlotIndex]
+            nextSlotIndex += 1
+
+            let byteCount = MemoryLayout<T>.stride * values.count
+            if slot.buffer == nil || slot.capacity < byteCount {
+                slot.buffer = device.makeBuffer(length: byteCount, options: .storageModeShared)
+                slot.capacity = byteCount
+            }
+            guard let buffer = slot.buffer else { return nil }
+            values.withUnsafeBytes { raw in
+                buffer.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count)
+            }
+            return buffer
+        }
+    }
+
+    private let transientBuffers = TransientBufferPool()
+
     // MARK: - CPU-side geometry building (cheap: a few hundred vertices, not a bottleneck)
 
-    private static func draw(_ vertices: [SIMD2<Float>], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
+    private func draw(_ vertices: [SIMD2<Float>], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
         let minCount = primitive == .triangleStrip ? 2 : 3
         guard vertices.count >= minCount,
-              let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<SIMD2<Float>>.stride * vertices.count, options: .storageModeShared)
+              let buffer = transientBuffers.buffer(for: vertices, device: device)
         else { return }
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
         encoder.drawPrimitives(type: primitive, vertexStart: 0, vertexCount: vertices.count)
@@ -773,10 +1254,27 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         var color: SIMD4<Float>
     }
 
-    private static func drawShape(_ vertices: [ShapeVertex], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
+    /// CPU-side mirror of Shaders.metal's `ShapeTexturedVertex` — same layout as `ShapeVertex` plus
+    /// a UV pair.
+    private struct ShapeTexturedVertex {
+        var position: SIMD2<Float>
+        var color: SIMD4<Float>
+        var uv: SIMD2<Float>
+    }
+
+    private func drawShape(_ vertices: [ShapeVertex], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
         let minCount = primitive == .triangleStrip ? 2 : 3
         guard vertices.count >= minCount,
-              let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<ShapeVertex>.stride * vertices.count, options: .storageModeShared)
+              let buffer = transientBuffers.buffer(for: vertices, device: device)
+        else { return }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        encoder.drawPrimitives(type: primitive, vertexStart: 0, vertexCount: vertices.count)
+    }
+
+    private func drawShape(_ vertices: [ShapeTexturedVertex], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
+        let minCount = primitive == .triangleStrip ? 2 : 3
+        guard vertices.count >= minCount,
+              let buffer = transientBuffers.buffer(for: vertices, device: device)
         else { return }
         encoder.setVertexBuffer(buffer, offset: 0, index: 0)
         encoder.drawPrimitives(type: primitive, vertexStart: 0, vertexCount: vertices.count)
@@ -826,6 +1324,51 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         return verts
     }
 
+    /// Textured counterpart of `shapeFillVertices`: same center/rim geometry and per-vertex color
+    /// gradient, plus a UV per vertex — an exact port of CustomShape.cpp:180-193's UV math. The
+    /// fill's own polygon angle (`ang`) drives vertex *position*; the UV's angle uses the shape's
+    /// independent `tex_ang`/`tex_zoom`, so the texture can be rotated/scaled across the polygon
+    /// without moving the polygon itself. Note the vertical flip (`1 - (...)`) — required because
+    /// Metal's UV origin convention is flipped relative to Milkdrop's, same as upstream's own
+    /// comment on this exact line.
+    private static func shapeTexturedFillVertices(_ instance: MilkdropShapeInstance, pixelSize: CGSize, aspect: Float) -> [ShapeTexturedVertex] {
+        let (centerNDC, rim) = shapeRimPointsNDC(instance, aspect: aspect)
+        guard rim.count >= 3, instance.sides >= 3 else { return [] }
+
+        func toPixel(_ ndc: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(ndc.x * 0.5 * Float(pixelSize.width), ndc.y * 0.5 * Float(pixelSize.height))
+        }
+
+        let pi: Float = .pi
+        var rimUVs: [SIMD2<Float>] = []
+        rimUVs.reserveCapacity(instance.sides)
+        for i in 0..<instance.sides {
+            let cornerProgress = Float(i) / Float(instance.sides)
+            let angle = cornerProgress * pi * 2 + instance.texAng + pi * 0.25
+            rimUVs.append(SIMD2<Float>(
+                0.5 + 0.5 * cosf(angle) / instance.texZoom * aspect,
+                1 - (0.5 - 0.5 * sinf(angle) / instance.texZoom)
+            ))
+        }
+
+        let center = ShapeTexturedVertex(
+            position: toPixel(centerNDC), color: SIMD4<Float>(instance.r, instance.g, instance.b, instance.a),
+            uv: SIMD2<Float>(0.5, 0.5)
+        )
+        let rimColor = SIMD4<Float>(instance.r2, instance.g2, instance.b2, instance.a2)
+        let rimPixels = rim.map(toPixel)
+
+        var verts: [ShapeTexturedVertex] = []
+        verts.reserveCapacity(rim.count * 3)
+        for i in 0..<rim.count {
+            let next = (i + 1) % rim.count
+            verts.append(center)
+            verts.append(ShapeTexturedVertex(position: rimPixels[i], color: rimColor, uv: rimUVs[i]))
+            verts.append(ShapeTexturedVertex(position: rimPixels[next], color: rimColor, uv: rimUVs[next]))
+        }
+        return verts
+    }
+
     /// Outline ribbon around the same rim used above, reusing `lineStripVertices`' ribbon-extrusion
     /// math (identical to how `.circular` wave mode closes its loop) instead of duplicating it,
     /// then tinting every vertex with the shape's uniform border color to fit the shape pipeline's
@@ -841,5 +1384,130 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         let borderColor = SIMD4<Float>(instance.borderR, instance.borderG, instance.borderB, instance.borderA)
         return Self.lineStripVertices(points: points, pixelSize: pixelSize, halfWidth: halfWidth, isLoop: true)
             .map { ShapeVertex(position: $0, color: borderColor) }
+    }
+
+    // MARK: - Border / darken-center (Border.cpp / DarkenCenter.cpp — no Prism equivalent before this)
+
+    /// Exact port of Border.cpp's two nested-square-outline meshes: an outer ring flush with the
+    /// screen edge and an inner ring just inside it, each a flat (not gradient) color, each only
+    /// drawn if its own alpha exceeds Milkdrop's own `0.001` visibility threshold. Unlike the shape
+    /// polygons above, upstream applies no aspect correction to these squares at all (plain ±1 NDC
+    /// coordinates) — ported faithfully, not "fixed", since a border is meant to hug the actual
+    /// screen edges regardless of aspect ratio. Builds both rings' triangles as one array (rather
+    /// than two separate draw calls) since they share a pipeline/blend mode and neither depends on
+    /// the other's vertex count.
+    private static func borderVertices(_ params: MilkdropBorderParams, pixelSize: CGSize) -> [ShapeVertex] {
+        func toPixel(_ ndc: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(ndc.x * 0.5 * Float(pixelSize.width), ndc.y * 0.5 * Float(pixelSize.height))
+        }
+
+        // Same 8-vertex/8-triangle "picture frame" ring topology Border.cpp builds once and reuses
+        // for both the outer and inner border (only the radii and color differ between the two).
+        func ringTriangles(outerRadius: Float, innerRadius: Float, color: SIMD4<Float>) -> [ShapeVertex] {
+            let corners: [SIMD2<Float>] = [
+                SIMD2(outerRadius, outerRadius), SIMD2(outerRadius, -outerRadius),
+                SIMD2(-outerRadius, outerRadius), SIMD2(-outerRadius, -outerRadius),
+                SIMD2(innerRadius, innerRadius), SIMD2(innerRadius, -innerRadius),
+                SIMD2(-innerRadius, innerRadius), SIMD2(-innerRadius, -innerRadius),
+            ].map(toPixel)
+            let indices = [0, 1, 4, 1, 4, 5, 2, 3, 6, 3, 7, 6, 2, 0, 6, 0, 4, 6, 3, 7, 5, 1, 3, 5]
+            return indices.map { ShapeVertex(position: corners[$0], color: color) }
+        }
+
+        var verts: [ShapeVertex] = []
+        if params.outerA > 0.001 {
+            verts += ringTriangles(
+                outerRadius: 1.0, innerRadius: 1.0 - params.outerSize,
+                color: SIMD4<Float>(params.outerR, params.outerG, params.outerB, params.outerA)
+            )
+        }
+        if params.innerA > 0.001 {
+            verts += ringTriangles(
+                outerRadius: 1.0 - params.outerSize, innerRadius: 1.0 - params.outerSize - params.innerSize,
+                color: SIMD4<Float>(params.innerR, params.innerG, params.innerB, params.innerA)
+            )
+        }
+        return verts
+    }
+
+    /// Exact port of DarkenCenter.cpp's fixed-size diamond: a center vertex at alpha `3/32`
+    /// fading to fully transparent at 4 points `halfSize` away (aspect-corrected on X only, same
+    /// convention as the shape/waveform code above), all black. Drawn as 4 explicit triangles
+    /// (Metal has no native triangle-fan primitive) rather than the fan connectivity upstream uses.
+    private static func darkenCenterVertices(aspect: Float, pixelSize: CGSize) -> [ShapeVertex] {
+        func toPixel(_ ndc: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(ndc.x * 0.5 * Float(pixelSize.width), ndc.y * 0.5 * Float(pixelSize.height))
+        }
+        let halfSize: Float = 0.05
+        let center = ShapeVertex(position: toPixel(.zero), color: SIMD4<Float>(0, 0, 0, 3.0 / 32.0))
+        let rim: [SIMD2<Float>] = [
+            SIMD2(-halfSize * aspect, 0), SIMD2(0, -halfSize), SIMD2(halfSize * aspect, 0), SIMD2(0, halfSize),
+        ].map(toPixel)
+        let rimColor = SIMD4<Float>(0, 0, 0, 0)
+
+        var verts: [ShapeVertex] = []
+        verts.reserveCapacity(4 * 3)
+        for i in 0..<4 {
+            let next = rim[(i + 1) % 4]
+            verts.append(center)
+            verts.append(ShapeVertex(position: rim[i], color: rimColor))
+            verts.append(ShapeVertex(position: next, color: rimColor))
+        }
+        return verts
+    }
+
+    // MARK: - Custom waveform geometry (wavecode_N_* — see MilkdropCustomWaveform.swift)
+
+    /// Ribbon extrusion for a custom waveform's line-strip trace — same normal-based two-
+    /// vertices-per-point technique as `lineStripVertices`, but carrying each point's own color
+    /// (a custom waveform's per-point script can set r/g/b/a independently at every vertex, unlike
+    /// the built-in waveform's single flat color) instead of mapping to one uniform color
+    /// afterward like `shapeOutlineVertices` does.
+    private static func customWaveformRibbonVertices(_ points: [MilkdropCustomWaveformPoint], pixelSize: CGSize, halfWidth: Float) -> [ShapeVertex] {
+        guard points.count > 1 else { return [] }
+        let n = points.count
+        func toPixel(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(p.x * 0.5 * Float(pixelSize.width), p.y * 0.5 * Float(pixelSize.height))
+        }
+        var verts: [ShapeVertex] = []
+        verts.reserveCapacity(n * 2)
+        for i in 0..<n {
+            let p = toPixel(points[i].position)
+            let a = toPixel(points[max(0, i - 1)].position)
+            let b = toPixel(points[min(n - 1, i + 1)].position)
+            var tangent = b - a
+            let len = simd_length(tangent)
+            tangent = len > 0.0001 ? (tangent / len) : SIMD2<Float>(1, 0)
+            let normal = SIMD2<Float>(-tangent.y, tangent.x)
+            verts.append(ShapeVertex(position: p + normal * halfWidth, color: points[i].color))
+            verts.append(ShapeVertex(position: p - normal * halfWidth, color: points[i].color))
+        }
+        return verts
+    }
+
+    /// Small filled square per point (two triangles), for `bUseDots` custom waveforms — Milkdrop's
+    /// own dot mode draws GL_POINTS with a settable point size; a tiny quad is the closest
+    /// equivalent in Metal without a dedicated point-sprite pipeline.
+    private static func customWaveformDotVertices(_ points: [MilkdropCustomWaveformPoint], pixelSize: CGSize, halfSize: Float) -> [ShapeVertex] {
+        guard !points.isEmpty else { return [] }
+        func toPixel(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(p.x * 0.5 * Float(pixelSize.width), p.y * 0.5 * Float(pixelSize.height))
+        }
+        var verts: [ShapeVertex] = []
+        verts.reserveCapacity(points.count * 6)
+        for point in points {
+            let center = toPixel(point.position)
+            let corners = [
+                center + SIMD2(-halfSize, -halfSize), center + SIMD2(halfSize, -halfSize),
+                center + SIMD2(-halfSize, halfSize), center + SIMD2(halfSize, halfSize),
+            ]
+            verts.append(ShapeVertex(position: corners[0], color: point.color))
+            verts.append(ShapeVertex(position: corners[1], color: point.color))
+            verts.append(ShapeVertex(position: corners[2], color: point.color))
+            verts.append(ShapeVertex(position: corners[1], color: point.color))
+            verts.append(ShapeVertex(position: corners[3], color: point.color))
+            verts.append(ShapeVertex(position: corners[2], color: point.color))
+        }
+        return verts
     }
 }

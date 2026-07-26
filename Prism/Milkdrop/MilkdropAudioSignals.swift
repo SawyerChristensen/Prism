@@ -67,6 +67,10 @@ final class MilkdropSignalAnalyzer {
     private var imagBuf: [Float]
     private var magBuf: [Float]
 
+    /// Raw FFT magnitude spectrum, 512 bins — read by custom waveforms in spectrum mode (see
+    /// MilkdropCustomWaveform.swift). Empty until the first `process()` call.
+    private(set) var lastMagnitudeSpectrum: [Float] = []
+
     init() {
         self.fftSize = 1 << Int(log2n)
         self.fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
@@ -128,6 +132,14 @@ final class MilkdropSignalAnalyzer {
                 vDSP_zvabs(&split, 1, &magBuf, 1, vDSP_Length(fftSize / 2))
             }
         }
+
+        // A copy (not a reference to the reused scratch buffer) — read by custom waveforms in
+        // spectrum mode (see MilkdropCustomWaveform.swift). `fftSize/2` (512) happens to match
+        // Milkdrop's own `Audio::SpectrumSamples` exactly, so no resampling is needed; the L/R
+        // split real Milkdrop keeps for spectrum data doesn't exist here (this analyzer only ever
+        // computes a single mono-downmixed FFT for bass/mid/treb) — both channels read the same
+        // array, a documented approximation rather than a true stereo spectrum.
+        lastMagnitudeSpectrum = magBuf
 
         let n = magBuf.count
         let nyquist = sampleRate / 2.0

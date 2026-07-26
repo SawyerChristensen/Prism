@@ -79,11 +79,12 @@ struct MilkdropShaderTranslatorTests {
         #expect(volumeTexture.wrap == .repeatWrap)
     }
 
-    @Test func unrecognizedCustomSamplerFailsTranslation() {
+    @Test func unrecognizedCustomSamplerResolvesToACustomResourceInsteadOfFailing() throws {
         // "clouds" isn't main or a standard noise texture — verbatim pattern from a real preset
-        // (`sampler_fw_clouds`) that this port intentionally doesn't support (see this file's
-        // header: the survey found custom `image=`-style textures essentially unused in practice,
-        // 0/9,795, so this is a deliberate scope cut, not an oversight).
+        // (`sampler_fw_clouds`). Used to fail translation outright; now resolves to `.custom`,
+        // looked up against a preset pack's own Textures/ folder at draw time instead (see
+        // MilkdropCustomTextureManager.swift) — a preset pack missing this one file shouldn't lose
+        // the shader's other effects too.
         let source = """
         sampler sampler_fw_clouds;
         shader_body
@@ -91,7 +92,11 @@ struct MilkdropShaderTranslatorTests {
             ret = tex2D(sampler_fw_clouds, uv).xyz;
         }
         """
-        #expect(MilkdropShaderTranslator.translate(source) == nil)
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.textures.map(\.declaredName) == ["sampler_fw_clouds"])
+        #expect(result.textures[0].resource == .custom("clouds"))
+        #expect(result.textures[0].filter == .linear) // fw_ -> linear + repeat
+        #expect(result.textures[0].wrap == .repeatWrap)
     }
 
     @Test func blurHelperFunctionIsNotATextureCallAndDoesntBlockTranslationByItself() {
@@ -180,5 +185,102 @@ struct MilkdropShaderTranslatorTests {
         #expect(result.body.contains("milkdrop_mul(float2x2(1,0,0,1), uv)"))
         #expect(result.body.contains("const float k"))
         #expect(!result.body.contains("static"))
+    }
+
+    // MARK: - Fixes from the 7/25 corpus-scale warp-shader compile measurement (10.5% -> much
+    // higher pass rate; see TO DO.md's "Compile & run warp_N= HLSL shaders" entry for the numbers)
+
+    @Test func implicitFloat4ToFloat3NarrowingGetsAnExplicitSwizzle() throws {
+        // HLSL implicitly truncates tex2D's float4 return when assigning into a float3 lvalue;
+        // MSL has no such implicit narrowing conversion. Both real shapes seen in the corpus.
+        let source = """
+        shader_body
+        {
+            float3 pre = tex2D(sampler_main, uv);
+            ret = tex2D(sampler_main, uv_orig);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).xyz"))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv_orig).xyz"))
+    }
+
+    @Test func explicitSwizzleAfterTexCallIsNotDoubled() throws {
+        // `tex2D(sampler, uv).a` already explicitly swizzles — appending `.xyz` on top would break
+        // it (`.xyz` has no `.a` component), so the fix above must not touch this shape at all.
+        let source = """
+        shader_body
+        {
+            ret.x = tex2D(sampler_main, uv).a;
+            ret.y = tex2D(sampler_main, uv).rgb.r;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).a"))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).rgb.r"))
+        #expect(!result.body.contains(".xyz"))
+    }
+
+    @Test func lowercaseTex2dAndTex3dAreRecognized() throws {
+        // Confirmed against real corpus presets that use lowercase `tex2d`/`tex3d` — a small
+        // fraction of compile failures (6/1384 in the 7/25 measurement), but a free fix once
+        // `matchFunctionCall` compares case-insensitively.
+        let source = """
+        shader_body
+        {
+            ret = tex2d(sampler_main, uv).xyz;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.textures.map(\.declaredName) == ["sampler_main"])
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv)"))
+    }
+
+    @Test func getPixelAndGetBlurAreDiscoveredAsImplicitTexturesAndRewrittenAtTheCallSite() throws {
+        // GetPixel/GetBlur1/GetBlur2/GetBlur3 are real Milkdrop shader helper *functions*, not
+        // tex2D/tex3D calls — measured 7/25 as the single largest cause of warp-shader compile
+        // failures (1016/1384, 73%) before this existed. Rewritten at the call site exactly like
+        // tex2D (NOT left as-is with a separately-declared MSL helper function referencing a
+        // "global" texture — MSL texture/sampler bindings are function *parameters*, not globals,
+        // so a standalone GetBlur1 function has no way to reach a texture bound to a completely
+        // different function's parameter list; confirmed by an actual compile failure — "use of
+        // undeclared identifier" inside the separate helper — before switching to this approach).
+        let source = """
+        shader_body
+        {
+            ret = GetPixel(uv) - GetBlur1(uv) + GetBlur3(uv_orig);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        let names = Set(result.textures.map(\.declaredName))
+        #expect(names.contains(MilkdropShaderTranslator.getPixelTextureName))
+        #expect(names.contains(MilkdropShaderTranslator.getBlurTextureName(1)))
+        #expect(names.contains(MilkdropShaderTranslator.getBlurTextureName(3)))
+        #expect(!names.contains(MilkdropShaderTranslator.getBlurTextureName(2))) // Not referenced.
+        let pixelName = MilkdropShaderTranslator.getPixelTextureName
+        let blur1Name = MilkdropShaderTranslator.getBlurTextureName(1)
+        let blur3Name = MilkdropShaderTranslator.getBlurTextureName(3)
+        #expect(result.body.contains("\(pixelName).sample(\(pixelName)_smp, uv).xyz"))
+        #expect(result.body.contains("\(blur1Name).sample(\(blur1Name)_smp, uv).xyz"))
+        #expect(result.body.contains("\(blur3Name).sample(\(blur3Name)_smp, uv_orig).xyz"))
+        #expect(!result.body.contains("GetPixel(")) // No trace of the original call left.
+    }
+
+    @Test func getBlurResolvesToMainTextureAsADocumentedApproximation() throws {
+        let source = "shader_body\n{\nret = GetBlur2(uv);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        let binding = try #require(result.textures.first { $0.declaredName == MilkdropShaderTranslator.getBlurTextureName(2) })
+        #expect(binding.resource == .blur(2))
+    }
+
+    @Test func getMainIsTreatedIdenticallyToGetPixel() throws {
+        // Confirmed against projectM's PresetShaderHeaderGlsl330.inc: both are literally the same
+        // `#define` (`tex2D(sampler_main,uv).xyz`) upstream, so they should share one texture
+        // binding rather than requesting two identical ones under different names.
+        let source = "shader_body\n{\nret = GetMain(uv) + GetPixel(uv);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.textures.map(\.declaredName) == [MilkdropShaderTranslator.getPixelTextureName])
+        let name = MilkdropShaderTranslator.getPixelTextureName
+        #expect(result.body.contains("\(name).sample(\(name)_smp, uv).xyz + \(name).sample(\(name)_smp, uv).xyz"))
     }
 }

@@ -14,7 +14,9 @@ struct ContentView: View {
     @State private var nowPlaying = NowPlayingManager()
     @State private var permissions = PermissionsManager()
     @State private var visualizerModel = MilkdropVisualizerModel()
+    @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var isPresetImporterPresented = false
+    @State private var isLibraryFolderPickerPresented = false
     // Transient confirmation after "S" saves the current M/T settings for this album (see
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
@@ -29,7 +31,7 @@ struct ContentView: View {
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel)
+            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: loadRandomPreset)
             
             // The album art
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
@@ -93,6 +95,10 @@ struct ContentView: View {
             // ins for future Settings controls; only shown off their defaults so this stays
             // invisible day to day.
             VStack(alignment: .trailing, spacing: 4) {
+                // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
+                // frame by MilkdropMetalRenderer.draw(in:) into visualizerModel.displayFPS.
+                Text("\(Int(visualizerModel.displayFPS.rounded())) FPS")
+                    .monospacedDigit()
                 if showSavedConfirmation {
                     Text("Saved for this album")
                 }
@@ -120,6 +126,17 @@ struct ContentView: View {
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             visualizerModel.loadPreset(from: url)
         }
+        // Folder (not single-file) picker for the preset library random-cycling draws from — see
+        // MilkdropPresetLibrary.swift. Triggered explicitly (L) or implicitly the first time Space/
+        // tap is used before any library folder has been picked yet.
+        .fileImporter(
+            isPresented: $isLibraryFolderPickerPresented,
+            allowedContentTypes: [.folder]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            presetLibrary.setLibraryRoot(url)
+            loadRandomPreset()
+        }
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(
@@ -132,21 +149,25 @@ struct ContentView: View {
             Text(visualizerModel.presetLoadError ?? "")
         }
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
-        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space
-        // cycles the visual mode (same action as tapping the visualizer), F toggles fullscreen.
+        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space jumps
+        // to a random preset from the loaded library (same action as tapping the visualizer),
+        // F toggles fullscreen, L (re)picks the library folder.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
             switch press.characters {
             case " ":
-                visualizerModel.cycleMode()
+                loadRandomPreset()
                 return .handled
             case "f", "F":
                 NSApp.keyWindow?.toggleFullScreen(nil)
                 return .handled
             case "o", "O":
                 isPresetImporterPresented = true
+                return .handled
+            case "l", "L":
+                isLibraryFolderPickerPresented = true
                 return .handled
             case "t", "T":
                 nowPlaying.includesTextOverlay.toggle()
@@ -183,5 +204,20 @@ struct ContentView: View {
             await audioEngine.start()
             PrismDebug.trace("ContentView.task -> audioEngine.start() returned")
         }
+    }
+
+    /// Space/tap's action: jump straight to a random preset from the configured library — no
+    /// preset history/prev-next concept exists yet (see TO DO.md's Phase 4), so every "skip" is an
+    /// independent uniform-random draw from the whole scanned folder, same as pressing it again
+    /// could re-pick the same file. Prompts for a library folder instead, the first time this runs
+    /// with none configured yet — mirrors Phase 4's "first-launch (or Settings-triggered) folder
+    /// picker" decision without needing a separate onboarding flow.
+    private func loadRandomPreset() {
+        guard presetLibrary.isConfigured else {
+            isLibraryFolderPickerPresented = true
+            return
+        }
+        guard let url = presetLibrary.randomPresetURL() else { return }
+        visualizerModel.loadPreset(from: url)
     }
 }

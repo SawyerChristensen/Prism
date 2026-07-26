@@ -171,14 +171,29 @@ enum MilkdropWaveform {
         }
     }
 
+    /// Wraps an out-of-`-1...1` mystery param back into that range via the same fold Milkdrop's
+    /// own DerivativeLine/Circle modes apply (WaveformMath::GetVertices' UsesNormalizedMysteryParam
+    /// branch) — a defensive re-fold for presets that push `wave_mystery` outside its normal range;
+    /// left untouched when it's already in range, matching upstream's own early-out.
+    private static func normalizedMysteryParam(_ raw: Float) -> Float {
+        guard raw < -1 || raw > 1 else { return raw }
+        var v = raw * 0.5 + 0.5
+        v -= floor(v)
+        v = abs(v)
+        return v * 2 - 1
+    }
+
     /// Builds the pre-tessellation vertex list for a given mode, mirroring the per-mode branches
     /// inside DrawWave(). `left`/`right` should already be scaled+smoothed via `smoothed(_:)`.
+    /// `spectrum` is the FFT magnitude spectrum (mono, reused for both channels — see
+    /// MilkdropAudioSignals.swift's lastMagnitudeSpectrum), only read by `.spectrumLine`.
     /// `segmentBreak`, when non-nil, is the index at which the line strip should lift the pen —
     /// mirrors DrawWave()'s nBreak1 (used by .dualLine, where two independent strips share one array).
     static func points(
         mode: MilkdropWaveMode,
         left: [Float],
         right: [Float],
+        spectrum: [Float] = [],
         params: MilkdropWaveformParams,
         time: Double,
         aspect: Float
@@ -367,6 +382,73 @@ enum MilkdropWaveform {
                     y: sin(t) * 2 * sin(angle * 3.14) * aspect / 2.8 + params.waveY
                 )
             }
+            return (pts, nil)
+
+        case .derivativeLine:
+            // Port of DerivativeLine::GenerateVertices: an x/y "script" trace built from R[i+25]
+            // and L[i], with each point pulled toward the linear extrapolation of the previous two
+            // *already-blended* points (a momentum/feedback term, not independent per-sample
+            // smoothing) — this is the one stock mode that needs the mystery param's out-of-range
+            // wraparound (UsesNormalizedMysteryParam), unlike every other mode here. `n` trims the
+            // tail by 25 (rather than centering the window the way upstream's viewport-based
+            // `m_samples` reduction does) to stay in-bounds, matching how .spiral/.spiro/etc.
+            // already handle their own fixed index offsets against Prism's fixed 480-sample buffer.
+            let n = count - 25
+            guard n > 2 else { return ([], nil) }
+            let invN = 1 / Float(n)
+            let mystery = normalizedMysteryParam(params.mysteryParam)
+            let w1 = 0.45 + 0.5 * (mystery * 0.5 + 0.5)
+            let w2 = 1 - w1
+            var pts = [WavePoint](repeating: WavePoint(x: 0, y: 0), count: n)
+            for i in 0..<n {
+                let baseX: Float = -1 + 2 * (Float(i) * invN)
+                var x: Float = baseX + params.waveX + right[i + 25] * 0.44
+                var y: Float = left[i] * 0.47 + params.waveY
+                if i > 1 {
+                    x = x * w2 + w1 * (pts[i - 1].x * 2 - pts[i - 2].x)
+                    y = y * w2 + w1 * (pts[i - 1].y * 2 - pts[i - 2].y)
+                }
+                pts[i] = WavePoint(x: x, y: y)
+            }
+            return (pts, nil)
+
+        case .explosiveHash:
+            // Port of ExplosiveHash::GenerateVertices: an (L,R) sample pair 32 apart combined into
+            // a complex-product-like x0/y0, then rotated by an angle driven by wall-clock time
+            // (not audio) — hence the "explosive" churn even over quiet audio. MaximizeColors()
+            // upstream also dims this mode's alpha heavily (down to ~7-15% depending on screen
+            // size) since its raw magnitude runs much hotter than a normal scope trace; Prism has
+            // no equivalent alpha stage in this file, so that dimming isn't reproduced here.
+            let n = count - 32
+            guard n > 0 else { return ([], nil) }
+            let t = Float(time) * 0.3
+            let cosR = cos(t), sinR = sin(t)
+            let pts = (0..<n).map { i -> WavePoint in
+                let x0 = right[i] * left[i + 32] + left[i] * right[i + 32]
+                let y0 = right[i] * right[i] - left[i + 32] * left[i + 32]
+                return WavePoint(
+                    x: (x0 * cosR - y0 * sinR) * aspect + params.waveX,
+                    y: (x0 * sinR + y0 * cosR) + params.waveY
+                )
+            }
+            return (pts, nil)
+
+        case .spectrumLine:
+            // Port of SpectrumLine::GenerateVertices: the same clipped-line shape as .line/
+            // .wideLine, but each point's perpendicular offset comes from a log-combined pair of
+            // FFT magnitude bins instead of the raw waveform. Real Milkdrop's own header calls this
+            // mode UNFINISHED, so this is a direct port rather than a polished feature. A tiny
+            // floor under the log avoids -infinity on an exactly-silent bin (upstream's unguarded
+            // `logf` doesn't bother, since real hardware noise floors rarely hit exact zero).
+            guard spectrum.count >= 512 else { return ([], nil) }
+            let n = 256
+            var spectrumSamples = [Float](repeating: 0, count: n)
+            for i in 0..<n {
+                let sum = max(spectrum[i * 2] + spectrum[i * 2 + 1], .leastNormalMagnitude)
+                spectrumSamples[i] = 0.1 * log(sum)
+            }
+            let angle: Float = 1.57 * params.mysteryParam
+            let pts = clippedLinePoints(angle: angle, halfExtent: 1, amplitude: 1, waveCenter: params.waveX, samples: spectrumSamples, count: n)
             return (pts, nil)
         }
     }
