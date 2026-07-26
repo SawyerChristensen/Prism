@@ -695,7 +695,7 @@ final class MilkdropMetalRenderer: NSObject {
     /// index order must exactly match `MilkdropPerPixelMeshRuntime.perFrameUniformBuiltinNames`.
     private func buildPerPixelMeshUniforms(
         time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy,
-        aspectX: Float, aspectY: Float, qVars: [Float],
+        aspectX: Float, aspectY: Float, pixelWidth: Float, pixelHeight: Float, qVars: [Float],
         zoom: Float, zoomExp: Float, rot: Float, warp: Float,
         cx: Float, cy: Float, dx: Float, dy: Float, sx: Float, sy: Float
     ) -> [Float] {
@@ -703,7 +703,11 @@ final class MilkdropMetalRenderer: NSObject {
             Float(time), Float(fps), Float(frame),
             energy.bass, energy.mid, energy.treb, energy.bassAtt, energy.midAtt, energy.trebAtt,
             Float(MilkdropPerPixelMeshRuntime.gridSizeX), Float(MilkdropPerPixelMeshRuntime.gridSizeY),
-            aspectX, aspectY, aspectX, aspectY,
+            // pixelsx/pixelsy (real viewport pixel dimensions, PerPixelContext.cpp's
+            // `*pixelsx = viewportSizeX` etc — confirmed against upstream) then aspectx/aspecty
+            // (the actual aspect-ratio-correction values) — these are two genuinely different
+            // built-ins, previously both aliased to aspectX/aspectY here.
+            pixelWidth, pixelHeight, aspectX, aspectY,
             zoom, zoomExp, rot, warp, cx, cy, dx, dy, sx, sy,
         ]
         uniforms.reserveCapacity(uniforms.count + 32)
@@ -886,10 +890,19 @@ final class MilkdropMetalRenderer: NSObject {
                 ? nil : compileWarpShader(source: model.warpShaderSource, vertexFunction: meshVertexFunction)
             compiledWarpGeneration = model.loadGeneration
         }
-        let aspect = pixelSize.width > 0 ? Float(pixelSize.height / pixelSize.width) : 1
+        // Same "only the longer dimension's axis compresses, the other stays 1" convention as
+        // WaveformMath.cpp:62-70 (`m_aspectX`/`m_aspectY`) and this function's own `aspectXY` below
+        // (computed again locally here since `aspectXY` itself isn't in scope yet at this point in
+        // the function — same two formulas, `aspect` here matches `aspectXY.y`, `aspectXForWaveform`
+        // matches `aspectXY.x`) — `aspect`'s old unclamped `height/width` value matched this exactly
+        // in the common landscape case but was wrong (>1, never clamped to 1) in portrait.
+        let waveWidthF = Float(pixelSize.width)
+        let waveHeightF = Float(pixelSize.height)
+        let aspect: Float = waveWidthF > waveHeightF ? waveHeightF / waveWidthF : 1.0
+        let aspectXForWaveform: Float = waveHeightF > waveWidthF ? waveWidthF / waveHeightF : 1.0
         let (rawPoints, rawBreak) = MilkdropWaveform.points(
             mode: model.mode, left: scaledLeft, right: scaledRight, spectrum: magnitudeSpectrum,
-            params: model.params, time: time, aspect: aspect
+            params: model.params, time: time, aspect: aspect, aspectX: aspectXForWaveform
         )
         let isLoop = model.mode.isLoop
         let (tessPoints, tessBreak): ([WavePoint], Int?) = isLoop
@@ -993,7 +1006,9 @@ final class MilkdropMetalRenderer: NSObject {
         // would otherwise run that same CPU sweep for nothing — is only called when this is false.
         let usingGPUPerPixelMesh = compiledPerPixelMeshVertex != nil
         let meshVerticesFromScript = usingGPUPerPixelMesh ? nil : model.updatePerPixelMesh(
-            aspectX: aspectXY.x, aspectY: aspectXY.y, time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
+            aspectX: aspectXY.x, aspectY: aspectXY.y,
+            pixelWidth: Float(pixelSize.width), pixelHeight: Float(pixelSize.height),
+            time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
             qVars: qVars
         )
 
@@ -1018,7 +1033,8 @@ final class MilkdropMetalRenderer: NSObject {
             // index below is shifted by +1 relative to the CPU-mesh branches further down.
             var meshUniforms = buildPerPixelMeshUniforms(
                 time: time, fps: beat.lastFPS, frame: frameCounter, energy: energy,
-                aspectX: aspectXY.x, aspectY: aspectXY.y, qVars: qVars,
+                aspectX: aspectXY.x, aspectY: aspectXY.y,
+                pixelWidth: Float(pixelSize.width), pixelHeight: Float(pixelSize.height), qVars: qVars,
                 zoom: zoom, zoomExp: zoomExponent, rot: rot, warp: warpAmount,
                 cx: cx, cy: cy, dx: dx, dy: dy, sx: sx, sy: sy
             )

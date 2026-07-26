@@ -196,7 +196,14 @@ enum MilkdropWaveform {
         spectrum: [Float] = [],
         params: MilkdropWaveformParams,
         time: Double,
-        aspect: Float
+        aspect: Float,
+        /// The *other* axis's aspect multiplier (upstream's `m_aspectX` — WaveformMath.cpp:69,
+        /// always 1.0 unless the viewport is taller than wide) — only `.explosiveHash` below needs
+        /// it (every other mode here only ever scales X by `aspect`/upstream's `m_aspectY`, matching
+        /// upstream's own per-mode formulas, confirmed for those against the real corpus 7/26).
+        /// Defaults to 1.0 (a no-op, matching the common landscape case) so this doesn't ripple
+        /// into every other call site.
+        aspectX: Float = 1.0
     ) -> (points: [WavePoint], segmentBreak: Int?) {
         let count = min(left.count, right.count)
         guard count > 32 else { return ([], nil) }
@@ -415,10 +422,17 @@ enum MilkdropWaveform {
         case .explosiveHash:
             // Port of ExplosiveHash::GenerateVertices: an (L,R) sample pair 32 apart combined into
             // a complex-product-like x0/y0, then rotated by an angle driven by wall-clock time
-            // (not audio) — hence the "explosive" churn even over quiet audio. MaximizeColors()
-            // upstream also dims this mode's alpha heavily (down to ~7-15% depending on screen
-            // size) since its raw magnitude runs much hotter than a normal scope trace; Prism has
-            // no equivalent alpha stage in this file, so that dimming isn't reproduced here.
+            // (not audio) — hence the "explosive" churn even over quiet audio. Unlike every other
+            // mode in this file, upstream applies an aspect multiplier to *both* axes here, cross-
+            // applied (ExplosiveHash.cpp:24-26: X scaled by `m_aspectY`, Y scaled by `m_aspectX`) —
+            // confirmed 7/26 against the real source rather than assumed; `aspect`/`aspectX` here
+            // are exactly those two (only one is ever != 1 at a time, whichever axis is longer).
+            // MaximizeColors() upstream also dims this mode's alpha heavily (down to exactly 0.07/
+            // 0.09/0.11/0.13/0.15 depending on `max(viewportSizeX, viewportSizeY)` vs. 256/512/1024/
+            // 2048 — Waveform.cpp:146-177, confirmed 7/26) since its raw magnitude runs much hotter
+            // than a normal scope trace; Prism has no equivalent alpha stage in this file, so that
+            // dimming still isn't reproduced here — a separate, scoped follow-up (needs an alpha
+            // channel threaded through WavePoint/the render path, not just this formula).
             let n = count - 32
             guard n > 0 else { return ([], nil) }
             let t = Float(time) * 0.3
@@ -428,7 +442,7 @@ enum MilkdropWaveform {
                 let y0 = right[i] * right[i] - left[i + 32] * left[i + 32]
                 return WavePoint(
                     x: (x0 * cosR - y0 * sinR) * aspect + params.waveX,
-                    y: (x0 * sinR + y0 * cosR) + params.waveY
+                    y: (x0 * sinR + y0 * cosR) * aspectX + params.waveY
                 )
             }
             return (pts, nil)

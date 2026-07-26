@@ -346,11 +346,12 @@ final class MilkdropVisualizerModel {
     /// buildDynamicShaderUniforms independently recomputing the same 32-entry array from
     /// `presetVariables` — that used to happen 2-4x/frame for an identical result.
     func updatePerPixelMesh(
-        aspectX: Float, aspectY: Float, time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy,
+        aspectX: Float, aspectY: Float, pixelWidth: Float, pixelHeight: Float,
+        time: Double, fps: Double, frame: Int, energy: MilkdropBandEnergy,
         qVars: [Float]
     ) -> [MilkdropMeshVertexAttributes]? {
         perPixelMesh?.calculate(
-            aspectX: aspectX, aspectY: aspectY,
+            aspectX: aspectX, aspectY: aspectY, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
             time: Float(time), fps: Float(fps), frame: Float(frame), energy: energy, qVars: qVars,
             zoom: warpParams.zoom, zoomExp: warpParams.zoomExponent, rot: warpParams.rot, warp: warpParams.warpAmount,
             cx: warpParams.rotCX, cy: warpParams.rotCY, dx: warpParams.xPush, dy: warpParams.yPush,

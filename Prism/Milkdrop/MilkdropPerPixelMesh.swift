@@ -276,7 +276,7 @@ final class MilkdropPerPixelMeshRuntime {
     /// assigns, one of these sees the same value the non-scripted warp path would have used for
     /// every vertex.
     func calculate(
-        aspectX: Float, aspectY: Float,
+        aspectX: Float, aspectY: Float, pixelWidth: Float, pixelHeight: Float,
         time: Float, fps: Float, frame: Float, energy: MilkdropBandEnergy, qVars: [Float],
         zoom: Float, zoomExp: Float, rot: Float, warp: Float,
         cx: Float, cy: Float, dx: Float, dy: Float, sx: Float, sy: Float
@@ -296,10 +296,11 @@ final class MilkdropPerPixelMeshRuntime {
         variables.setValue(energy.trebAtt, at: trebAttSlot)
         variables.setValue(Float(Self.gridSizeX), at: meshxSlot)
         variables.setValue(Float(Self.gridSizeY), at: meshySlot)
-        // Prism has no separate pixel-resolution plumbing reaching this runtime; aspect ratio is
-        // the closest available proxy.
-        variables.setValue(aspectX, at: pixelsxSlot)
-        variables.setValue(aspectY, at: pixelsySlot)
+        // Real viewport pixel dimensions (PerPixelContext.cpp's `*pixelsx = renderContext
+        // .viewportSizeX` etc — confirmed against upstream, not the aspect-ratio placeholder this
+        // used to fall back to before the caller had real pixel dimensions to pass down).
+        variables.setValue(pixelWidth, at: pixelsxSlot)
+        variables.setValue(pixelHeight, at: pixelsySlot)
         variables.setValue(aspectX, at: aspectxSlot)
         variables.setValue(aspectY, at: aspectySlot)
         for i in 0..<min(32, qVars.count) {
