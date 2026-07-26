@@ -109,6 +109,7 @@ final class MilkdropMetalRenderer: NSObject {
     private var samplerNearestRepeat: MTLSamplerState { shared.samplerNearestRepeat }
     private var samplerNearestClamp: MTLSamplerState { shared.samplerNearestClamp }
     private var noiseTextures: MilkdropNoiseTextures? { shared.noiseTextures }
+    private var blurDownsamplePipeline: MTLRenderPipelineState { shared.blurDownsamplePipeline }
     // Preset-pack `Textures/` lookups for custom sampler names (`sampler_worms`, `sampler_rand00`,
     // etc. — see MilkdropShaderTranslator's `.custom` resource case). Deliberately kept per-instance
     // (NOT moved to MilkdropSharedRenderResources like everything above) despite looking just as
@@ -168,6 +169,13 @@ final class MilkdropMetalRenderer: NSObject {
     // case) doesn't pay for an extra texture bind/copy it doesn't need.
     private var scratchTexture: MTLTexture?
     private var textureSize: CGSize = .zero
+    // GetBlur1/GetBlur2/GetBlur3 (BlurTexture.cpp) — index 0/1/2 is blur1/2/3, each a
+    // progressively smaller+blurrier downsample of the previous level (level 0 downsamples
+    // destTexture) — see updateBlurTextures. Only allocated/regenerated for the rare preset that
+    // actually references one (see `usesBlur` in renderToTexture), so this costs nothing for the
+    // 99.9%-of-corpus case that doesn't.
+    private var blurTextures: [MTLTexture?] = [nil, nil, nil]
+    private var blurSourceSize: CGSize = .zero
     private var frameCounter = 0
     /// Exponential moving average of `beat.lastFPS` (itself instantaneous, `1/dt` per frame) —
     /// pushed into `model.displayFPS` once per frame for the on-screen performance counter. EMA
@@ -241,6 +249,49 @@ final class MilkdropMetalRenderer: NSObject {
             commandBuffer.makeRenderCommandEncoder(descriptor: pass)?.endEncoding()
         }
         commandBuffer.commit()
+    }
+
+    /// Regenerates `blurTextures` from `source` (this frame's already-rendered `destTexture`,
+    /// before the composite pass that would actually sample these) — only called when the
+    /// compiled `comp_N=`/`warp_N=` shader this frame actually references a `.blur` resource (see
+    /// `renderToTexture`'s `usesBlur` gating), so this costs nothing for the ~99.9% of presets that
+    /// never reference `GetBlur1`/`GetBlur2`/`GetBlur3`/`sampler_blur1-3`. Three-level cascade,
+    /// each level a downsample+blur of the previous (`milkdrop_blur_downsample_fragment`) — level
+    /// sizes floor at 16px, matching BlurTexture.cpp's own `max(16, width/2)` floor.
+    private func updateBlurTextures(source: MTLTexture, commandBuffer: MTLCommandBuffer) {
+        let sourceSize = CGSize(width: source.width, height: source.height)
+        if blurSourceSize != sourceSize {
+            blurSourceSize = sourceSize
+            var w = source.width
+            var h = source.height
+            for i in 0..<3 {
+                w = max(16, w / 2)
+                h = max(16, h / 2)
+                let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                    pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false
+                )
+                descriptor.usage = [.renderTarget, .shaderRead]
+                descriptor.storageMode = .private
+                blurTextures[i] = device.makeTexture(descriptor: descriptor)
+            }
+        }
+
+        var previous = source
+        for i in 0..<3 {
+            guard let target = blurTextures[i] else { continue }
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = target
+            pass.colorAttachments[0].loadAction = .dontCare
+            pass.colorAttachments[0].storeAction = .store
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { continue }
+            var texelSize = SIMD2<Float>(1.0 / Float(previous.width), 1.0 / Float(previous.height))
+            encoder.setRenderPipelineState(blurDownsamplePipeline)
+            encoder.setFragmentTexture(previous, index: 0)
+            encoder.setFragmentBytes(&texelSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            encoder.endEncoding()
+            previous = target
+        }
     }
 
     // MARK: - Dynamic shader compilation (comp_N= composite shaders — see MilkdropShaderTranslator.swift)
@@ -728,13 +779,19 @@ final class MilkdropMetalRenderer: NSObject {
     }
 
     /// Resolves one binding's actual Metal texture: `.main` is *this frame's* pre-composite result
-    /// (passed in, since it changes every frame — unlike the noise catalog, generated once).
-    /// `.blur` (the `GetBlur1`/`GetBlur2`/`GetBlur3` helper functions) resolves to that same
-    /// unblurred texture too — see MilkdropShaderTranslator.TextureBinding's doc comment on why
-    /// that's a deliberate, documented approximation rather than a real blur pipeline.
+    /// (passed in, since it changes every frame — unlike the noise catalog, generated once). `.blur`
+    /// (the `GetBlur1`/`GetBlur2`/`GetBlur3` helper functions) resolves to the real downsampled/
+    /// blurred texture from `updateBlurTextures` — falling back to `mainTexture` only if that level
+    /// hasn't been generated yet (first frame after a resize, before `renderToTexture`'s `usesBlur`
+    /// gate has had a chance to allocate it), matching this function's existing graceful-fallback
+    /// contract for any other momentarily-unresolvable binding.
     private func metalTexture(for binding: MilkdropShaderTranslator.TextureBinding, mainTexture: MTLTexture) -> MTLTexture? {
         switch binding.resource {
-        case .main, .blur: return mainTexture
+        case .main: return mainTexture
+        case .blur(let level):
+            let index = level - 1
+            guard blurTextures.indices.contains(index) else { return mainTexture }
+            return blurTextures[index] ?? mainTexture
         case .noise(let name): return noiseTextures?.texture(named: name)
         case .custom(let name): return customTextures.texture(named: name)
         }
@@ -1218,6 +1275,17 @@ final class MilkdropMetalRenderer: NSObject {
         }
 
         encoder.endEncoding()
+
+        // Blur textures (BlurTexture.cpp) — only regenerated when the compiled composite/warp
+        // shader this preset actually uses references one (`GetBlur1-3`/`sampler_blur1-3`), so
+        // this is a no-op for the ~99.9% of presets that don't (measured 7/25: 0.1% of corpus).
+        // Must run after Pass 1 (destTexture holds this frame's warp/shape/waveform content) and
+        // before Pass 1.5 (the composite pass that would actually sample these).
+        let usesBlur = (compiledComposite?.textures ?? []).contains { if case .blur = $0.resource { true } else { false } }
+            || (compiledWarp?.textures ?? []).contains { if case .blur = $0.resource { true } else { false } }
+        if usesBlur {
+            updateBlurTextures(source: destTexture, commandBuffer: commandBuffer)
+        }
 
         // MARK: Pass 1.5 — optional composite shader (comp_N=), destTexture -> scratchTexture -> back
 

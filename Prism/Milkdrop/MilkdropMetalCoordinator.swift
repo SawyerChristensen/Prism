@@ -51,6 +51,9 @@ final class MilkdropSharedRenderResources {
     /// fixed pipeline here reuses), fragment: `milkdrop_crossfade_fragment` — see
     /// MilkdropMetalCoordinator.presentCrossfade(...).
     let crossfadePipeline: MTLRenderPipelineState
+    /// Vertex: `feedback_vertex`, fragment: `milkdrop_blur_downsample_fragment` — see
+    /// MilkdropMetalRenderer.swift's `updateBlurTextures`.
+    let blurDownsamplePipeline: MTLRenderPipelineState
 
     init() {
         // Every Mac Metal can plausibly run on has a capable GPU; there's no meaningful degraded
@@ -96,6 +99,7 @@ final class MilkdropSharedRenderResources {
         self.presentPipeline = makePipeline(vertex: "feedback_vertex", fragment: "present_fragment", additiveBlend: false)
         self.oldStyleCompositePipeline = makePipeline(vertex: "feedback_vertex", fragment: "milkdrop_old_style_final_composite", additiveBlend: false)
         self.crossfadePipeline = makePipeline(vertex: "feedback_vertex", fragment: "milkdrop_crossfade_fragment", additiveBlend: false)
+        self.blurDownsamplePipeline = makePipeline(vertex: "feedback_vertex", fragment: "milkdrop_blur_downsample_fragment", additiveBlend: false)
 
         func makeBlendedPipeline(vertex: String, fragment: String, sourceFactor: MTLBlendFactor, destFactor: MTLBlendFactor) -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()

@@ -241,6 +241,38 @@ fragment float4 milkdrop_crossfade_fragment(
     return mix(a, b, progress);
 }
 
+// MARK: - Blur textures (BlurTexture.cpp — GetBlur1/GetBlur2/GetBlur3 / sampler_blur1-3)
+
+// Real Milkdrop generates blur1/2/3 via a precise two-pass (wide horizontal, narrower vertical)
+// weighted 8-tap cascade with its own min/max dynamic-range remapping and edge-darkening per
+// level (BlurTexture.cpp) — substantial machinery for a feature only 0.1% of the real preset
+// corpus (measured 7/25) actually references. This is a deliberately simpler one-pass
+// combined-blur-and-downsample per level instead: a 3x3 tent-weighted box sample centered between
+// four source texels (the same "sample at half-texel offsets" trick common bloom-downsample passes
+// use), applied 3 times in a cascade (blur1 from the source, blur2 from blur1, blur3 from blur2) —
+// still a real, progressively blurrier-and-smaller texture at each level (matching upstream's own
+// halving-per-level architecture), just not upstream's exact weighting/remapping. See
+// MilkdropMetalRenderer.swift's `updateBlurTextures` for the cascade driving this.
+fragment float4 milkdrop_blur_downsample_fragment(
+    FullscreenVertexOut in [[stage_in]],
+    texture2d<float> source [[texture(0)]],
+    constant float2 &sourceTexelSize [[buffer(0)]]
+) {
+    constexpr sampler s(address::clamp_to_edge, filter::linear);
+    float2 uv = in.uv;
+    float4 sum = float4(0.0);
+    sum += source.sample(s, uv + sourceTexelSize * float2(-0.5, -0.5));
+    sum += source.sample(s, uv + sourceTexelSize * float2(0.5, -0.5));
+    sum += source.sample(s, uv + sourceTexelSize * float2(-0.5, 0.5));
+    sum += source.sample(s, uv + sourceTexelSize * float2(0.5, 0.5));
+    sum += 2.0 * source.sample(s, uv + sourceTexelSize * float2(-1.0, 0.0));
+    sum += 2.0 * source.sample(s, uv + sourceTexelSize * float2(1.0, 0.0));
+    sum += 2.0 * source.sample(s, uv + sourceTexelSize * float2(0.0, -1.0));
+    sum += 2.0 * source.sample(s, uv + sourceTexelSize * float2(0.0, 1.0));
+    sum += 4.0 * source.sample(s, uv);
+    return sum / 16.0;
+}
+
 // MARK: - Old-style final composite (VideoEcho.cpp/Filters.cpp — no comp_N= shader at all)
 
 // Real Milkdrop's "old-school" (Milkdrop 1.x-format, pre-shader) final-composite path — see
