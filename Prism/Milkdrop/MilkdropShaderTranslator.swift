@@ -122,6 +122,9 @@ enum MilkdropShaderTranslator {
         guard !hlslSource.isEmpty else { return nil }
 
         var source = stripSamplerStateBlocks(hlslSource)
+        // Captured before `extractShaderBody` below discards everything preceding `shader_body`'s
+        // own `{` — see `preambleDeclarations` for why this text still matters.
+        let preamble = source.range(of: "shader_body").map { String(source[source.startIndex..<$0.lowerBound]) } ?? ""
         guard let bodyRange = extractShaderBody(&source) else { return nil }
         let rawBody = String(source[bodyRange])
 
@@ -130,7 +133,47 @@ enum MilkdropShaderTranslator {
         var body = rewriteTextureSampleCalls(rawBody, textures: textures)
         body = renameIntrinsics(body)
 
+        let declarations = renameIntrinsics(preambleDeclarations(preamble))
+        if !declarations.isEmpty {
+            // The body is wrapped in its own `{ }` block, *nested inside* the hoisted declarations'
+            // scope rather than flattened alongside them — real HLSL block-scoping lets
+            // `shader_body` legally redeclare (shadow) a name already declared above it (a real,
+            // observed pattern: a preset's own `float2 uv2;` before `shader_body` *and* its own
+            // `float2 uv2;` again as the body's first line) — flattening both into one scope would
+            // make MSL reject that as a redefinition even though the original HLSL was fine.
+            body = declarations + "\n{\n" + body + "\n}"
+        }
+
         return Result(body: body, textures: textures)
+    }
+
+    /// Real Milkdrop preset shaders sometimes declare local scratch variables *before*
+    /// `shader_body` (`float2 dz, uv2, uv3; float3 ret1, neu, mus; shader_body { ... }`) rather than
+    /// inline inside the body — `extractShaderBody` above (matching MilkdropShader.cpp's own
+    /// landmark-based extraction) only ever looks at what's between `shader_body`'s `{`/`}`, so
+    /// these were silently discarded, leaving the body referencing undeclared identifiers. Confirmed
+    /// directly against real corpus files (e.g. "suksma - my face is black pus"'s `comp_N=`, which
+    /// failed to compile over exactly this — `dz`/`ret1`/`neu`/`mus`/`uv3`/`uv4` all declared before
+    /// `shader_body`, never redeclared inside it) rather than assumed.
+    ///
+    /// Scans for simple `<type> name1, name2, ...;` declarations (`float`/`float1`-`float4`/`int`/
+    /// `bool`) and hoists them to the top of the generated function body instead of discarding them.
+    /// Deliberately excludes any statement mentioning `texture`/`sampler` (real preset shaders often
+    /// *also* declare textures/samplers up here, e.g. `texture sampler_fw_noisevol_hq;`) — those are
+    /// resolved entirely separately, from call sites, not declarations (see this file's header), and
+    /// aren't valid as a plain MSL local variable regardless.
+    private static func preambleDeclarations(_ preamble: String) -> String {
+        let keywords = ["float", "int", "bool"] // covers float1-float4 too (all share the "float" prefix)
+        var kept: [String] = []
+        for rawStatement in preamble.split(separator: ";") {
+            let statement = rawStatement.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !statement.isEmpty else { continue }
+            let lowered = statement.lowercased()
+            guard !lowered.contains("texture"), !lowered.contains("sampler") else { continue }
+            guard keywords.contains(where: { lowered.hasPrefix($0) }) else { continue }
+            kept.append(statement + ";")
+        }
+        return kept.joined(separator: "\n")
     }
 
     // MARK: - sampler_state removal

@@ -458,7 +458,7 @@ final class MilkdropMetalRenderer: NSObject {
     private func compileCompositeShader(source: String) -> CompiledMilkdropShader? {
         guard let translated = MilkdropShaderTranslator.translate(source) else { return nil }
         let mslSource = Self.buildCompositeShaderSource(translated)
-        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: nil),
+        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: Self.safeMathCompileOptions),
               let fragmentFunction = dynamicLibrary.makeFunction(name: "milkdrop_composite_main")
         else { return nil }
 
@@ -536,7 +536,7 @@ final class MilkdropMetalRenderer: NSObject {
     private func compileWarpShader(source: String, vertexFunction: MTLFunction) -> CompiledMilkdropShader? {
         guard let translated = MilkdropShaderTranslator.translate(source) else { return nil }
         let mslSource = Self.buildWarpShaderSource(translated)
-        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: nil),
+        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: Self.safeMathCompileOptions),
               let fragmentFunction = dynamicLibrary.makeFunction(name: "milkdrop_warp_main")
         else { return nil }
 
@@ -558,10 +558,21 @@ final class MilkdropMetalRenderer: NSObject {
     /// off) specifically because this feature's whole safety contract depends on GPU output
     /// matching what the CPU fallback (`MilkdropExpressionEvaluator`) would have produced for the
     /// same preset; fast-math's looser IEEE guarantees risk masking a real transpiler bug as
-    /// "close enough," or genuinely diverging preset-to-preset across different GPU hardware. Not
-    /// applied (yet) to `compileCompositeShader`/`compileWarpShader`'s HLSL-derived shaders above —
-    /// those have no CPU-reference-equivalence contract to protect, just a visual-fidelity one.
-    private static var perPixelMeshCompileOptions: MTLCompileOptions {
+    /// "close enough," or genuinely diverging preset-to-preset across different GPU hardware.
+    ///
+    /// **Also used by `compileCompositeShader`/`compileWarpShader`** (added 7/26, after tracking a
+    /// real "completely white screen" bug to exactly this) — arbitrary preset-authored HLSL
+    /// routinely does things like `ret *= 8.60/rad;` (dividing by a value that reaches exactly zero
+    /// at screen center) or `pow(ret, float3(.3,.9,8))` where `ret` can go negative, both of which
+    /// are only well-defined (matching what a preset author actually tested against, and what real
+    /// Milkdrop's own GPU pipeline produces) under standard IEEE float semantics — fast math
+    /// explicitly permits the compiler to assume neither NaN nor Inf ever occurs and optimize
+    /// accordingly, which for a shader that actually *hits* one of those cases can produce
+    /// materially different (and, confirmed against a real corpus preset, visibly worse — a
+    /// feedback-warped NaN/Inf pixel spreading across the whole frame over successive frames until
+    /// the screen reads as solid white) output than the "just IEEE-standard Inf/NaN, propagated
+    /// predictably" a preset author's own testing would have seen.
+    private static var safeMathCompileOptions: MTLCompileOptions {
         let options = MTLCompileOptions()
         options.mathMode = .safe
         return options
@@ -586,7 +597,7 @@ final class MilkdropMetalRenderer: NSObject {
             mesh.statements, builtins: MilkdropPerPixelMeshRuntime.builtinNames
         ) else { return nil }
         let mslSource = Self.buildPerPixelMeshVertexSource(transpiled)
-        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: Self.perPixelMeshCompileOptions)
+        guard let dynamicLibrary = try? device.makeLibrary(source: mslSource, options: Self.safeMathCompileOptions)
         else { return nil }
         return dynamicLibrary.makeFunction(name: "milkdrop_per_pixel_mesh_vertex")
     }
