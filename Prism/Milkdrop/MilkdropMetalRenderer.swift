@@ -1006,9 +1006,26 @@ final class MilkdropMetalRenderer: NSObject, MTKViewDelegate {
         // default no-preset look stays exactly as reactive as it always has, and so a loaded
         // preset's own animation still gets a little extra life on a hit rather than being
         // replaced by it.
-        var zoom = model.warpParams.zoom * Float(1.006 + punch * 0.035)
+        //
+        // The 1.006/0.0025 constants below read as tuned for a ~60fps reference (60 render calls
+        // of 1.006x compounding to a plausible ~1.43x zoom/sec) but MilkdropMetalView sets
+        // `preferredFramesPerSecond = 120`, and this nudge was being applied once per *rendered*
+        // frame with no time-normalization at all — at the actual 120fps this runs at, it silently
+        // compounded to ~2.05x zoom/sec (double the apparent reference tuning) and rotation ran 2x
+        // real-world speed too, regardless of what any given preset's own per-frame script asked
+        // for (those already normalize via `1/fps`, so they were unaffected — only this fixed
+        // Prism-specific nudge wasn't, which is why the whole scene reads as "too fast and
+        // chaotic" beyond just any one preset's own animation). `rateScale` rescales both back to
+        // a true 60fps-equivalent per-second rate at whatever `beat.lastFPS` actually is this
+        // frame (exponent for the multiplicative zoom rate, linear multiplier for the additive rot
+        // rate — see MilkdropAudioSignals.swift's `adjustRateToFPS` for the same technique) —
+        // identical output to before at exactly 60fps, half the growth per frame at 120fps for the
+        // same real-world-per-second result.
+        let rateScale = Float(60.0 / beat.lastFPS)
+        let punchF = Float(punch)
+        var zoom = model.warpParams.zoom * powf(1.006 + punchF * 0.035, rateScale)
         var zoomExponent = model.warpParams.zoomExponent
-        var rot = model.warpParams.rot + Float(0.0025 + punch * 0.01)
+        var rot = model.warpParams.rot + (0.0025 + punchF * 0.01) * rateScale
         var warpAmount = model.warpParams.warpAmount
         var cx = model.warpParams.rotCX
         var cy = model.warpParams.rotCY

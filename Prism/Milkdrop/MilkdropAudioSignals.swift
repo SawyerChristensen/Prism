@@ -52,6 +52,15 @@ final class MilkdropSignalAnalyzer {
     private var imm: [Float] = [0, 0, 0]
     private var avg: [Float] = [1, 1, 1]
     private var longAvg: [Float] = [1, 1, 1]
+    // `avg`/`longAvg` above are only a placeholder guess (an "average track" hovers near 1.0 post
+    // band-normalization, but any given track doesn't) — real seeding happens on the first `process`
+    // call below (`hasSeeded`), snapping both straight to that call's actual measured level instead
+    // of decaying toward it over several seconds. Without this, the first moments of playback (or
+    // right after this analyzer is created) read imm/longAvg's ratio as however far the real level
+    // happens to sit from the "1.0" guess — often several times over — which every _rel getter below
+    // exposes directly to preset scripts as a bogus energy spike (e.g. beat-triggered presets firing
+    // their beat on nearly every frame until longAvg catches up).
+    private var hasSeeded = false
 
     // Scratch buffers, reused every call instead of allocated fresh. `process` runs on the main
     // thread inside Canvas's content closure — up to 120x/sec on a ProMotion display — so the ~9
@@ -160,6 +169,11 @@ final class MilkdropSignalAnalyzer {
             level /= bandNormalization[band]
             imm[band] = level
 
+            if !hasSeeded {
+                avg[band] = level
+                longAvg[band] = level
+            }
+
             let attackRate = adjustRateToFPS(0.2, fps1: 14.0, actualFPS: fps)
             let releaseRate = adjustRateToFPS(0.5, fps1: 14.0, actualFPS: fps)
             let avgMix = level > avg[band] ? attackRate : releaseRate
@@ -168,6 +182,7 @@ final class MilkdropSignalAnalyzer {
             let longMix = adjustRateToFPS(0.96, fps1: 14.0, actualFPS: fps)
             longAvg[band] = longAvg[band] * longMix + level * (1 - longMix)
         }
+        hasSeeded = true
 
         return MilkdropBandEnergy(
             bass: bass_rel(0), mid: bass_rel(1), treb: bass_rel(2),
@@ -175,12 +190,23 @@ final class MilkdropSignalAnalyzer {
         )
     }
 
+    // Upper bound on bass/mid/treb and their _att counterparts. These are meant to hover around 1.0
+    // with beat hits reaching a few times that — but they're an unclamped ratio of a fast-moving
+    // average to a slow-moving one, and both bootstrap from 1.0 on load/track start, so a loud hit
+    // before longAvg has caught up (or any other transient where longAvg is briefly small relative
+    // to a spike) can send the ratio far past the range presets are hand-tuned for. Since many
+    // presets multiply position/zoom/brightness directly by these, an unbounded spike reads as a
+    // sudden flash or a shape jumping off-screen for a frame. Capped well above any value a real
+    // beat hit needs (so normal punch/dynamics are untouched), just below the range that visibly
+    // overshoots.
+    private let relCap: Float = 4.0
+
     private func bass_rel(_ i: Int) -> Float {
-        abs(longAvg[i]) < 0.001 ? 1.0 : imm[i] / longAvg[i]
+        abs(longAvg[i]) < 0.001 ? 1.0 : min(imm[i] / longAvg[i], relCap)
     }
 
     private func avg_rel(_ i: Int) -> Float {
-        abs(longAvg[i]) < 0.001 ? 1.0 : avg[i] / longAvg[i]
+        abs(longAvg[i]) < 0.001 ? 1.0 : min(avg[i] / longAvg[i], relCap)
     }
 
     /// Port of utility.cpp's AdjustRateToFPS: converts a decay rate tuned at `fps1` into the
