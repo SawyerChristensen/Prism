@@ -15,8 +15,17 @@ struct ContentView: View {
     @State private var permissions = PermissionsManager()
     @State private var visualizerModel = MilkdropVisualizerModel()
     @State private var presetLibrary = MilkdropPresetLibrary()
+    @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var isPresetImporterPresented = false
     @State private var isLibraryFolderPickerPresented = false
+    // Idle auto-cycling (TO DO.md Phase 3) — "A" toggles it on/off. Backed by a sleeping Task
+    // rather than Foundation's Timer, matching the Task-based delay already used elsewhere in
+    // this file (the "S" save confirmation). Any successful preset load, manual or automatic,
+    // restarts the sleep window (see restartAutoCycleTimerIfNeeded) so a manual skip right before
+    // the interval elapses doesn't get immediately followed by an auto-cycle a moment later.
+    @State private var isAutoCycleEnabled = false
+    @State private var autoCycleTask: Task<Void, Never>?
+    private static let autoCycleInterval: Duration = .seconds(20)
     // Transient confirmation after "S" saves the current M/T settings for this album (see
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
@@ -31,7 +40,7 @@ struct ContentView: View {
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: loadRandomPreset)
+            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: { loadRandomPreset() })
             
             // The album art
             if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
@@ -102,6 +111,9 @@ struct ContentView: View {
                 if showSavedConfirmation {
                     Text("Saved for this album")
                 }
+                if isAutoCycleEnabled {
+                    Text("Auto-Cycle On")
+                }
                 if !nowPlaying.processingEnabled {
                     Text("Processing Off")
                 } else {
@@ -124,7 +136,7 @@ struct ContentView: View {
             guard case .success(let url) = result else { return }
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            visualizerModel.loadPreset(from: url)
+            loadPresetAndTrack(from: url)
         }
         // Folder (not single-file) picker for the preset library random-cycling draws from — see
         // MilkdropPresetLibrary.swift. Triggered explicitly (L) or implicitly the first time Space/
@@ -151,11 +163,11 @@ struct ContentView: View {
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space jumps
         // to a random preset from the loaded library (same action as tapping the visualizer),
-        // F toggles fullscreen, L (re)picks the library folder.
+        // F toggles fullscreen, L (re)picks the library folder, A toggles idle auto-cycling.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
             switch press.characters {
             case " ":
                 loadRandomPreset()
@@ -168,6 +180,9 @@ struct ContentView: View {
                 return .handled
             case "l", "L":
                 isLibraryFolderPickerPresented = true
+                return .handled
+            case "a", "A":
+                toggleAutoCycle()
                 return .handled
             case "t", "T":
                 nowPlaying.includesTextOverlay.toggle()
@@ -197,6 +212,14 @@ struct ContentView: View {
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
+            // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
+            // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a
+            // preset the user has since picked.
+            if visualizerModel.presetURL == nil {
+                lastPresetStore.withLastPreset { url in
+                    loadPresetAndTrack(from: url)
+                }
+            }
             PrismDebug.trace("ContentView.onAppear returned (both calls are async/backgrounded)")
         }
         .task {
@@ -212,12 +235,55 @@ struct ContentView: View {
     /// could re-pick the same file. Prompts for a library folder instead, the first time this runs
     /// with none configured yet — mirrors Phase 4's "first-launch (or Settings-triggered) folder
     /// picker" decision without needing a separate onboarding flow.
-    private func loadRandomPreset() {
+    /// `resetAutoCycle` is false only when the auto-cycle loop itself calls this — its own
+    /// while-loop cadence already provides the next interval, so restarting the countdown here too
+    /// would just replace the in-flight sleeping Task with an equivalent new one for no reason.
+    private func loadRandomPreset(resetAutoCycle: Bool = true) {
         guard presetLibrary.isConfigured else {
             isLibraryFolderPickerPresented = true
             return
         }
         guard let url = presetLibrary.randomPresetURL() else { return }
+        loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
+    }
+
+    /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL
+    /// was obtained (manual Cmd-O pick, random library draw, or restoring the last-loaded preset
+    /// at launch): remembers it for next launch's restore (MilkdropLastPresetStore) and restarts
+    /// the idle auto-cycle countdown so a manual skip doesn't get immediately followed by an
+    /// auto-cycle a moment later.
+    private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true) {
         visualizerModel.loadPreset(from: url)
+        guard visualizerModel.presetLoadError == nil else { return }
+        lastPresetStore.rememberLoaded(url)
+        if resetAutoCycle {
+            restartAutoCycleTimerIfNeeded()
+        }
+    }
+
+    private func toggleAutoCycle() {
+        isAutoCycleEnabled.toggle()
+        if isAutoCycleEnabled {
+            restartAutoCycleTimerIfNeeded()
+        } else {
+            autoCycleTask?.cancel()
+            autoCycleTask = nil
+        }
+    }
+
+    /// (Re)starts the sleep-then-skip loop from a fresh interval. A no-op when auto-cycling is
+    /// off, so this is safe to call unconditionally from loadPresetAndTrack after every load —
+    /// Task-based (see the "S" save-confirmation above for the same idiom elsewhere in this file)
+    /// rather than Foundation's Timer.
+    private func restartAutoCycleTimerIfNeeded() {
+        guard isAutoCycleEnabled else { return }
+        autoCycleTask?.cancel()
+        autoCycleTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.autoCycleInterval)
+                guard !Task.isCancelled else { return }
+                loadRandomPreset(resetAutoCycle: false)
+            }
+        }
     }
 }
