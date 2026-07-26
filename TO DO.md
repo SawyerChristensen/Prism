@@ -1,6 +1,107 @@
 # Prism — To Do
 ---
 
+## 🔴 SESSION HANDOFF (2026-07-26, usage ran out mid-investigation) — READ THIS FIRST
+
+**Where things stand**: just finished a real, exhaustive scan of all 9,795 preset
+files in `~/Desktop/BestMilkdropPresetsPack/Presets` — each one parsed via the real
+`MilkdropPresetFile`, its `warp_N=`/`comp_N=` translated via the real
+`MilkdropShaderTranslator`, and the resulting MSL compiled via a real `MTLDevice`.
+Full raw output, the harness source, and instructions to rerun it live in
+`dev-notes/corpus-shader-scan-2026-07-26/` (README.md there explains how). **Do not
+trust any older compile-rate numbers in this file below this point without re-running
+that scan** — several were stale (see "how we didn't catch this" below).
+
+### The real numbers (2026-07-26)
+- **Parsing: 0 failures** across all 9,795 files — the parser itself is solid.
+- **`warp_N=`**: 7,924 files have it; **3,292 compile (41.5%)**.
+- **`comp_N=`**: 7,971 files have it; **3,252 compile (40.8%)**.
+- So **roughly 59% of presets with shader code currently fail to compile** and fall
+  back to the plain warp transform / no composite pass — this is almost certainly
+  the dominant remaining cause of "preset looks wrong/plain/white" reports, bigger
+  than any single bug fixed so far this session.
+- For context: TO DO.md's own 7/25 note said warp_N= compile rate was "10.5% ->
+  39.1%" after that session's fixes. Today's two fixes (below) only moved it to
+  41.5% — a small nudge, because neither addressed the dominant cause (see below).
+  **This is *why* "everything compiled perfectly" turned out to be wrong** — past
+  measurements were real at the time, but (a) not re-verified after every subsequent
+  change, and (b) at least one historical measurement in this file was explicitly
+  translate()-only (text-rewrite success), a weaker signal than a real compile —
+  `translate()` returning non-nil does NOT mean the resulting MSL is valid.
+
+### What's already fixed this session (2026-07-26) — see the dated entries throughout this file for full detail, don't redo these
+- Preset crossfade transitions (dual-live-render, real projectM-matched).
+- Motion vectors, blur textures (Phase 2 complete).
+- NS-EEL `if`/`&&`/`||` now short-circuit (matches real NS-EEL; was eager before).
+- pixelsx/pixelsy mis-seeding, ExplosiveHash aspect handling.
+- All 10 build warnings (Swift concurrency).
+- `.safe` math mode extended to `compileCompositeShader`/`compileWarpShader`.
+- Pre-`shader_body` local variable declarations now hoisted (not dropped) — see
+  `MilkdropShaderTranslator.preambleDeclarations`.
+- fps floor, beat-punch magnitude, beat-trigger rate (the "spazz" tuning pass).
+
+### What's NOT fixed — prioritized by the real scan data above, ordered by impact
+Do the "quick wins" first (contained, low-risk, same spirit as today's declaration-
+hoisting fix) before even considering the big one — re-run the corpus scan after each
+to measure real progress, per this project's own standing method (never assume, always
+measure against the real corpus). Full itemized error list with example filenames is
+in `dev-notes/corpus-shader-scan-2026-07-26/scan_output.txt`.
+
+1. **THE DOMINANT CAUSE, ~2,554+ instances and counting across several sub-variants
+   (float2/float3/float4 in every combination, both directions)**: HLSL's implicit
+   vector narrowing/widening applies to *any* expression (assignment, argument
+   passing, etc.), not just immediately after `tex2D`/`GetPixel` (which is already
+   handled). MSL refuses all of these outright. This was already flagged in this
+   file as "a different order of effort than the targeted rewrites" before today —
+   confirmed today, with real numbers, as *the* single biggest remaining opportunity
+   by a wide margin. Needs real type-aware expression analysis walking the shader
+   body (infer each subexpression's vector width, insert `.xyz`/zero-pad/truncate
+   at every mismatch), not another one-off targeted rewrite. Substantial, multi-hour
+   undertaking with real regression risk to the 41% that already compiles — the user
+   was asked whether to take this on and hadn't answered before usage ran out.
+2. **483x "function definition is not allowed here"** — a preset defining its own
+   helper function *before* `shader_body` (e.g. `float MyGet(float x) { ... }
+   shader_body { ... }`), same family as the variable-declaration bug fixed today
+   (`MilkdropShaderTranslator.preambleDeclarations`) — extend that same
+   before-`shader_body` scan to also hoist function *definitions* to true top-level
+   scope (outside/before the wrapping `milkdrop_composite_main`/`milkdrop_warp_main`
+   function — nested function definitions aren't legal in MSL/C), instead of
+   inlining them where the current declaration-hoist would put them. Likely fixes
+   some of the "undeclared identifier 'MyGet'"-style errors too (a preset calling
+   its own now-hoisted-but-still-broken helper).
+3. **268x "undeclared identifier 'M_INV_PI_2'"** — a missing math constant. Almost
+   certainly a one-`#define` fix in `MilkdropMetalRenderer.shaderShimHeader` once its
+   correct value is confirmed (don't guess — check real Milkdrop/projectM source for
+   the exact value, e.g. look for `M_INV_PI_2`/similar in
+   `~/Documents/GitHub/projectm`, or derive from context in a few real failing
+   presets' actual shader source).
+4. **257x "undeclared identifier 'texsize_noise_lq'"** — a preset references a noise
+   texture's *size* uniform without a `tex2D(sampler_noise_lq, ...)` call elsewhere
+   in the same shader to trigger call-site texture discovery, so
+   `textureSizeDefines` never emits its `#define`. Fix: since the noise catalog's
+   sizes are fixed, known compile-time constants regardless of whether the texture
+   is otherwise used, just always emit `texsize_<name>` defines for the whole noise
+   catalog unconditionally, not only for textures `discoverTextures` found a call
+   site for.
+5. **Smaller, not yet investigated — check real Milkdrop/projectM source for each
+   rather than guessing**: 154x/142x undeclared `_qa`/`_qb`, 68x `GetBlur1` not
+   recognized despite being a supported implicit texture function (probably a
+   call-site the scanner's regex doesn't match — find a real failing example and
+   check why), 52x undeclared `vol`, 171x "no matching function for call to
+   `milkdrop_mul`" (the shim probably only covers one overload shape; real presets
+   call `mul()` with others). The "ambiguous call to `length`/`pow`" errors (139x/
+   47x) are likely cascading symptoms of the narrowing bug above, not independent —
+   re-measure them after fixing #1 before spending time on them directly.
+
+### Process note for whoever picks this up
+GUI automation (screenshotting the running app, simulating keystrokes) was unreliable
+in this environment this session — don't rely on it for verification. Use the
+standalone-`swiftc`-harness-against-the-real-corpus method throughout this file
+instead; it's slower to set up but actually trustworthy. The white-screen preset
+investigation earlier in this file has the fuller writeup of why.
+
+---
+
 - [x] Organize the projects structure
 - [ ] Fill out the app icon list
 - [x] Fix all project warnings, and dont fix anything from now on that leaves project warnings.

@@ -1,0 +1,51 @@
+Found 9795 preset files
+... 1000/9795 (125s elapsed)
+... 2000/9795 (269s elapsed)
+... 3000/9795 (457s elapsed)
+... 4000/9795 (545s elapsed)
+... 5000/9795 (643s elapsed)
+... 6000/9795 (755s elapsed)
+... 7000/9795 (859s elapsed)
+... 8000/9795 (966s elapsed)
+... 9000/9795 (1073s elapsed)
+
+=== SUMMARY (over 9795 files, 1192s) ===
+Parse failures: 0
+
+warp_N=: none=1871 translateFail=13 compileFail=4619 OK=3292
+  compile success rate among files WITH warp_N=: 41.54467440686522%
+
+comp_N=: none=1824 translateFail=3 compileFail=4716 OK=3252
+  compile success rate among files WITH comp_N=: 40.79789235980429%
+
+=== TOP ERROR SIGNATURES ===
+[2554x] error: cannot initialize a variable of type 'float4' (vector of 4 'float' values) with an rvalue of type 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)  (e.g. Rozzor & Rovastar - Dynamic Swirls 3 (Mysticial Awakening Mix Tweak) - cpe rst roams nz+ qohere medial simplicit.milk [comp])
+[643x] error: use of undeclared identifier 'hue_shader'  (e.g. suksma - robert rich am fireflies.milk [comp])
+[640x] error: cannot initialize a variable of type 'float' with an rvalue of type 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)  (e.g. $$$ Royal - Mashup (291).milk [comp])
+[616x] error: cannot initialize a variable of type 'float' with an rvalue of type 'float2' (vector of 2 'float' values)  (e.g. cope - inferno-x.milk [warp])
+[483x] error: function definition is not allowed here  (e.g. propre hypno.milk [comp])
+[339x] error: invalid operands to binary expression ('const constant float' and 'int')  (e.g. Rozzor & Rovastar - Dynamic Swirls 3 (Mysticial Awakening Mix Tweak) - cpe rst roams nz+ qohere medial simplicit.milk [warp])
+[337x] error: implicit conversions between vector types ('float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values) and 'float2' (vector of 2 'float' values)) are not permitted  (e.g. suksma - you never had it so good, ducky.milk [warp])
+[268x] error: use of undeclared identifier 'M_INV_PI_2'  (e.g. Mig_177.milk [comp])
+[260x] error: cannot initialize a variable of type 'float' with an rvalue of type 'float4' (vector of 4 'float' values)  (e.g. Adam Eatit Mashup FX 2 martin - disco mix + Lodus + Geiss + Ludicrous speed + Eos Ft Flexi Gimmie Colo14.milk [warp])
+[257x] error: use of undeclared identifier 'texsize_noise_lq'  (e.g. amandio c - the green machine 2 skin lard bone beacon.milk [warp])
+[219x] error: member reference base type 'float' is not a structure or union  (e.g. NeW Adam Master Mashup FX 2 Geiss - Reaction Diffusion 3.milk [comp])
+[201x] error: implicit conversions between vector types ('float3' (vector of 3 'float' values) and 'float4' (vector of 4 'float' values)) are not permitted  (e.g. Rozzor & Rovastar - Dynamic Swirls 3 (Mysticial Awakening Mix Tweak) - cpe flacc roam3-.milk [comp])
+[171x] error: no matching function for call to 'milkdrop_mul'  (e.g. suksma - bonnie self.milk [comp])
+[154x] error: use of undeclared identifier '_qa'  (e.g. suksma - adam martin geiss - come into my closet of rot.milk [comp])
+[142x] error: use of undeclared identifier '_qb'  (e.g. sone' ovaembiasche' instantaneousle' cliche' novelte'.milk [warp])
+[139x] error: call to 'length' is ambiguous  (e.g. suksma - sanguine pusletting hateritual - smelly log tooth2.milk [warp])
+[133x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)) are not permitted  (e.g. Geiss - Reaction Diffusion 3 (janky ripples warp).milk [warp])
+[132x] error: assigning to 'float' from incompatible type 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)  (e.g. Flexi + Geiss - pogo-cubes on tokamak matter [mind over matter remix] 3 - heeling potion nz.milk [warp])
+[111x] error: cannot initialize a variable of type 'float' with an rvalue of type 'float3' (vector of 3 'float' values)  (e.g. suksma - harrowing migration clamps.milk [comp])
+[106x] error: assigning to 'float' from incompatible type 'float3' (vector of 3 'float' values)  (e.g. suksma - daryl feels my hellish lonliness.milk [warp])
+[105x] error: implicit conversions between vector types ('float4' (vector of 4 'float' values) and 'float3' (vector of 3 'float' values)) are not permitted  (e.g. suksma - passive probabilistic roaming coin gods.milk [comp])
+[95x] error: assigning to 'float2' (vector of 2 'float' values) from incompatible type 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)  (e.g. cope - inferno-x.milk [comp])
+[90x] error: no matching function for call to 'dot'  (e.g. ORB - Ethereal Plain.milk [comp])
+[81x] error: implicit conversions between vector types ('float3' (vector of 3 'float' values) and 'float2' (vector of 2 'float' values)) are not permitted  (e.g. BADAZJust a TwistFX - Martin - Foggy Notation - Ft AdamFX n Eos - Ufoz in the Fog .milk [warp])
+[68x] error: use of undeclared identifier 'GetBlur1'  (e.g. f wen blew my wallet - chub, smack.milk [comp])
+[63x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float3' (vector of 3 'float' values)) are not permitted  (e.g. hexcollie, ti@n, suksma, zylot, orb n flexi - blarffff bubble.milk [warp])
+[52x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float4' (vector of 4 'float' values)) are not permitted  (e.g. suksma - drum not triggered.milk [warp])
+[52x] error: use of undeclared identifier 'vol'  (e.g. Rovastar - VooV's Movement (After Dark Mix) aa bbb aaa.milk [warp])
+[47x] error: call to 'pow' is ambiguous  (e.g. ORB - The Deep Blue --- Isosceles edit.milk [comp])
+[46x] error: use of undeclared identifier 'MyGet'  (e.g. Stahlregen & fiShbRaiN + Geiss + spookytay - Circuits in Flames (Jelly V3).milk [warp])
