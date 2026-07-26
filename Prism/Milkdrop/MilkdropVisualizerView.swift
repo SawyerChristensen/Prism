@@ -68,6 +68,21 @@ struct MilkdropOldStyleCompositeParams {
     var invert: Float = 0.0
 }
 
+/// Per-frame MotionVectors.cpp state — a grid of small line "arrows" showing the warp transform's
+/// per-point displacement, gated on `a > 0.0001` (matches upstream's own visibility threshold; see
+/// MilkdropMetalRenderer.swift's motion-vector draw call). Defaults match PresetState.hpp exactly.
+struct MilkdropMotionVectorParams {
+    var x: Float = 12.0
+    var y: Float = 9.0
+    var dx: Float = 0.0
+    var dy: Float = 0.0
+    var length: Float = 0.9
+    var r: Float = 1.0
+    var g: Float = 1.0
+    var b: Float = 1.0
+    var a: Float = 0.0
+}
+
 @Observable
 final class MilkdropVisualizerModel {
     /// Precomputed "q1".."q32" dictionary keys — see MilkdropCustomWaveform.swift's identical
@@ -90,6 +105,10 @@ final class MilkdropVisualizerModel {
     /// Read every frame by MilkdropMetalRenderer to draw the old-style final-composite pass — see
     /// updatePresetPerFrame below. Only actually used when `usesOldStyleFinalComposite` is true.
     private(set) var oldStyleCompositeParams = MilkdropOldStyleCompositeParams()
+    /// Read every frame by MilkdropMetalRenderer to draw the motion-vector overlay — see
+    /// updatePresetPerFrame below. Only actually visible when `a > 0.0001` (the vast majority of
+    /// presets — default 0).
+    private(set) var motionVectorParams = MilkdropMotionVectorParams()
     /// Set once per `loadPreset(from:)` call (not per-frame-scriptable — it's a structural fact
     /// about the preset's format, not a tunable). Gates whether MilkdropMetalRenderer runs the
     /// VideoEcho/Filters pass at all.
@@ -186,6 +205,10 @@ final class MilkdropVisualizerModel {
                 "echo_orient": Float(file.videoEchoOrientation),
                 "brighten": file.brighten ? 1 : 0, "darken": file.darken ? 1 : 0,
                 "solarize": file.solarize ? 1 : 0, "invert": file.invert ? 1 : 0,
+                "mv_x": file.motionVectorsX, "mv_y": file.motionVectorsY,
+                "mv_dx": file.motionVectorsDX, "mv_dy": file.motionVectorsDY, "mv_l": file.motionVectorsLength,
+                "mv_r": file.motionVectorsR, "mv_g": file.motionVectorsG, "mv_b": file.motionVectorsB,
+                "mv_a": file.motionVectorsA,
             ])
             // Runs once, immediately — seeds any custom variables (e.g. `SPEED=10;`) the per-frame
             // program below expects to already exist on its first evaluation. Uses the string-keyed
@@ -285,6 +308,16 @@ final class MilkdropVisualizerModel {
         if let darken = presetVariables["darken"] { oldStyleCompositeParams.darken = darken }
         if let solarize = presetVariables["solarize"] { oldStyleCompositeParams.solarize = solarize }
         if let invert = presetVariables["invert"] { oldStyleCompositeParams.invert = invert }
+
+        if let mvX = presetVariables["mv_x"] { motionVectorParams.x = mvX }
+        if let mvY = presetVariables["mv_y"] { motionVectorParams.y = mvY }
+        if let mvDX = presetVariables["mv_dx"] { motionVectorParams.dx = mvDX }
+        if let mvDY = presetVariables["mv_dy"] { motionVectorParams.dy = mvDY }
+        if let mvL = presetVariables["mv_l"] { motionVectorParams.length = mvL }
+        if let mvR = presetVariables["mv_r"] { motionVectorParams.r = mvR }
+        if let mvG = presetVariables["mv_g"] { motionVectorParams.g = mvG }
+        if let mvB = presetVariables["mv_b"] { motionVectorParams.b = mvB }
+        if let mvA = presetVariables["mv_a"] { motionVectorParams.a = mvA }
     }
 
     /// Resolves every loaded shape's per-frame script for this frame, one instance array per shape

@@ -1202,6 +1202,20 @@ final class MilkdropMetalRenderer: NSObject {
             encoder.setRenderPipelineState(shapeAlphaPipeline)
             drawShape(borderVerts, as: .triangle, on: encoder, device: device)
         }
+        // Motion vectors (MotionVectors.cpp) — drawn here, alongside border/darken-center, rather
+        // than upstream's own spot (baked into the pre-warp buffer so the trail's own decay fades
+        // them like everything else) — a documented simplification, see motionVectorVertices' own
+        // doc comment for why. `Self.motionVectorVertices` returns empty immediately when
+        // `mv_a < 0.0001` (the vast majority of presets), so this is a no-op call in the common case.
+        let motionVectorVerts = Self.motionVectorVertices(
+            model.motionVectorParams, warpParams: model.warpParams,
+            warpTime: warpTime, warpScaleInverse: warpScaleInverse, warpFactors: warpFactors,
+            aspect: aspectXY, invAspect: invAspectXY, pixelSize: pixelSize
+        )
+        if !motionVectorVerts.isEmpty {
+            encoder.setRenderPipelineState(shapeAlphaPipeline)
+            drawShape(motionVectorVerts, as: .line, on: encoder, device: device)
+        }
 
         encoder.endEncoding()
 
@@ -1454,7 +1468,7 @@ final class MilkdropMetalRenderer: NSObject {
     }
 
     private func drawShape(_ vertices: [ShapeVertex], as primitive: MTLPrimitiveType, on encoder: MTLRenderCommandEncoder, device: MTLDevice) {
-        let minCount = primitive == .triangleStrip ? 2 : 3
+        let minCount = (primitive == .triangleStrip || primitive == .line) ? 2 : 3
         guard vertices.count >= minCount,
               let buffer = transientBuffers.buffer(for: vertices, device: device)
         else { return }
@@ -1643,6 +1657,145 @@ final class MilkdropMetalRenderer: NSObject {
             verts.append(center)
             verts.append(ShapeVertex(position: rim[i], color: rimColor))
             verts.append(ShapeVertex(position: next, color: rimColor))
+        }
+        return verts
+    }
+
+    // MARK: - Motion vectors (MotionVectors.cpp — a grid of small arrows showing the warp's flow)
+
+    /// Exact Swift port of Shaders.metal's `feedback_fragment` warp-transform math (through the
+    /// aspect-ratio-undo step, before the fragment's own out-of-bounds-color early return) — gives
+    /// "which texture-space point did this frame's (u, v) sample its content from in the previous
+    /// frame". Real Milkdrop's own `warp_coordinates` texture (see
+    /// PresetMotionVectorsVertexShaderGlsl330.vert) holds exactly this same per-pixel value,
+    /// pre-rendered once by the fragment shader that draws the warp mesh; Prism has no separate
+    /// render target for it (adding one, and a second color attachment to the hot per-frame warp
+    /// pass, is a bigger architectural change than this decorative-overlay feature warrants), so
+    /// this recomputes the identical closed-form formula directly for just the handful of grid
+    /// points motion vectors actually need instead.
+    /// **Documented simplification**: this is always the *fixed-formula* warp (whatever
+    /// `model.warpParams` currently holds), even for a preset with its own `per_pixel_N=` script or
+    /// a compiled `warp_N=` shader — those replace the per-pixel result with something no longer
+    /// expressible as one closed formula. The base zoom/rot/warp parameters those still animate
+    /// around are exactly what's used here, so the arrows still sweep in a directionally-correct
+    /// way for the common case; a script's own point-to-point deviation from that base just isn't
+    /// reflected. Motion vectors are a decorative accent (8.2% of the corpus enables them), not a
+    /// primary preset element, so this trades a small amount of per-preset exactness for avoiding a
+    /// second render target on the hot path.
+    private static func reverseWarpedUV(
+        u: Float, v: Float, zoom: Float, zoomExponent: Float, rot: Float, warp: Float,
+        cx: Float, cy: Float, dx: Float, dy: Float, sx: Float, sy: Float,
+        warpTime: Float, warpScaleInverse: Float, warpFactors: SIMD4<Float>,
+        aspect: SIMD2<Float>, invAspect: SIMD2<Float>
+    ) -> SIMD2<Float> {
+        let pos = SIMD2<Float>((u - 0.5) * 2.0, (v - 0.5) * 2.0)
+
+        let zoom2 = powf(zoom, powf(zoomExponent, simd_length(pos) * 2.0 - 1.0))
+        let zoom2Inverse = 1.0 / zoom2
+
+        var u2 = pos.x * aspect.x * 0.5 * zoom2Inverse + 0.5
+        var v2 = pos.y * aspect.y * 0.5 * zoom2Inverse + 0.5
+
+        u2 = (u2 - cx) / sx + cx
+        v2 = (v2 - cy) / sy + cy
+
+        u2 += warp * 0.0035 * sinf(warpTime * 0.333 + warpScaleInverse * (pos.x * warpFactors.x - pos.y * warpFactors.w))
+        v2 += warp * 0.0035 * cosf(warpTime * 0.375 - warpScaleInverse * (pos.x * warpFactors.z + pos.y * warpFactors.y))
+        u2 += warp * 0.0035 * cosf(warpTime * 0.753 - warpScaleInverse * (pos.x * warpFactors.y - pos.y * warpFactors.z))
+        v2 += warp * 0.0035 * sinf(warpTime * 0.825 + warpScaleInverse * (pos.x * warpFactors.x + pos.y * warpFactors.w))
+
+        let ru = u2 - cx
+        let rv = v2 - cy
+        let cosRot = cosf(rot)
+        let sinRot = sinf(rot)
+        u2 = ru * cosRot - rv * sinRot + cx
+        v2 = ru * sinRot + rv * cosRot + cy
+
+        u2 -= dx
+        v2 -= dy
+
+        u2 = (u2 - 0.5) * invAspect.x + 0.5
+        v2 = (v2 - 0.5) * invAspect.y + 0.5
+
+        return SIMD2<Float>(u2, v2)
+    }
+
+    /// Grid/clamping logic ported line-for-line from MotionVectors.cpp's `Draw` (the +0.25 offsets,
+    /// the >64/>48 clamps forcing their diversion term to 0, the 0.0001...0.9999 visibility window)
+    /// — real Milkdrop tunes these constants specifically so a line is never exactly on the screen
+    /// edge, not arbitrary. Each grid point's line goes from itself to the reverse-warped point (via
+    /// `reverseWarpedUV` above), length-clamped exactly as `PresetMotionVectorsVertexShaderGlsl330
+    /// .vert` does (`minimum_length`, tuned there so line-smoothing/antialiasing can't shrink a
+    /// short vector down to invisible).
+    private static func motionVectorVertices(
+        _ params: MilkdropMotionVectorParams, warpParams: MilkdropWarpParams,
+        warpTime: Float, warpScaleInverse: Float, warpFactors: SIMD4<Float>,
+        aspect: SIMD2<Float>, invAspect: SIMD2<Float>, pixelSize: CGSize
+    ) -> [ShapeVertex] {
+        guard params.a >= 0.0001 else { return [] }
+
+        var countX = Int(params.x)
+        var countY = Int(params.y)
+        guard countX > 0, countY > 0 else { return [] }
+
+        var divertX = params.x - Float(countX)
+        var divertY = params.y - Float(countY)
+        if countX > 64 { countX = 64; divertX = 0 }
+        if countY > 48 { countY = 48; divertY = 0 }
+        divertX = min(1.0, max(0.0, divertX))
+        divertY = min(1.0, max(0.0, divertY))
+        let divertX2 = params.dx
+        let divertY2 = params.dy
+
+        let widthF = Float(pixelSize.width)
+        let heightF = Float(pixelSize.height)
+        let inverseWidth = widthF > 0 ? 1.25 / widthF : 0
+        let inverseHeight = heightF > 0 ? 1.25 / heightF : 0
+        let minimumLength = (inverseWidth * inverseWidth + inverseHeight * inverseHeight).squareRoot()
+
+        let color = SIMD4<Float>(params.r, params.g, params.b, params.a)
+
+        func toPixel(_ grid: SIMD2<Float>) -> SIMD2<Float> {
+            // Milkdrop's grid space is 0...1, top-down; Prism's shape vertices are -1...1
+            // center-origin, y-up (see borderVertices/darkenCenterVertices above) — same
+            // `pos*2-1; pos.y = -pos.y` remap PresetMotionVectorsVertexShaderGlsl330.vert applies.
+            let ndc = SIMD2<Float>(grid.x * 2.0 - 1.0, -(grid.y * 2.0 - 1.0))
+            return SIMD2<Float>(ndc.x * 0.5 * widthF, ndc.y * 0.5 * heightF)
+        }
+
+        var verts: [ShapeVertex] = []
+        verts.reserveCapacity((countX + 1) * 2)
+        for y in 0..<countY {
+            let posY = (Float(y) + 0.25) / (Float(countY) + divertY + 0.25 - 1.0) - divertY2
+            guard posY > 0.0001, posY < 0.9999 else { continue }
+
+            for x in 0..<countX {
+                let posX = (Float(x) + 0.25) / (Float(countX) + divertX + 0.25 - 1.0) + divertX2
+                guard posX > 0.0001, posX < 0.9999 else { continue }
+
+                let start = SIMD2<Float>(posX, posY)
+                let oldUV = reverseWarpedUV(
+                    u: posX, v: 1.0 - posY,
+                    zoom: warpParams.zoom, zoomExponent: warpParams.zoomExponent, rot: warpParams.rot,
+                    warp: warpParams.warpAmount, cx: warpParams.rotCX, cy: warpParams.rotCY,
+                    dx: warpParams.xPush, dy: warpParams.yPush, sx: warpParams.stretchX, sy: warpParams.stretchY,
+                    warpTime: warpTime, warpScaleInverse: warpScaleInverse, warpFactors: warpFactors,
+                    aspect: aspect, invAspect: invAspect
+                )
+
+                var dist = (oldUV - start) * params.length
+                let len = simd_length(dist)
+                if len > minimumLength {
+                    // Keep dist as-is.
+                } else if len > 0.00000001 {
+                    dist *= minimumLength / len
+                } else {
+                    dist = SIMD2<Float>(minimumLength, minimumLength)
+                }
+
+                verts.append(ShapeVertex(position: toPixel(start), color: color))
+                verts.append(ShapeVertex(position: toPixel(start + dist), color: color))
+            }
         }
         return verts
     }

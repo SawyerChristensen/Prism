@@ -235,6 +235,23 @@ struct MilkdropPresetFile {
     var darken: Bool = false
     var solarize: Bool = false
     var invert: Bool = false
+    /// MotionVectors.cpp's grid-of-arrows overlay, gated on `mv_a > 0` (default 0 — invisible for
+    /// the vast majority of presets; measured 7/26: 8.2% of the corpus sets it nonzero). Defaults
+    /// confirmed against PresetState.hpp exactly. Real Milkdrop's own key-name inconsistency,
+    /// confirmed against PresetState::Initialize rather than assumed: `mv_x`/`mv_y` themselves are
+    /// parsed from `nMotionVectorsX`/`nMotionVectorsY` (a legacy name mismatch), while every other
+    /// `mv_*` field matches its own per-frame variable name exactly, same convention as
+    /// `ob_*`/`ib_*` above. All nine are per-frame-scriptable (PerFrameContext.cpp's `mv_*`
+    /// REG_VARs).
+    var motionVectorsX: Float = 12.0
+    var motionVectorsY: Float = 9.0
+    var motionVectorsDX: Float = 0.0
+    var motionVectorsDY: Float = 0.0
+    var motionVectorsLength: Float = 0.9
+    var motionVectorsR: Float = 1.0
+    var motionVectorsG: Float = 1.0
+    var motionVectorsB: Float = 1.0
+    var motionVectorsA: Float = 0.0
 
     init(contentsOf url: URL) throws {
         // Presets in the wild are inconsistently encoded (Milkdrop predates any UTF-8 convention),
@@ -418,6 +435,16 @@ struct MilkdropPresetFile {
         darken = boolIn(constants, "bdarken", darken)
         solarize = boolIn(constants, "bsolarize", solarize)
         invert = boolIn(constants, "binvert", invert)
+
+        motionVectorsX = float("nmotionvectorsx", motionVectorsX)
+        motionVectorsY = float("nmotionvectorsy", motionVectorsY)
+        motionVectorsDX = float("mv_dx", motionVectorsDX)
+        motionVectorsDY = float("mv_dy", motionVectorsDY)
+        motionVectorsLength = float("mv_l", motionVectorsLength)
+        motionVectorsR = float("mv_r", motionVectorsR)
+        motionVectorsG = float("mv_g", motionVectorsG)
+        motionVectorsB = float("mv_b", motionVectorsB)
+        motionVectorsA = float("mv_a", motionVectorsA)
 
         shapes = (0..<4).map { idx in
             let dict = shapeConstants[idx] ?? [:]
