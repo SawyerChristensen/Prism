@@ -207,18 +207,26 @@ persistent state. **Fixed**, defense-in-depth at every layer:
 
 ## Open — other
 
-- [x] Drag-and-drop `.milk` loading — **done 7/27**: dropping a preset file anywhere on the window
-  loads it, same as `⌘O`'s picker. `ContentView.handlePresetDrop` accepts any file drag (so Finder's
-  cursor doesn't show a reject indicator over a plain file) and only actually loads it if
-  `url.pathExtension` is `milk`; a thin border overlay (`isDropTargeted`) is the only feedback while
-  a drag is hovering. `NSItemProvider`'s completion handler isn't MainActor-isolated, so the actual
-  load hops back via `Task { @MainActor in }` before touching `@State`/calling `loadPresetAndTrack`
-  (which itself needs security-scoped access to a URL the drag session handed us, not one this app
-  picked via its own panel — same `startAccessingSecurityScopedResource`/`stopAccessingSecurityScopedResource`
-  pattern the existing `.fileImporter` closure already uses). Verified via full `xcodebuild build`
-  (zero warnings, matching this project's zero-warning policy) — not eyeballed live (see testing
-  policy below on why GUI automation isn't used here), so a real drag-a-file-onto-the-window check
-  is still worth doing by hand.
+- [x] Drag-and-drop `.milk` loading — **done 7/27, rewritten same day after "not working" report**:
+  dropping a preset file anywhere on the window loads it, same as `⌘O`'s picker. First attempt used
+  SwiftUI's `.onDrop` + `NSItemProvider` — user-reported "no visual reaction at all" (no cursor/
+  highlight feedback), meaning nothing in the view hierarchy was actually registering as a drop
+  target, not just a failed read after accepting. Rewritten on AppKit's own `NSDraggingDestination`
+  directly on the MTKView (`PresetDroppableMTKView` in `MilkdropMetalView.swift`) —
+  `registerForDraggedTypes([.fileURL])` + `draggingEntered`/`draggingUpdated`/`performDragOperation`,
+  the same mechanism a plain AppKit app uses, reading the dropped URL off the dragging pasteboard
+  (`NSPasteboard.readObjects(forClasses: [NSURL.self], ...)` — the traditional, sandbox-blessed path
+  for a dropped file under App Sandbox, unlike `NSItemProvider` which is primarily an iOS/share-
+  extension mechanism). Doesn't conflict with the existing tap-to-advance gesture
+  (`MilkdropVisualizerView`'s `.onTapGesture`, applied to the same view): dragging callbacks only
+  fire during a genuine external drag session, a separate AppKit dispatch path from mouse click
+  handling. `handlePresetDrop` (`ContentView.swift`) now takes a plain, already-`.milk`-filtered
+  `URL` and calls `loadPresetAndTrack` directly — AppKit's dragging callbacks run on the main thread
+  already, so (unlike the `NSItemProvider` version) no `Task { @MainActor }` hop is needed. Verified
+  via full `xcodebuild build` + `PrismTests build-for-testing` (zero warnings) and a brief direct
+  launch-and-terminate of the built binary (confirms no startup crash) — the actual drag interaction
+  itself still hasn't been verified live (no way to simulate an external Finder drag from this
+  environment), so a real drag-a-file-onto-the-window check by hand is still the one thing left.
 - [x] Fill out the app icon list in assets — **done 7/26**: `AppIcon.appiconset` only had the
   512x512@2x slot filled (`prismAppIcon.png`); every other mac idiom slot (16/32/128/256/512 at
   1x/2x) had no filename, so Xcode was synthesizing them by naive scaling instead of using real
