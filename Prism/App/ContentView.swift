@@ -415,15 +415,10 @@ struct ContentView: View {
     /// unobservable — see PrismDebug.swift's own doc comment on why `startupTracing` (not
     /// `verboseLogging`) is on by default.
     private func handlePresetDrop(_ url: URL) {
-        NSLog("Prism[drop]: handlePresetDrop entered for %@", url.path)
         let accessing = url.startAccessingSecurityScopedResource()
-        NSLog("Prism[drop]: startAccessingSecurityScopedResource returned %@", accessing ? "true" : "false")
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let readable = FileManager.default.isReadableFile(atPath: url.path)
-        NSLog("Prism[drop]: FileManager.isReadableFile = %@", readable ? "true" : "false")
         PrismDebug.trace("handlePresetDrop: loading \(url.lastPathComponent)")
         loadPresetAndTrack(from: url)
-        NSLog("Prism[drop]: loadPresetAndTrack returned, presetLoadError = %@", visualizerModel.presetLoadError ?? "nil")
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL

@@ -222,11 +222,13 @@ persistent state. **Fixed**, defense-in-depth at every layer:
   fire during a genuine external drag session, a separate AppKit dispatch path from mouse click
   handling. `handlePresetDrop` (`ContentView.swift`) now takes a plain, already-`.milk`-filtered
   `URL` and calls `loadPresetAndTrack` directly — AppKit's dragging callbacks run on the main thread
-  already, so (unlike the `NSItemProvider` version) no `Task { @MainActor }` hop is needed. Verified
-  via full `xcodebuild build` + `PrismTests build-for-testing` (zero warnings) and a brief direct
-  launch-and-terminate of the built binary (confirms no startup crash) — the actual drag interaction
-  itself still hasn't been verified live (no way to simulate an external Finder drag from this
-  environment), so a real drag-a-file-onto-the-window check by hand is still the one thing left.
+  already, so (unlike the `NSItemProvider` version) no `Task { @MainActor }` hop is needed. **Confirmed
+  working live 7/27** (user tested by hand: cursor/highlight shows on drag-over, drop loads the
+  preset) — the earlier rounds of "still not working" reports during this same day turned out to be
+  because the fixes were being committed to an isolated git worktree the whole time, never reaching
+  the actual checkout Xcode was building from; once that mismatch was found and the branch was
+  fast-forward-merged into the real checkout, this implementation worked on the first real test. See
+  the "no worktrees" note in the testing-policy section below.
 - [x] Fill out the app icon list in assets — **done 7/26**: `AppIcon.appiconset` only had the
   512x512@2x slot filled (`prismAppIcon.png`); every other mac idiom slot (16/32/128/256/512 at
   1x/2x) had no filename, so Xcode was synthesizing them by naive scaling instead of using real
@@ -281,6 +283,12 @@ persistent state. **Fixed**, defense-in-depth at every layer:
 - **Never run `xcodebuild test` directly** — it launches the real, audio-capturing Prism app and
   can hang unkillable. Use `xcodebuild build-for-testing` (compile-only) or a standalone `swiftc`
   harness instead.
+- **Don't use an isolated git worktree (a separate directory) for Prism work** — work directly in
+  the one real checkout. Added 7/27 after a session spent an entire debugging back-and-forth
+  (three rewritten drag-and-drop implementations, none of which changed anything observable)
+  before discovering every fix had been committed to an isolated worktree the whole time, never
+  reaching the checkout Xcode was actually building from. Branches within the one checkout are
+  fine — it's specifically the separate-directory isolation that caused this.
 - **Any feature that parses a new kind of preset input** must be tested against at least one real,
   byte-for-byte-copied `.milk` fixture under `PrismTests/Fixtures/` — not a synthetic string
   literal, even a "verbatim-transcribed" one (a Swift `"""` literal always normalizes line endings,
