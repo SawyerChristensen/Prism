@@ -12,8 +12,8 @@ measurement after a fix, don't assume it worked.
 
 ## Open — shader compile gaps (`MilkdropShaderTranslator.swift`/`MilkdropMetalRenderer.swift`)
 
-Current state (2026-07-26): full 9,795-file corpus, **warp_N= 62.72% (4,970/7,924), comp_N=
-68.03% (5,423/7,971)** compile through a real `MTLDevice`. See `PROJECT.md`'s development history
+Current state (2026-07-26): full 9,795-file corpus, **warp_N= 63.35% (5,020/7,924), comp_N=
+68.06% (5,425/7,971)** compile through a real `MTLDevice`. See `PROJECT.md`'s development history
 for everything already fixed to get here. Ordered by real full-corpus error-signature counts as of
 the last scan (`dev-notes/corpus-shader-scan-2026-07-26-followup/README.md` explains how to rerun
 it) — re-measure before trusting these counts, they'll drift as fixes land.
@@ -25,16 +25,33 @@ it) — re-measure before trusting these counts, they'll drift as fixes land.
   comp_). Needs real type-tracking: walk the shader body, infer each local's declared width from
   its first declaration, insert a narrowing swizzle wherever a wider expression is assigned into
   it — a lightweight symbol table, bigger than any fix so far (those were all call-site/text-
-  substitution scoped). Real regression risk to the 62.72%/68.03% that already compiles —
+  substitution scoped). Real regression risk to the 63.35%/68.06% that already compiles —
   re-verify against the full corpus after, not just a sample.
 - [ ] **"ambiguous call to `dot`/`length`/`pow`" (375x/152x/47x)**: almost certainly cascading
   symptoms of the narrowing item above (a wrongly-widened/narrowed argument makes overload
   resolution ambiguous), not independent bugs. Re-measure after that fix before spending time here.
-- [ ] **46x `MyGet`, 45x `sw2`, 45x "expression is not assignable", 44x "called object type
-  'float4' is not a function or function pointer", 62x undeclared `sunpos`, 41x undeclared
-  `samples`, 30x undeclared `res`**: smaller, not yet investigated individually. Some may be
-  genuine bugs in the *original preset*, not a translator gap — check a real failing example for
-  each before assuming it's fixable.
+- [ ] **45x `sw2`, 45x "expression is not assignable", 46x "called object type 'float4' is not a
+  function or function pointer", 62x undeclared `sunpos`, 41x undeclared `samples`, 30x undeclared
+  `res`**: smaller, not yet investigated individually. Some may be genuine bugs in the *original
+  preset*, not a translator gap — check a real failing example for each before assuming it's
+  fixable. (`sw2`/`sunpos`/`samples`/`res` look like they're read from `per_frame_*=` script
+  variables the shader expects to see as if they were `q`-vars — a different mechanism than the
+  `#define`-alias bug just below, unconfirmed.)
+- [x] **~48x "undeclared identifier 'MyGet'"/69x broken `sat(...)` calls/~100x custom-texture
+  aliases silently resolving to the wrong (likely-missing) texture**: **fixed 7/26** — root cause
+  was a plain object-like preprocessor alias before `shader_body`, e.g. `#define MyGet GetPixel`,
+  `#define sat saturate`, `#define sampler_pic sampler_prayerwheel` (confirmed via real corpus
+  scan of preamble `#define` lines, ~213 files). Not a function *definition*
+  (`extractHelperFunctions`'s shape) or a `;`-terminated variable declaration
+  (`preambleDeclarations`'s shape) — a `#define` line has neither, so `preambleDeclarations`'s
+  semicolon-split was silently merging it into garbage and dropping it, leaving the alias
+  unrecognized everywhere downstream. `expandObjectMacros` now substitutes each alias with its
+  real target before texture discovery/intrinsic renaming/helper extraction ever run. Measured
+  impact on the full corpus: `warp_N=` 62.72% -> 63.35% (+0.63pt, 4,970 -> 5,020 OK),
+  `comp_N=` 68.03% -> 68.06% (+0.03pt), and 14/3 `translateFail` (outright `translate()` nil)
+  dropped to 0/0 — modest, since most files hitting this were *also* blocked by the still-open
+  narrowing bug above, but a handful were unblocked outright and the specific error signature is
+  now gone from the top-30 list entirely.
 - [x] **~400-450x "invalid operands to binary expression ('float' and 'int')"**: HLSL's `%` does
   floating-point modulo; MSL's `%` is integer-only. **Fixed 7/26**: `MilkdropShaderTranslator`
   now walks a small expression grammar (postfix chains, unary prefixes, nested groups, `*`/`/`/`%`'s
