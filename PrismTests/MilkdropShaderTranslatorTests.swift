@@ -221,6 +221,43 @@ struct MilkdropShaderTranslatorTests {
         #expect(!result.body.contains(".xyz"))
     }
 
+    // MARK: - Fix from the 7/26 full-corpus compile scan (the single biggest cause measured that
+    // day, ~2,554+ instances): the auto-appended swizzle above used to *always* assume float3
+    // (matching the common `ret = tex2D(...)` shape), but a texture call that's the entire
+    // initializer of a `<type> name = ...;` declaration needs a swizzle matching *that* declared
+    // width — a real corpus preset's `float4 noise9 = tex3D(sampler_noisevol_hq, ...);` wanted the
+    // full float4 (no swizzle at all), but got force-narrowed to float3 by the old blind default,
+    // turning a valid declaration into a width mismatch Prism's own translator introduced.
+
+    @Test func declaredFloat4InitializerGetsNoSwizzleAtAll() throws {
+        let source = "shader_body\n{\nfloat4 noise9 = tex3D(sampler_noisevol_hq, pos);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_noisevol_hq.sample(sampler_noisevol_hq_smp, pos);"))
+        #expect(!result.body.contains(".xyz"))
+    }
+
+    @Test func declaredFloat2InitializerGetsXYSwizzle() throws {
+        let source = "shader_body\n{\nfloat2 uv2 = tex2D(sampler_main, uv);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).xy;"))
+    }
+
+    @Test func declaredScalarFloatInitializerGetsXSwizzle() throws {
+        let source = "shader_body\n{\nfloat x = tex2D(sampler_main, uv);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).x;"))
+    }
+
+    @Test func plainAssignmentToAlreadyDeclaredVariableStillDefaultsToFloat3() throws {
+        // No type keyword immediately precedes `name =` here (it's a bare reassignment, not a
+        // declaration) — `declaredAssignmentWidth` can't know `existing`'s real type without a
+        // full symbol table, so this deliberately falls back to the original float3 default,
+        // matching the common `ret = tex2D(...)` case this whole mechanism was first built for.
+        let source = "shader_body\n{\nexisting = tex2D(sampler_main, uv);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).xyz;"))
+    }
+
     @Test func lowercaseTex2dAndTex3dAreRecognized() throws {
         // Confirmed against real corpus presets that use lowercase `tex2d`/`tex3d` — a small
         // fraction of compile failures (6/1384 in the 7/25 measurement), but a free fix once

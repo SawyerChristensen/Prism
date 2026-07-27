@@ -409,17 +409,71 @@ enum MilkdropShaderTranslator {
             // patterns in the survey corpus) — MSL has no implicit vector-narrowing conversion at
             // all, so that assignment simply fails to compile without an explicit swizzle. If the
             // original call isn't already explicitly swizzled (`.xyz`/`.rgb`/`.a`/etc immediately
-            // follows in the source), append `.xyz` here to reproduce what HLSL did silently;
-            // leave an already-swizzled call alone so `tex2D(sampler, uv).a` keeps working exactly
-            // as before (`.xyz` has no `.a` component, so blindly appending it would break that
-            // call instead of fixing anything).
+            // follows in the source), a swizzle needs to be appended here to reproduce what HLSL
+            // did silently; leave an already-swizzled call alone so `tex2D(sampler, uv).a` keeps
+            // working exactly as before.
+            //
+            // Which swizzle: **not always `.xyz`** (confirmed 7/26 as a real, high-volume bug —
+            // the single biggest cause of corpus-wide compile failures measured that day). A call
+            // that's the *entire initializer* of a `<type> name = ...;` declaration needs a
+            // swizzle matching *that* declared width, not a hardcoded float3 — real corpus example:
+            // `float4 noise9 = tex3D(sampler_noisevol_hq, ...);` wants the full float4 (no swizzle
+            // at all), but this function used to always append `.xyz` regardless, turning a
+            // perfectly valid declaration into a width mismatch **that Prism's own translator
+            // introduced**, not one that existed in the original preset text. `ret`'s own
+            // declaration (`float3 ret = float3(0.0);`, in the wrapping template, not this body) is
+            // exactly why `.xyz` was the right default for the common case this was originally
+            // written for (`ret = tex2D(...);`) — it just wasn't the *only* case.
             if call.range.upperBound >= chars.count || chars[call.range.upperBound] != "." {
-                result.append(".xyz")
+                switch declaredAssignmentWidth(beforeCallAt: call.range.lowerBound, in: chars) {
+                case 4: break // Full float4 wanted — no swizzle needed, keep the whole sample.
+                case 3: result.append(".xyz")
+                case 2: result.append(".xy")
+                case 1: result.append(".x")
+                default: result.append(".xyz") // Unknown target (not a `<type> name = ...` initializer) — the original, still-common-case default.
+                }
             }
             cursor = call.range.upperBound
         }
         result.append(contentsOf: chars[cursor...])
         return result
+    }
+
+    /// If the texture call starting at `callStart` is the *entire initializer* of a
+    /// `<type> name = ...;` declaration (`float4 noise9 = tex3D(...)`, `float3 x = tex2D(...)`,
+    /// etc.), returns that declared type's component count (1/2/3/4) — scans backward from
+    /// `callStart` past whitespace, an `=` (rejecting `==`/`<=`/`>=`/`!=`, which aren't
+    /// assignment), an identifier (the variable name), and checks whether a `float`/`float1-4`
+    /// keyword immediately precedes that identifier. `nil` for anything else (a bare `name =
+    /// tex2D(...)` assignment to an already-declared variable, the call embedded in a larger
+    /// expression, the very start of the shader body, etc.) — the caller falls back to its
+    /// original float3 default for those, unchanged from before this function existed.
+    private static func declaredAssignmentWidth(beforeCallAt callStart: Int, in chars: [Character]) -> Int? {
+        func isIdentifierChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" }
+
+        var i = callStart - 1
+        func skipWhitespace() { while i >= 0, chars[i].isWhitespace { i -= 1 } }
+
+        skipWhitespace()
+        guard i >= 0, chars[i] == "=" else { return nil }
+        // Reject `==`/`<=`/`>=`/`!=` — comparisons, not assignment.
+        if i - 1 >= 0, ["<", ">", "!", "="].contains(chars[i - 1]) { return nil }
+        i -= 1
+        skipWhitespace()
+
+        guard i >= 0, isIdentifierChar(chars[i]) else { return nil }
+        while i >= 0, isIdentifierChar(chars[i]) { i -= 1 }
+        skipWhitespace()
+
+        for (keyword, width): (String, Int) in [("float4", 4), ("float3", 3), ("float2", 2), ("float1", 1), ("float", 1)] {
+            let kw = Array(keyword)
+            let start = i - kw.count + 1
+            guard start >= 0, Array(chars[start...i]) == kw else { continue }
+            // Reject a false match on a longer identifier's suffix (e.g. "myfloat3").
+            guard start == 0 || !isIdentifierChar(chars[start - 1]) else { continue }
+            return width
+        }
+        return nil
     }
 
     /// The small set of HLSL-vs-MSL naming mismatches Milkdrop shader code actually exercises
