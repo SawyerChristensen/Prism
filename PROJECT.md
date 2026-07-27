@@ -79,6 +79,10 @@ This file is a map of the codebase (what each file is responsible for) plus a de
   user-picked folder for `.milk` files, persisted via a security-scoped bookmark.
 - **`MilkdropLastPresetStore.swift`** — persists a bookmark for the single most-recently-loaded
   preset file, so Prism reopens where it left off across launches.
+- **`MilkdropPresetComplexityAnalyzer.swift`** — static text scan of a `.milk` file's `warp_N=`/
+  `comp_N=` shader lines (tex3D noise-volume lookups, multi-tap GetPixel/GetBlur neighbor sampling)
+  to flag presets expensive enough to render at only a few fps. `ContentView`'s sequential
+  stepping/auto-cycle skip anything flagged, by default, before ever handing the URL to the engine.
 - **`Shaders.metal`** — the static (not dynamically-compiled) Metal shaders: the feedback
   warp/mesh vertex+fragment pairs, shape/waveform fill and border pipelines, blur downsample, old-
   style composite, crossfade blend.
@@ -463,3 +467,24 @@ lines away. Feeds into the same `loadPresetAndTrack` choke point every other loa
 uses, so crossfade/history/last-preset-persistence all work identically regardless of how the
 preset arrived. A thin `strokeBorder` overlay, shown only while `isDropTargeted` is true, is the
 one piece of feedback that a drag is hovering a valid target at all.
+
+### 2026-07-27, continued — expensive-preset detection and default skip
+User-reported: the preset "amandio c - embrace 07 z in the unlikely uneventuality c" renders at
+~3fps against a 120fps target. Traced to real per-pixel cost, not a Prism throttle/bug: this
+branch (`projectm-vendor-rewrite`) runs the real vendored libprojectM 4.2.0 C++ engine, which
+exposes no shader-source/complexity accessor over its public C API (`projectm_load_preset_file` is
+fire-and-forget) — so there's no way to ask the engine "is this expensive" before or during a load.
+That preset's `warp_N=`/`comp_N=` shader lines do a `tex3D` noise-volume lookup plus a multi-tap
+`GetPixel` neighbor sample (Sobel-style edge/gradient effect) every pixel, every frame — genuinely
+heavy per-pixel work, unlike presets that only warp a coarse mesh per-vertex.
+
+Added `MilkdropPresetComplexityAnalyzer` — a static scan of the raw `.milk` text (line-oriented,
+`warp_N=`/`comp_N=` lines *are* the shader source verbatim) that flags a preset expensive if it
+contains a `tex3D(` call, or 3+ `GetPixel`/`GetBlur` neighbor-sample calls. Runs entirely outside
+the C++ engine, so it can gate a load before `loadPreset` is ever called. Wired into
+`ContentView.loadNextSequentialPreset` (shared by Space, tap, and the auto-cycle timer): expensive
+presets default to being skipped, walking forward through the library bounded to one full pass so
+a library that's entirely flagged still terminates rather than spinning forever. Explicit loads
+(Cmd-O, drag-and-drop, history Left/Right, launch-time restore) intentionally bypass this — the
+user picked that exact file, so it still loads. See `TO DO.md` for the follow-up idea (render
+flagged presets at reduced resolution and upscale, instead of skipping them outright).

@@ -380,8 +380,30 @@ struct ContentView: View {
             isLibraryFolderPickerPresented = true
             return
         }
-        guard let url = presetLibrary.nextSequentialPresetURL(after: visualizerModel.presetURL) else { return }
+        guard let url = nextNonExpensiveSequentialPresetURL(after: visualizerModel.presetURL) else { return }
         loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
+    }
+
+    /// Walks `presetLibrary.nextSequentialPresetURL(after:)` forward, skipping any preset
+    /// `MilkdropPresetComplexityAnalyzer` flags as expensive (TO DO.md: some presets measured as
+    /// low as 3fps due to genuinely heavy per-pixel warp/comp shaders) — expensive presets default
+    /// to being skipped during sequential stepping/auto-cycle for now, rather than ever landing on
+    /// screen at a few fps. Bounded to one full pass over the library so a library that's *all*
+    /// flagged expensive still terminates instead of spinning forever — falls back to the first
+    /// candidate found in that case rather than showing nothing at all. Explicit loads (Cmd-O,
+    /// drag-and-drop, history Left/Right, launch-time restore) intentionally bypass this — the user
+    /// picked that exact file, so it should still load.
+    private func nextNonExpensiveSequentialPresetURL(after currentURL: URL?) -> URL? {
+        var candidate = currentURL
+        var firstCandidate: URL?
+        let maxAttempts = max(presetLibrary.presetURLs.count, 1)
+        for _ in 0..<maxAttempts {
+            guard let next = presetLibrary.nextSequentialPresetURL(after: candidate) else { return nil }
+            if firstCandidate == nil { firstCandidate = next }
+            if !MilkdropPresetComplexityAnalyzer.isExpensive(next) { return next }
+            candidate = next
+        }
+        return firstCandidate
     }
 
     /// "1"-"5": records a star rating for whichever preset is on screen right now, then advances
