@@ -72,6 +72,7 @@ final class PresetDroppableMTKView: MTKView {
             NSLog("Prism[drop]: performDragOperation found no .milk URL")
             return false
         }
+        NSLog("Prism[drop]: performDragOperation calling onDropPreset for %@ (onDropPreset is nil: %@)", url.path, onDropPreset == nil ? "true" : "false")
         onDropPreset?(url)
         return true
     }
