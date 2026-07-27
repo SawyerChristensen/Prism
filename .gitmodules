@@ -1,0 +1,3 @@
+[submodule "Prism/Vendor/projectm"]
+	path = Prism/Vendor/projectm
+	url = https://github.com/projectM-visualizer/projectm.git
