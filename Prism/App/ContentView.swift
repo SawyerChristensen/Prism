@@ -26,6 +26,15 @@ struct ContentView: View {
     @State private var isAutoCycleEnabled = false
     @State private var autoCycleTask: Task<Void, Never>?
     private static let autoCycleInterval: Duration = .seconds(20)
+    // Preset history (TO DO.md's "other" section) — every successful load (random draw, manual
+    // Cmd-O pick, or the launch-time restore) appends here, so Left/Right can step back/forward
+    // through what's actually been seen this session rather than each "skip" being a one-way,
+    // unrecoverable random draw. Standard browser-history shape: `presetHistoryIndex` is the
+    // currently-displayed entry, and loading a genuinely new preset (not a Left/Right navigation)
+    // truncates anything past it before appending, same as a fresh navigation in a browser drops
+    // a stale forward branch. There's still no *saved* playlist concept — this is session-only.
+    @State private var presetHistory: [URL] = []
+    @State private var presetHistoryIndex = -1
     // Transient confirmation after "S" saves the current M/T settings for this album (see
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
@@ -172,11 +181,20 @@ struct ContentView: View {
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space jumps
         // to a random preset from the loaded library (same action as tapping the visualizer),
-        // F toggles fullscreen, L (re)picks the library folder, A toggles idle auto-cycling.
+        // F toggles fullscreen, L (re)picks the library folder, A toggles idle auto-cycling,
+        // Left/Right step back/forward through this session's preset history.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S"]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S", .leftArrow, .rightArrow]) { press in
+            if press.key == .leftArrow {
+                loadPreviousPreset()
+                return .handled
+            }
+            if press.key == .rightArrow {
+                loadNextPreset()
+                return .handled
+            }
             switch press.characters {
             case " ":
                 loadRandomPreset()
@@ -229,6 +247,15 @@ struct ContentView: View {
                     loadPresetAndTrack(from: url)
                 }
             }
+            // First-launch (or any launch before one's ever been picked) auto-prompt for the
+            // preset library folder — previously only surfaced lazily, the first time Space/tap/`L`
+            // was pressed, leaving Space a silent no-op until a user stumbled onto that. Harmless to
+            // re-prompt on every launch until a folder is actually configured: `isConfigured` only
+            // ever flips true via a real successful pick (see MilkdropPresetLibrary.setLibraryRoot),
+            // so this never re-prompts someone who's already set one up.
+            if !presetLibrary.isConfigured {
+                isLibraryFolderPickerPresented = true
+            }
             PrismDebug.trace("ContentView.onAppear returned (both calls are async/backgrounded)")
         }
         .task {
@@ -241,9 +268,9 @@ struct ContentView: View {
     /// Space/tap's action: jump straight to a random preset from the configured library — no
     /// preset history/prev-next concept exists yet (see TO DO.md's Phase 4), so every "skip" is an
     /// independent uniform-random draw from the whole scanned folder, same as pressing it again
-    /// could re-pick the same file. Prompts for a library folder instead, the first time this runs
-    /// with none configured yet — mirrors Phase 4's "first-launch (or Settings-triggered) folder
-    /// picker" decision without needing a separate onboarding flow.
+    /// could re-pick the same file. Prompts for a library folder instead if none is configured yet
+    /// — `onAppear`'s own auto-prompt (added 7/26) handles the real first-launch case, so this is
+    /// now mainly a fallback for someone who dismissed that prompt without picking a folder.
     /// `resetAutoCycle` is false only when the auto-cycle loop itself calls this — its own
     /// while-loop cadence already provides the next interval, so restarting the countdown here too
     /// would just replace the in-flight sleeping Task with an equivalent new one for no reason.
@@ -270,7 +297,11 @@ struct ContentView: View {
     /// instance and starts the transition (see MilkdropMetalCoordinator.updateModelIfNeeded). A
     /// failed load's error is surfaced on the *existing* (still on-screen) model, matching the old
     /// behavior of the alert appearing over whatever preset is still visible.
-    private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true) {
+    /// `recordInHistory` is false only for a Left/Right history navigation itself
+    /// (`loadPreviousPreset`/`loadNextPreset` below) — replaying an already-recorded URL from
+    /// `presetHistory` shouldn't re-append it or truncate the very forward branch Right is about
+    /// to step into.
+    private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true, recordInHistory: Bool = true) {
         let newModel = MilkdropVisualizerModel()
         newModel.loadPreset(from: url)
         guard newModel.presetLoadError == nil else {
@@ -279,9 +310,36 @@ struct ContentView: View {
         }
         visualizerModel = newModel
         lastPresetStore.rememberLoaded(url)
+        if recordInHistory {
+            if presetHistoryIndex < presetHistory.count - 1 {
+                presetHistory.removeSubrange((presetHistoryIndex + 1)...)
+            }
+            presetHistory.append(url)
+            presetHistoryIndex = presetHistory.count - 1
+        }
         if resetAutoCycle {
             restartAutoCycleTimerIfNeeded()
         }
+    }
+
+    /// Left arrow: step back to the previous entry in `presetHistory` — a no-op at the very start
+    /// of history (nothing to go back to yet), same as a browser's disabled back button.
+    private func loadPreviousPreset() {
+        guard presetHistoryIndex > 0 else { return }
+        presetHistoryIndex -= 1
+        loadPresetAndTrack(from: presetHistory[presetHistoryIndex], recordInHistory: false)
+    }
+
+    /// Right arrow: step forward to the next already-visited entry if one exists (from a prior
+    /// Left), otherwise falls back to drawing a fresh random preset — same as Space — since
+    /// there's no pre-built playlist to advance through past what's already been seen.
+    private func loadNextPreset() {
+        guard presetHistoryIndex >= 0, presetHistoryIndex < presetHistory.count - 1 else {
+            loadRandomPreset()
+            return
+        }
+        presetHistoryIndex += 1
+        loadPresetAndTrack(from: presetHistory[presetHistoryIndex], recordInHistory: false)
     }
 
     private func toggleAutoCycle() {
