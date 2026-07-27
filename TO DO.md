@@ -96,7 +96,12 @@ see `PROJECT.md`'s development history for the full investigation writeup.
 
 ## Open — other
 
-- [ ] Fill out the app icon list in assets
+- [x] Fill out the app icon list in assets — **done 7/26**: `AppIcon.appiconset` only had the
+  512x512@2x slot filled (`prismAppIcon.png`); every other mac idiom slot (16/32/128/256/512 at
+  1x/2x) had no filename, so Xcode was synthesizing them by naive scaling instead of using real
+  resampled assets. Generated all 9 missing sizes from the existing 1024x1024 source via `sips`
+  and wired them into `Contents.json`. Verified via a full `xcodebuild build`: `actool` compiles
+  a real `AppIcon.icns` with no warnings.
 - [ ] Preset browser UI: folder-scanned and categorized (mirroring the desktop pack's
   Reaction/Fractal/Geometric/Supernova/Particles/Waveform/Dancer/Sparkle/Hypnotic/`! Transition`
   folder structure), replacing the current single-file `⌘O` picker as the only way to load a
