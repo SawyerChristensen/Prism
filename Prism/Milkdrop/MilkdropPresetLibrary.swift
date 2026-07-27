@@ -18,10 +18,20 @@ final class MilkdropPresetLibrary {
     private static let bookmarkDefaultsKey = "MilkdropPresetLibraryBookmark"
 
     private(set) var rootURL: URL?
-    /// Every `.milk` file found under `rootURL`, scanned once when the root is (re)set — not
-    /// re-scanned on every random pick, since a pack this size (real ones run into the thousands
-    /// of files) makes a fresh recursive directory walk on every keypress wasteful.
+    /// The full recursive scan of `rootURL`, sorted by path — kept separately from `presetURLs`
+    /// so `filterToFavorites`/`clearFavoritesFilter` can narrow/restore the working set without
+    /// re-walking the filesystem.
+    private var scannedPresetURLs: [URL] = []
+    /// What sequential discovery actually walks: either the full scan, or a favorites-narrowed
+    /// subset of it (see `filterToFavorites`). Scanned once when the root is (re)set — not
+    /// re-scanned on every sequential step, since a pack this size (real ones run into the
+    /// thousands of files) makes a fresh recursive directory walk on every keypress wasteful.
+    /// Sorted by path so sequential discovery has a stable, repeatable order across launches
+    /// (`FileManager.enumerator` itself makes no ordering guarantee).
     private(set) var presetURLs: [URL] = []
+    /// Whether `presetURLs` is currently narrowed by `filterToFavorites` rather than showing the
+    /// full scan.
+    private(set) var isShowingFavoritesOnly = false
     private var isAccessingSecurityScopedResource = false
     /// Injectable so tests exercise real bookmark persistence without touching the actual app's
     /// defaults domain (`.standard` in production).
@@ -58,10 +68,35 @@ final class MilkdropPresetLibrary {
         rescan()
     }
 
-    /// Picks a uniformly random preset from the current scan, or `nil` if no library is configured
-    /// (or the configured folder genuinely has no `.milk` files in it).
-    func randomPresetURL() -> URL? {
-        presetURLs.randomElement()
+    /// The next preset in sorted order after `currentURL`, wrapping around to the first preset
+    /// past the end of the list. `currentURL` being `nil` or not found in the current scan (no
+    /// preset loaded yet, or it was loaded from outside this library folder via a manual Cmd-O
+    /// pick) starts back at the first preset. Returns `nil` if no library is configured or the
+    /// configured folder genuinely has no `.milk` files in it.
+    func nextSequentialPresetURL(after currentURL: URL?) -> URL? {
+        guard !presetURLs.isEmpty else { return nil }
+        guard let currentURL, let index = presetURLs.firstIndex(of: currentURL) else {
+            return presetURLs.first
+        }
+        return presetURLs[(index + 1) % presetURLs.count]
+    }
+
+    /// Narrows sequential discovery down to only the files named in a NestDrop bundle's favorites
+    /// list (see `MilkdropNestDropFavoritesList`) — e.g. reviewing a curated subset instead of the
+    /// whole corpus. Matches by filename only (NestDrop bundles don't record folder paths), safe
+    /// here since the real corpus this targets has zero duplicate filenames across it. Degrades
+    /// silently to an empty `presetURLs` (not a crash) if the bundle can't be parsed or none of
+    /// its names match anything under the current scan.
+    func filterToFavorites(from bundleURL: URL) {
+        let names = MilkdropNestDropFavoritesList.presetFilenames(contentsOf: bundleURL)
+        presetURLs = scannedPresetURLs.filter { names.contains($0.lastPathComponent) }
+        isShowingFavoritesOnly = true
+    }
+
+    /// Reverts `filterToFavorites`, restoring the full recursive scan.
+    func clearFavoritesFilter() {
+        presetURLs = scannedPresetURLs
+        isShowingFavoritesOnly = false
     }
 
     private func restoreFromSavedBookmark() {
@@ -92,10 +127,15 @@ final class MilkdropPresetLibrary {
     }
 
     private func rescan() {
+        isShowingFavoritesOnly = false
         guard let rootURL, let enumerator = FileManager.default.enumerator(at: rootURL, includingPropertiesForKeys: nil) else {
+            scannedPresetURLs = []
             presetURLs = []
             return
         }
-        presetURLs = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension.lowercased() == "milk" }
+        scannedPresetURLs = enumerator.compactMap { $0 as? URL }
+            .filter { $0.pathExtension.lowercased() == "milk" }
+            .sorted { $0.path < $1.path }
+        presetURLs = scannedPresetURLs
     }
 }

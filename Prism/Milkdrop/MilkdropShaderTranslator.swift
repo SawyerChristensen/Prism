@@ -157,14 +157,31 @@ enum MilkdropShaderTranslator {
         guard let textures = discoverTextures(in: expandedBody) else { return nil }
 
         var body = rewriteTextureSampleCalls(expandedBody, textures: textures)
-        body = renameIntrinsics(body)
 
         // Must run before `preambleDeclarations` below: that function splits on `;`, which would
         // shred a function body (itself full of statement-terminating `;`s) into garbage fragments
         // if the function text were still mixed in with the plain variable declarations. Fails the
         // whole translation (matching `discoverTextures`'s own contract on `rawBody` above) if any
         // helper function references a malformed texture identifier.
-        guard let (helperFunctions, remainderPreamble, extraArgsByName, helperTextures) = extractHelperFunctions(from: preamble) else { return nil }
+        guard let (helperFunctions, remainderPreamble, extraArgsByName, helperTextures, helperReturnWidths) = extractHelperFunctions(from: preamble) else { return nil }
+
+        // Narrowing (see "MARK: - Implicit narrowing/widening on plain assignments" below) needs a
+        // symbol table of every local's declared width, built from the preamble's plain declarations
+        // (`rawDeclarations`, not yet renamed — this pass runs on original HLSL names, matching
+        // `extractHelperFunctions`'s own per-function narrowing, so `%`/`saturate`/`lerp`/`frac`
+        // haven't been rewritten yet either) and the body's own inline declarations. Deliberately
+        // runs *before* `renameIntrinsics`/`appendExtraArguments` below: neither changes any
+        // identifier's width, and running first avoids the extra `uniforms`/texture arguments
+        // `appendExtraArguments` appends to hoisted-helper call sites ever reaching the width
+        // inferencer's own argument-width scan.
+        let rawDeclarations = regroupFlatVectorArrayInitializers(
+            preambleDeclarations(appendExtraArguments(to: remainderPreamble, forCallsTo: extraArgsByName))
+        )
+        let bodySymbols = builtinSymbolWidths
+            .merging(collectDeclarations(rawDeclarations)) { _, new in new }
+            .merging(collectDeclarations(body)) { _, new in new }
+        body = narrowWideAssignments(body, symbols: bodySymbols, helperReturnWidths: helperReturnWidths)
+        body = renameIntrinsics(body)
 
         // A hoisted helper function is genuinely top-level MSL (see `extractHelperFunctions`'s doc
         // comment), so any call to one — from `shader_body` itself, or from a preamble declaration's
@@ -174,7 +191,7 @@ enum MilkdropShaderTranslator {
         // 'uniforms'", 42x "undeclared identifier 'GetPixel'"/`GetBlur1`/`GetBlur2` in the 7/26
         // corpus scan.
         body = appendExtraArguments(to: body, forCallsTo: extraArgsByName)
-        let declarations = renameIntrinsics(preambleDeclarations(appendExtraArguments(to: remainderPreamble, forCallsTo: extraArgsByName)))
+        let declarations = renameIntrinsics(rawDeclarations)
         if !declarations.isEmpty {
             // The body is wrapped in its own `{ }` block, *nested inside* the hoisted declarations'
             // scope rather than flattened alongside them — real HLSL block-scoping lets
@@ -230,7 +247,7 @@ enum MilkdropShaderTranslator {
     /// Uses paren/brace-depth matching (unlike `extractShaderBody`'s simple landmark search) because,
     /// unlike the single well-known `shader_body` marker, a function's parameter list and body can
     /// both contain arbitrarily nested `(`/`{` of their own.
-    private static func extractHelperFunctions(from preamble: String) -> (functions: String, remainder: String, extraArgsByName: [String: [String]], textures: [TextureBinding])? {
+    private static func extractHelperFunctions(from preamble: String) -> (functions: String, remainder: String, extraArgsByName: [String: [String]], textures: [TextureBinding], returnWidths: [String: Int])? {
         let chars = Array(preamble)
         let typeKeywords = [
             "float2x2", "float3x3", "float4x4",
@@ -239,7 +256,7 @@ enum MilkdropShaderTranslator {
         func isIdentifierChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" }
         func isIdentifierStart(_ c: Character) -> Bool { c.isLetter || c == "_" }
 
-        var functions: [(name: String, signature: String, body: String)] = []
+        var functions: [(name: String, type: String, signature: String, body: String)] = []
         var remainder = ""
         var i = 0
         while i < chars.count {
@@ -302,12 +319,20 @@ enum MilkdropShaderTranslator {
                 remainder.append(chars[i]); i += 1; continue
             }
 
-            functions.append((name: String(chars[k..<idEnd]), signature: String(chars[i..<q]), body: String(chars[q..<s])))
+            functions.append((name: String(chars[k..<idEnd]), type: type, signature: String(chars[i..<q]), body: String(chars[q..<s])))
             i = s
         }
 
-        guard !functions.isEmpty else { return ("", remainder, [:], []) }
+        guard !functions.isEmpty else { return ("", remainder, [:], [], [:]) }
         let names = Set(functions.map(\.name))
+        // Each hoisted function's declared return width (from its own `<type> name(...)` — e.g.
+        // `float2 uv_polar(...)` -> 2), used by `narrowWideAssignments` (see the "MARK: - Implicit
+        // narrowing/widening on plain assignments" section below) to infer the width of a call to
+        // this helper from another function's/the shader body's own assignment RHS.
+        var returnWidths: [String: Int] = [:]
+        for fn in functions {
+            if let width = widthForTypeKeyword(fn.type) { returnWidths[fn.name] = width }
+        }
 
         // Each hoisted function is genuinely top-level MSL (see this function's own doc comment
         // above): it has no implicit access to the wrapping fragment function's `uniforms` buffer
@@ -358,6 +383,41 @@ enum MilkdropShaderTranslator {
             }
         }
 
+        // A hoisted function has no more implicit access to a plain preamble-declared local
+        // (`static float2 sunpos = float2(q15,q16)*q19;`) than it does to `uniforms`/a texture
+        // above — confirmed against real corpus presets: "414.milk"'s warp_ (`cloud(float2 uv_in)
+        // { return (...)-sunpos...; }`) and "xtramartin (578).milk"'s warp_ (`fstep2(float2 xy)
+        // {return 1.0/res*round(res*xy);}`, `res` a preamble local) — 62x/30x "undeclared
+        // identifier 'sunpos'"/`'res'` in the 7/27 corpus scan, unrelated to (and not fixed by)
+        // `preambleDeclarations`'s own static/const-qualifier fix, which only stopped the
+        // declaration itself from being dropped — a hoisted helper referencing it still needs the
+        // exact same explicit-parameter threading as `uniforms`/textures, just for a plain
+        // variable. `preambleLocalTypes` is computed from `remainder` directly (this function's own
+        // output) rather than waiting for `translate`'s later, official `rawDeclarations` — the two
+        // are equivalent for name/type purposes (nothing between here and there changes a
+        // declaration's own name or type keyword).
+        let preambleLocalTypes = collectDeclaredTypeKeywords(preambleDeclarations(remainder))
+        var ownLocals: [String: Set<String>] = [:]
+        for fn in functions {
+            let ownParamNames = Set(collectParameterWidths(fn.signature).keys)
+            ownLocals[fn.name] = calledHelperNames(in: fn.body, candidates: Set(preambleLocalTypes.keys)).subtracting(ownParamNames)
+        }
+        var requiredLocals = ownLocals
+        changed = true
+        while changed {
+            changed = false
+            for fn in functions {
+                var merged = requiredLocals[fn.name] ?? []
+                for callee in calledHelpers[fn.name] ?? [] {
+                    for name in requiredLocals[callee] ?? [] where !merged.contains(name) {
+                        merged.insert(name)
+                        changed = true
+                    }
+                }
+                requiredLocals[fn.name] = merged
+            }
+        }
+
         var extraArgsByName: [String: [String]] = [:]
         for fn in functions {
             var args = ["uniforms"]
@@ -365,14 +425,26 @@ enum MilkdropShaderTranslator {
                 args.append(texture.declaredName)
                 args.append("\(texture.declaredName)_smp")
             }
+            // `.sorted()` — a `Set`'s iteration order isn't guaranteed stable, and this exact
+            // order must match `threadLocalParameters`' own `.sorted()` call below for the
+            // signature's parameter list and every call site's argument list to line up.
+            args.append(contentsOf: (requiredLocals[fn.name] ?? []).sorted())
             extraArgsByName[fn.name] = args
         }
 
         let threaded = functions.map { fn -> String in
             var rewrittenBody = rewriteTextureSampleCalls(fn.body, textures: ownTextures[fn.name] ?? [])
+            // Narrow before `appendExtraArguments`/`threadTextureParameters` below add their own
+            // trailing `uniforms`/texture args to call sites — this pass only needs the function's
+            // own declared parameters plus its own locals, not the threading machinery's additions.
+            let localSymbols = builtinSymbolWidths
+                .merging(collectParameterWidths(fn.signature)) { _, new in new }
+                .merging(collectDeclarations(rewrittenBody)) { _, new in new }
+            rewrittenBody = narrowWideAssignments(rewrittenBody, symbols: localSymbols, helperReturnWidths: returnWidths)
             rewrittenBody = appendExtraArguments(to: rewrittenBody, forCallsTo: extraArgsByName)
             var signature = threadUniformsParameter(intoSignature: fn.signature)
             signature = threadTextureParameters(intoSignature: signature, textures: requiredTextures[fn.name] ?? [])
+            signature = threadLocalParameters(intoSignature: signature, names: (requiredLocals[fn.name] ?? []).sorted(), types: preambleLocalTypes)
             return signature + rewrittenBody
         }
 
@@ -385,7 +457,7 @@ enum MilkdropShaderTranslator {
             }
         }
 
-        return (threaded.joined(separator: "\n\n"), remainder, extraArgsByName, allHelperTextures)
+        return (threaded.joined(separator: "\n\n"), remainder, extraArgsByName, allHelperTextures, returnWidths)
     }
 
     /// Every hoisted-function name (from `candidates`) mentioned as a whole word anywhere in
@@ -442,6 +514,19 @@ enum MilkdropShaderTranslator {
             let textureType = texture.isVolume ? "texture3d<float>" : "texture2d<float>"
             return "\(textureType) \(texture.declaredName), sampler \(texture.declaredName)_smp"
         }.joined(separator: ", ")
+        return "\(withoutCloseParen), \(extra))"
+    }
+
+    /// Appends a `<type> name` parameter for each of `names` (already `.sorted()` by the caller —
+    /// see `extractHelperFunctions`'s own note on why that ordering must match the call-site half)
+    /// to `signature` — the plain-preamble-local threading counterpart to `threadTextureParameters`
+    /// above. `types` (from `collectDeclaredTypeKeywords`) supplies each name's real declared type;
+    /// falls back to `float` for the (never actually observed) case of a name missing from it,
+    /// rather than producing invalid MSL with no type at all.
+    private static func threadLocalParameters(intoSignature signature: String, names: [String], types: [String: String]) -> String {
+        guard !names.isEmpty, signature.hasSuffix(")") else { return signature }
+        let withoutCloseParen = signature.dropLast()
+        let extra = names.map { "\(types[$0] ?? "float") \($0)" }.joined(separator: ", ")
         return "\(withoutCloseParen), \(extra))"
     }
 
@@ -570,10 +655,116 @@ enum MilkdropShaderTranslator {
             guard !statement.isEmpty else { continue }
             let lowered = statement.lowercased()
             guard !lowered.contains("texture"), !lowered.contains("sampler") else { continue }
-            guard keywords.contains(where: { lowered.hasPrefix($0) }) else { continue }
+            // Real corpus declarations are sometimes qualified with a leading `static`/`const`
+            // (`static float2 sunpos = float2(q15,q16)*q19;`, `const float4 samples[5] = {...};`,
+            // `static const float sw2 = (rand_preset.y);`, any order/repetition) — confirmed as the
+            // real root cause behind several distinct "undeclared identifier" corpus-scan signatures
+            // (`sunpos`/`sw2`/`samples`/`res`/`n`, ~180x combined 7/26): the *whole* statement was
+            // being silently dropped here because `lowered.hasPrefix($0)` only ever checked against
+            // the bare `float`/`int`/`bool` keywords, never past a qualifier prefix. Stripped here,
+            // for the purposes of this check only — the qualifier stays in `statement` itself
+            // (`renameIntrinsics`'s own `static const` -> `const` simplification, further downstream,
+            // still runs on the kept text unchanged).
+            var afterQualifiers = lowered
+            for qualifier in ["static", "const"] {
+                while afterQualifiers.hasPrefix(qualifier) {
+                    afterQualifiers = String(afterQualifiers.dropFirst(qualifier.count)).trimmingCharacters(in: .whitespaces)
+                }
+            }
+            guard keywords.contains(where: { afterQualifiers.hasPrefix($0) }) else { continue }
             kept.append(statement + ";")
         }
         return kept.joined(separator: "\n")
+    }
+
+    /// Real HLSL/Cg allows a flat, un-grouped scalar initializer list for an array of vectors
+    /// (`const float4 samples[5] = { 0.0,0.0,0,11.0/3.0, 0.0,1.0,0,-2.0/3.0, ... };`, grouped
+    /// implicitly by the element type's own component count) — confirmed as a real, recurring
+    /// corpus pattern (56 files, always a `samples[4]`/`samples[5]` array, e.g. "flexi, stahlregen,
+    /// geiss + tobias wolfboi - space gelatine burst..."'s comp_). MSL/C++ aggregate initialization
+    /// has no such implicit grouping — the flat list tries to initialize just the *first* element
+    /// with every value in turn, exceeding its component count ("excess elements in array
+    /// initializer", surfaced once the declaration itself stopped being silently dropped — see
+    /// `preambleDeclarations`'s own fix). Rewrites the flat list into MSL's expected `floatN(...)`
+    /// per-element form. Deliberately only applies when the initializer contains no brace at all
+    /// (an already brace-nested initializer is either already correct or a shape too different from
+    /// the one confirmed here to rewrite blindly) and when the flat value count divides evenly by
+    /// the element width — anything else is left completely untouched, silently.
+    private static func regroupFlatVectorArrayInitializers(_ preamble: String) -> String {
+        let chars = Array(preamble)
+        let elementTypes: [(String, Int)] = [("float4", 4), ("float3", 3), ("float2", 2)]
+        var result = ""
+        var i = 0
+        while i < chars.count {
+            let atBoundary = i == 0 || !isNarrowIdentChar(chars[i - 1])
+            var matched: (keyword: String, width: Int)?
+            if atBoundary {
+                for (kw, width) in elementTypes {
+                    let kwChars = Array(kw)
+                    let end = i + kwChars.count
+                    guard end <= chars.count, Array(chars[i..<end]) == kwChars,
+                          end >= chars.count || !isNarrowIdentChar(chars[end])
+                    else { continue }
+                    matched = (kw, width)
+                    break
+                }
+            }
+            guard let (keyword, width) = matched else { result.append(chars[i]); i += 1; continue }
+
+            var k = i + keyword.count
+            guard k < chars.count, chars[k].isWhitespace else { result.append(chars[i]); i += 1; continue }
+            while k < chars.count, chars[k].isWhitespace { k += 1 }
+            guard k < chars.count, isNarrowIdentStart(chars[k]) else { result.append(chars[i]); i += 1; continue }
+            var nameEnd = k
+            while nameEnd < chars.count, isNarrowIdentChar(chars[nameEnd]) { nameEnd += 1 }
+
+            var b = nameEnd
+            while b < chars.count, chars[b].isWhitespace { b += 1 }
+            guard b < chars.count, chars[b] == "[" else { result.append(chars[i]); i += 1; continue }
+            var bracketEnd = b + 1
+            while bracketEnd < chars.count, chars[bracketEnd] != "]" { bracketEnd += 1 }
+            guard bracketEnd < chars.count else { result.append(chars[i]); i += 1; continue }
+
+            var eq = bracketEnd + 1
+            while eq < chars.count, chars[eq].isWhitespace { eq += 1 }
+            guard eq < chars.count, chars[eq] == "=" else { result.append(chars[i]); i += 1; continue }
+            var brace = eq + 1
+            while brace < chars.count, chars[brace].isWhitespace { brace += 1 }
+            guard brace < chars.count, chars[brace] == "{" else { result.append(chars[i]); i += 1; continue }
+
+            var depth = 1
+            var closeBrace = brace + 1
+            while closeBrace < chars.count, depth > 0 {
+                if chars[closeBrace] == "{" { depth += 1 } else if chars[closeBrace] == "}" { depth -= 1 }
+                closeBrace += 1
+            }
+            guard depth == 0 else { result.append(chars[i]); i += 1; continue }
+
+            let inner = String(chars[(brace + 1)..<(closeBrace - 1)])
+            guard !inner.contains("{") else {
+                result.append(contentsOf: chars[i..<closeBrace])
+                i = closeBrace
+                continue
+            }
+            let values = splitTopLevelArguments(inner).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            guard !values.isEmpty, values.count % width == 0 else {
+                result.append(contentsOf: chars[i..<closeBrace])
+                i = closeBrace
+                continue
+            }
+
+            var grouped: [String] = []
+            var idx = 0
+            while idx < values.count {
+                grouped.append("\(keyword)(\(values[idx..<(idx + width)].joined(separator: ", ")))")
+                idx += width
+            }
+            result.append(contentsOf: chars[i..<(brace + 1)])
+            result.append(grouped.joined(separator: ", "))
+            result.append("}")
+            i = closeBrace
+        }
+        return result
     }
 
     // MARK: - Comment stripping
@@ -972,6 +1163,13 @@ enum MilkdropShaderTranslator {
         // constant, never state persisting across calls), and MSL's `static` has different
         // function-local semantics — drop the keyword rather than translate it.
         text = text.replacingOccurrences(of: #"\bstatic\s+const\b"#, with: "const", options: .regularExpression)
+        // A *bare* `static` (no `const`) — confirmed 7/27 as a real, common corpus pattern
+        // (`static float2 sunpos = float2(q15,q16)*q19;`) once `preambleDeclarations` stopped
+        // silently dropping `static`-qualified declarations outright (see its own doc comment).
+        // MSL flatly rejects `static` on any function-scope variable ("variables in function scope
+        // cannot be declared static", 66x in the 7/27 corpus scan) — same reasoning as `static
+        // const` above, just without a `const` to fold into: drop the keyword.
+        text = text.replacingOccurrences(of: #"\bstatic\s+"#, with: "", options: .regularExpression)
         text = rewriteSingleArgumentMatrixConstructors(text)
         text = rewriteFloatModulo(text)
         return text
@@ -1260,5 +1458,669 @@ enum MilkdropShaderTranslator {
     /// don't) — `NSRegularExpression`'s `\b` already does this correctly for ASCII identifiers.
     private static func renameIdentifier(_ from: String, to: String, in text: String) -> String {
         text.replacingOccurrences(of: "\\b\(from)\\b", with: to, options: .regularExpression)
+    }
+
+    // MARK: - Implicit narrowing on plain assignments
+
+    // Confirmed 7/26 as the single dominant remaining full-corpus compile-failure cause (several
+    // thousand instances, dwarfing every other open gap) — HLSL/Cg silently narrows a wider vector
+    // expression down to a narrower lvalue's width on assignment (`mask = 1-.9*saturate(8*dist)*
+    // saturate(64*neu);` where `mask` is `float` but the RHS evaluates to `float3`, a real example
+    // from "propre hypno.milk"'s comp_), matching the exact same implicit-conversion rule already
+    // fixed for texture-sample calls specifically (`declaredAssignmentWidth` above) — but texture
+    // calls were special-cased because their result width (always float4) was known without any
+    // real type inference; a *general* plain-assignment RHS can be an arbitrary arithmetic/function-
+    // call expression, so this needs an actual (if lightweight) symbol table plus a width inferencer
+    // that walks that expression, not another call-site-scoped substitution.
+    //
+    // Scope, deliberately conservative given the real regression risk (this touches every plain
+    // assignment in the corpus, not just texture-sample ones): only the *narrowing* direction is
+    // rewritten (RHS width provably wider than the lvalue's declared width) — an implicit *widening*
+    // (a bare scalar splatting into a vector lvalue, HLSL's other implicit-conversion direction) is
+    // left alone, since it's rarer in the corpus and MSL's own broadcast rules for it are less
+    // uniformly confirmed than the narrowing case. When the RHS's width can't be confidently
+    // inferred (an unrecognized function call, a comparison/logical/ternary expression, an lvalue
+    // whose declared width isn't known), the statement is left completely untouched — silence, not
+    // a guess, is the safe default here.
+    //
+    // The rewrite itself mirrors `declaredAssignmentWidth`'s own approach: wrap the *entire* RHS
+    // expression in parens and append a narrowing swizzle (`.x`/`.xy`/`.xyz`) matching the lvalue's
+    // width, exactly reproducing what HLSL's implicit conversion already did to the *final* assigned
+    // value — this needs no insight into the RHS's internal sub-expression structure at all, just
+    // its overall width, which is why this is tractable as a single width-inference pass rather than
+    // a full expression-rewriting one.
+
+    /// Fixed-width identifiers implicitly available in every shader body/helper function — the
+    /// wrapping template's own locals (`MilkdropMetalRenderer.buildWarpShaderSource`/
+    /// `buildCompositeShaderSource`: `uv`/`uv_orig`/`rad`/`ang`/`ret`, `pos` in the composite
+    /// wrapper only — harmless to include unconditionally for the warp wrapper too, since an unused
+    /// entry in this table costs nothing) and the `#define`d uniforms (`MilkdropMetalRenderer.
+    /// uniformDefines`) real preset shaders reference directly. `texsize_<base>` (a `float4`,
+    /// per-texture, dynamically named — `MilkdropMetalRenderer.textureSizeDefines`) isn't a fixed
+    /// name so it isn't listed here; see `symbolWidth` below for that pattern-based lookup instead.
+    private static let builtinSymbolWidths: [String: Int] = {
+        var widths: [String: Int] = [
+            "time": 1, "fps": 1, "frame": 1, "progress": 1,
+            "bass": 1, "mid": 1, "treb": 1,
+            "bass_att": 1, "mid_att": 1, "treb_att": 1,
+            "vol": 1, "vol_att": 1,
+            "rand_preset": 4, "rand_frame": 4, "texsize": 4, "aspect": 4,
+            "roam_cos": 4, "roam_sin": 4, "slow_roam_cos": 4, "slow_roam_sin": 4,
+            "_qa": 4, "_qb": 4, "_qc": 4, "_qd": 4, "_qe": 4, "_qf": 4, "_qg": 4, "_qh": 4,
+            "uv": 2, "uv_orig": 2, "pos": 2, "rad": 1, "ang": 1,
+            "ret": 3, "hue_shader": 3,
+        ]
+        for i in 1...32 { widths["q\(i)"] = 1 }
+        return widths
+    }()
+
+    /// `symbols[name]`, plus the one dynamically-named builtin family `builtinSymbolWidths` can't
+    /// list up front: every `texsize_<base>` per-texture define is a `float4` regardless of which
+    /// base name it's for (see `MilkdropMetalRenderer.textureSizeDefines`).
+    private static func symbolWidth(_ name: String, symbols: [String: Int]) -> Int? {
+        if let width = symbols[name] { return width }
+        return name.hasPrefix("texsize_") ? 4 : nil
+    }
+
+    private static func widthForTypeKeyword(_ keyword: String) -> Int? {
+        switch keyword {
+        case "float4", "int4": return 4
+        case "float3", "int3": return 3
+        case "float2", "int2": return 2
+        case "float1", "float", "int", "bool": return 1
+        default: return nil
+        }
+    }
+
+    /// Type keywords whose values are `int`-typed rather than `float`-typed — real HLSL/Cg
+    /// implicitly *truncates* a float(N) value assigned into one of these (confirmed 7/26: 42 real
+    /// corpus files declare `int2 k1 = (texsize.xy*uv)%2;` verbatim, `texsize.xy*uv` staying
+    /// `float2` through the `%`-to-`fmod` rewrite — MSL has no such implicit conversion at all,
+    /// "cannot initialize a variable of type 'int2' ... with an rvalue of type 'float2'"), a
+    /// different correction from narrowing (which only ever changes *component count*, never the
+    /// scalar type) — see `processStatementChunk`'s own int-cast branch.
+    private static let integerTypeKeywords: Set<String> = ["int", "int2", "int3", "int4"]
+
+    /// HLSL functions whose result width simply follows its (widest, broadcast-compatible) vector
+    /// argument's own width — covers every componentwise-over-vector intrinsic Milkdrop shader code
+    /// actually exercises (per-argument scalars broadcast, matching `combineWidth`'s own rule), plus
+    /// `renameIntrinsics`'s own aliases (`lerp`/`saturate`/`frac` and their `milkdrop_`-prefixed
+    /// renames — this pass runs *before* `renameIntrinsics`, matching original HLSL names, but both
+    /// spellings are listed since nothing else depends on the ordering staying fixed).
+    private static let componentwiseFunctionNames: Set<String> = [
+        "abs", "floor", "ceil", "fract", "frac", "sign", "sqrt", "rsqrt",
+        "exp", "exp2", "log", "log2",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+        "pow", "min", "max", "clamp", "step", "smoothstep", "round", "trunc",
+        "saturate", "milkdrop_saturate", "lerp", "mix", "milkdrop_lerp", "fmod",
+        "normalize", "reflect", "refract",
+    ]
+
+    /// Combines two operands' widths under HLSL's scalar-broadcast rule (used for `+`/`-`/`*`/`/`/`%`
+    /// and componentwise-function arguments alike): a scalar (`1`) is always broadcast-compatible
+    /// with anything, so it defers to the other operand's width; two *different* non-scalar widths
+    /// are a genuine ambiguity (never valid HLSL as written) this pass isn't confident enough to
+    /// resolve, so it bails (`nil`) rather than guess.
+    private static func combineWidth(_ a: Int?, _ b: Int?) -> Int? {
+        guard let a, let b else { return nil }
+        if a == b { return a }
+        if a == 1 { return b }
+        if b == 1 { return a }
+        return nil
+    }
+
+    private static func isNarrowIdentChar(_ c: Character) -> Bool { c.isLetter || c.isNumber || c == "_" }
+    private static func isNarrowIdentStart(_ c: Character) -> Bool { c.isLetter || c == "_" }
+
+    /// `true` for a pure swizzle member (`xyzw`/`rgba`, 1-4 letters from one consistent set) — used
+    /// to tell a postfix `.member` access in the width inferencer apart from a method call like
+    /// `.sample(...)`.
+    private static func isSwizzleMember(_ text: String) -> Bool {
+        guard (1...4).contains(text.count) else { return false }
+        let lower = text.lowercased()
+        return lower.allSatisfy { "xyzw".contains($0) } || lower.allSatisfy { "rgba".contains($0) }
+    }
+
+    /// Scans `text` for `<type> name1 [= init1], name2 [= init2], ...;`-shaped plain declarations
+    /// (`float`/`float1`-`float4`/`int`/`bool`, matching `preambleDeclarations`'s own supported
+    /// keyword set) and returns a `name -> componentWidth` table — the symbol table half of this
+    /// pass's "lightweight symbol table" (see this section's own header). Depth-aware (tracks `(`/`)`
+    /// and `[`/`]` nesting) so an initializer expression containing its own commas (`float3 x =
+    /// float3(a, b, c), y;`) doesn't get misread as extra declarators. Deliberately loose about what
+    /// precedes the type keyword (doesn't require a statement boundary) — a false match would only
+    /// ever *add* a spurious, most likely never-referenced name to the table, never corrupt an
+    /// existing one, so erring toward finding more declarations is safe here.
+    private static func collectDeclarations(_ text: String) -> [String: Int] {
+        let chars = Array(text)
+        let typeKeywords: [(String, Int)] = [
+            ("float4", 4), ("float3", 3), ("float2", 2), ("float1", 1), ("float", 1),
+            ("int4", 4), ("int3", 3), ("int2", 2), ("int", 1), ("bool", 1),
+        ]
+        var widths: [String: Int] = [:]
+        var i = 0
+        while i < chars.count {
+            let atBoundary = i == 0 || !isNarrowIdentChar(chars[i - 1])
+            var matched: (keyword: String, width: Int)? = nil
+            if atBoundary {
+                for (kw, width) in typeKeywords {
+                    let kwChars = Array(kw)
+                    let end = i + kwChars.count
+                    guard end <= chars.count, Array(chars[i..<end]) == kwChars,
+                          end >= chars.count || !isNarrowIdentChar(chars[end])
+                    else { continue }
+                    matched = (kw, width)
+                    break
+                }
+            }
+            guard let (keyword, width) = matched else { i += 1; continue }
+            var k = i + keyword.count
+            // Must be followed by whitespace then an identifier — `float3(...)` (a constructor call,
+            // not a declaration) has no whitespace before its `(`.
+            guard k < chars.count, chars[k].isWhitespace else { i += 1; continue }
+            while k < chars.count, chars[k].isWhitespace { k += 1 }
+            guard k < chars.count, isNarrowIdentStart(chars[k]) else { i += 1; continue }
+
+            var depth = 0
+            var j = k
+            var expectingName = true
+            while j < chars.count {
+                let c = chars[j]
+                if c == "(" || c == "[" { depth += 1; j += 1; continue }
+                if c == ")" || c == "]" { depth -= 1; j += 1; continue }
+                if depth == 0 {
+                    if expectingName, isNarrowIdentStart(c) {
+                        var e = j
+                        while e < chars.count, isNarrowIdentChar(chars[e]) { e += 1 }
+                        widths[String(chars[j..<e])] = width
+                        j = e
+                        expectingName = false
+                        continue
+                    }
+                    if c == "=", !(j + 1 < chars.count && chars[j + 1] == "=") {
+                        j += 1
+                        while j < chars.count {
+                            if chars[j] == "(" || chars[j] == "[" { depth += 1 }
+                            else if chars[j] == ")" || chars[j] == "]" { depth -= 1 }
+                            else if depth == 0, chars[j] == "," || chars[j] == ";" { break }
+                            j += 1
+                        }
+                        continue
+                    }
+                    if c == "," { expectingName = true; j += 1; continue }
+                    if c == ";" { break }
+                }
+                j += 1
+            }
+            i = j
+        }
+        return widths
+    }
+
+    /// Identical scan to `collectDeclarations` above (same declarator-list grammar, same depth-
+    /// aware comma/initializer handling), but records each name's declared *type keyword* itself
+    /// (`"float2"`, `"int"`, ...) rather than just its component width — needed by
+    /// `extractHelperFunctions`'s preamble-local threading (see its own doc comment) to emit a real
+    /// `<type> name` parameter, not just a width a plain `Int` can't reconstruct a type keyword
+    /// from unambiguously (`int2` and `float2` share a width).
+    private static func collectDeclaredTypeKeywords(_ text: String) -> [String: String] {
+        let chars = Array(text)
+        let typeKeywords = ["float4", "float3", "float2", "float1", "float", "int4", "int3", "int2", "int", "bool"]
+        var types: [String: String] = [:]
+        var i = 0
+        while i < chars.count {
+            let atBoundary = i == 0 || !isNarrowIdentChar(chars[i - 1])
+            var matchedKeyword: String?
+            if atBoundary {
+                for kw in typeKeywords {
+                    let kwChars = Array(kw)
+                    let end = i + kwChars.count
+                    guard end <= chars.count, Array(chars[i..<end]) == kwChars,
+                          end >= chars.count || !isNarrowIdentChar(chars[end])
+                    else { continue }
+                    matchedKeyword = kw
+                    break
+                }
+            }
+            guard let keyword = matchedKeyword else { i += 1; continue }
+            var k = i + keyword.count
+            guard k < chars.count, chars[k].isWhitespace else { i += 1; continue }
+            while k < chars.count, chars[k].isWhitespace { k += 1 }
+            guard k < chars.count, isNarrowIdentStart(chars[k]) else { i += 1; continue }
+
+            var depth = 0
+            var j = k
+            var expectingName = true
+            while j < chars.count {
+                let c = chars[j]
+                if c == "(" || c == "[" { depth += 1; j += 1; continue }
+                if c == ")" || c == "]" { depth -= 1; j += 1; continue }
+                if depth == 0 {
+                    if expectingName, isNarrowIdentStart(c) {
+                        var e = j
+                        while e < chars.count, isNarrowIdentChar(chars[e]) { e += 1 }
+                        types[String(chars[j..<e])] = keyword
+                        j = e
+                        expectingName = false
+                        continue
+                    }
+                    if c == "=", !(j + 1 < chars.count && chars[j + 1] == "=") {
+                        j += 1
+                        while j < chars.count {
+                            if chars[j] == "(" || chars[j] == "[" { depth += 1 }
+                            else if chars[j] == ")" || chars[j] == "]" { depth -= 1 }
+                            else if depth == 0, chars[j] == "," || chars[j] == ";" { break }
+                            j += 1
+                        }
+                        continue
+                    }
+                    if c == "," { expectingName = true; j += 1; continue }
+                    if c == ";" { break }
+                }
+                j += 1
+            }
+            i = j
+        }
+        return types
+    }
+
+    /// Extracts `name -> componentWidth` for each `<type> name` parameter in a hoisted helper
+    /// function's own signature (`float2 uv_polar(float2 domain, float2 center)` — `signature`'s
+    /// exact shape, closing paren included, as captured by `extractHelperFunctions`) — a helper
+    /// function has no implicit access to anything outside its own parameters/locals (see
+    /// `extractHelperFunctions`'s doc comment), so its parameter widths are a separate, narrower
+    /// symbol-table source than `collectDeclarations`' preamble/body scan.
+    private static func collectParameterWidths(_ signature: String) -> [String: Int] {
+        guard let openParen = signature.firstIndex(of: "("), signature.hasSuffix(")") else { return [:] }
+        let inner = signature[signature.index(after: openParen)..<signature.index(before: signature.endIndex)]
+        var widths: [String: Int] = [:]
+        for rawParam in splitTopLevelArguments(String(inner)) {
+            let parts = rawParam.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count >= 2, let width = widthForTypeKeyword(String(parts[0])) else { continue }
+            widths[String(parts[parts.count - 1])] = width
+        }
+        return widths
+    }
+
+    /// Consumes a balanced `(...)`/`[...]` group starting at `open` (`chars[open]` must be `(` or
+    /// `[`) — returns the inner text (parens/brackets excluded) and the index just past the closing
+    /// delimiter. An unbalanced group consumes through the end of `chars` rather than looping.
+    private static func consumeBalancedGroup(_ chars: [Character], _ open: Int) -> (inner: String, end: Int) {
+        let openChar = chars[open]
+        let closeChar: Character = openChar == "(" ? ")" : "]"
+        var depth = 1
+        var j = open + 1
+        while j < chars.count, depth > 0 {
+            if chars[j] == openChar { depth += 1 } else if chars[j] == closeChar { depth -= 1 }
+            j += 1
+        }
+        let innerEnd = depth == 0 ? j - 1 : j
+        let inner = innerEnd > open + 1 ? String(chars[(open + 1)..<innerEnd]) : ""
+        return (inner, j)
+    }
+
+    /// Consumes one numeric literal (`123`, `.5`, `1.5e-3`, `2.f`) starting at `start` — `start` must
+    /// already be a digit or a `.` immediately followed by one.
+    private static func consumeNumericLiteral(_ chars: [Character], _ start: Int) -> Int {
+        var i = start
+        while i < chars.count, chars[i].isNumber { i += 1 }
+        if i < chars.count, chars[i] == "." {
+            i += 1
+            while i < chars.count, chars[i].isNumber { i += 1 }
+        }
+        if i < chars.count, chars[i] == "e" || chars[i] == "E" {
+            var j = i + 1
+            if j < chars.count, chars[j] == "+" || chars[j] == "-" { j += 1 }
+            if j < chars.count, chars[j].isNumber {
+                i = j
+                while i < chars.count, chars[i].isNumber { i += 1 }
+            }
+        }
+        if i < chars.count, chars[i] == "f" || chars[i] == "F" { i += 1 }
+        return i
+    }
+
+    /// Infers one postfix-chain primary's component width starting at `start`: a parenthesized
+    /// group, a numeric literal, or an identifier — optionally followed by a call `(...)` (a
+    /// constructor/intrinsic/helper-function call, see `widthOfCall`) — and then any number of
+    /// trailing `.member` (swizzle, or a `.sample(...)`-style method call) / `[index]` postfix
+    /// pieces. Always returns a valid `end` (how far the primary's *text* extends) even when the
+    /// resulting `width` is `nil` (unrecognized name/call/member) — the caller needs the end position
+    /// to keep scanning correctly even after giving up on this particular term's width.
+    private static func widthOfPrimary(
+        _ chars: [Character], _ start: Int, symbols: [String: Int], helperReturnWidths: [String: Int]
+    ) -> (width: Int?, end: Int)? {
+        guard start < chars.count else { return nil }
+        var i = start
+        var width: Int?
+
+        if chars[i] == "(" {
+            let (inner, end) = consumeBalancedGroup(chars, i)
+            width = widthOfExpression(Substring(inner), symbols: symbols, helperReturnWidths: helperReturnWidths)
+            i = end
+        } else if chars[i].isNumber || (chars[i] == "." && i + 1 < chars.count && chars[i + 1].isNumber) {
+            i = consumeNumericLiteral(chars, i)
+            width = 1
+        } else if isNarrowIdentStart(chars[i]) {
+            var nameEnd = i
+            while nameEnd < chars.count, isNarrowIdentChar(chars[nameEnd]) { nameEnd += 1 }
+            let name = String(chars[i..<nameEnd])
+            i = nameEnd
+            var j = i
+            while j < chars.count, chars[j].isWhitespace { j += 1 }
+            if j < chars.count, chars[j] == "(" {
+                let (argsText, end) = consumeBalancedGroup(chars, j)
+                width = widthOfCall(name: name, argsText: argsText, symbols: symbols, helperReturnWidths: helperReturnWidths)
+                i = end
+            } else {
+                width = symbolWidth(name, symbols: symbols)
+            }
+        } else {
+            return nil
+        }
+
+        while true {
+            var j = i
+            while j < chars.count, chars[j].isWhitespace { j += 1 }
+            if j < chars.count, chars[j] == "." {
+                var k = j + 1
+                while k < chars.count, isNarrowIdentChar(chars[k]) { k += 1 }
+                guard k > j + 1 else { break }
+                let member = String(chars[(j + 1)..<k])
+                var m = k
+                while m < chars.count, chars[m].isWhitespace { m += 1 }
+                if m < chars.count, chars[m] == "(" {
+                    let (_, end) = consumeBalancedGroup(chars, m)
+                    // `.sample(...)` (a texture read, already rewritten by `rewriteTextureSampleCalls`
+                    // by the time this pass runs) always returns `float4`; any other method-call-style
+                    // member isn't a shape this port models — bail on width, still consume the text.
+                    width = member == "sample" ? 4 : nil
+                    i = end
+                } else if isSwizzleMember(member) {
+                    width = member.count
+                    i = k
+                } else {
+                    width = nil
+                    i = k
+                }
+                continue
+            }
+            if j < chars.count, chars[j] == "[" {
+                let (_, end) = consumeBalancedGroup(chars, j)
+                width = nil // Array/matrix-row indexing — not modeled, bail on width only.
+                i = end
+                continue
+            }
+            break
+        }
+        return (width, i)
+    }
+
+    /// Infers a function/constructor call's result width from its callee `name` (an explicit
+    /// `floatN(...)` constructor's width is authoritative regardless of its arguments; a reducing
+    /// intrinsic like `dot`/`length` is always scalar; `milkdrop_mul`/`mul` overloads on argument
+    /// *order* in a way this pass can't disambiguate from text alone, so it deliberately bails on
+    /// those rather than guess) or, failing that, `helperReturnWidths` (a preset-defined helper
+    /// function's own declared return width, from `extractHelperFunctions`).
+    private static func widthOfCall(name: String, argsText: String, symbols: [String: Int], helperReturnWidths: [String: Int]) -> Int? {
+        switch name {
+        case "float4", "int4": return 4
+        case "float3", "int3": return 3
+        case "float2", "int2": return 2
+        case "float1", "float", "int", "bool": return 1
+        case "cross": return 3
+        case "dot", "length", "distance", "lum": return 1
+        case "mul", "milkdrop_mul", "float2x2", "float3x3", "float4x4": return nil
+        default: break
+        }
+        if componentwiseFunctionNames.contains(name) {
+            var width: Int?
+            for (index, arg) in splitTopLevelArguments(argsText).enumerated() {
+                let argWidth = widthOfExpression(Substring(arg), symbols: symbols, helperReturnWidths: helperReturnWidths)
+                width = index == 0 ? argWidth : combineWidth(width, argWidth)
+            }
+            return width
+        }
+        return helperReturnWidths[name]
+    }
+
+    /// Splits `text` at its first top-level `?`/matching `:` (ternary), respecting `(`/`)`/`[`/`]`
+    /// nesting — `nil` if `text` contains no top-level `?` at all.
+    private static func splitTopLevelTernary(_ chars: [Character]) -> (trueBranch: ArraySlice<Character>, falseBranch: ArraySlice<Character>)? {
+        var depth = 0
+        var questionIndex: Int?
+        for i in chars.indices {
+            let c = chars[i]
+            if c == "(" || c == "[" { depth += 1 } else if c == ")" || c == "]" { depth -= 1 }
+            else if depth == 0, c == "?" { questionIndex = i; break }
+        }
+        guard let q = questionIndex else { return nil }
+        depth = 0
+        var colonIndex: Int?
+        var j = q + 1
+        while j < chars.count {
+            let c = chars[j]
+            if c == "(" || c == "[" { depth += 1 } else if c == ")" || c == "]" { depth -= 1 }
+            else if depth == 0, c == ":" { colonIndex = j; break }
+            j += 1
+        }
+        guard let colon = colonIndex else { return nil }
+        return (chars[(q + 1)..<colon], chars[(colon + 1)...])
+    }
+
+    /// Infers `expr`'s overall component width (1-4), or `nil` when this pass isn't confident enough
+    /// to say (an unrecognized identifier/call, a comparison/logical operator at the top level —
+    /// bool-typed, not float-vector-typed — or any other shape this lightweight inferencer doesn't
+    /// model). A ternary's width is the (broadcast-combined) width of its two branches, ignoring the
+    /// condition; otherwise `expr` must be a pure `+`/`-`/`*`/`/`/`%` arithmetic chain of primaries
+    /// (see `widthOfPrimary`) that consumes the *entire* trimmed expression — any leftover
+    /// (`&&`/`||`/a comparison operator/a stray token) means this isn't a shape the inferencer
+    /// understands, so it bails rather than guess from a partial parse.
+    private static func widthOfExpression(_ expr: Substring, symbols: [String: Int], helperReturnWidths: [String: Int]) -> Int? {
+        let trimmed = expr.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let chars = Array(trimmed)
+
+        if let (trueBranch, falseBranch) = splitTopLevelTernary(chars) {
+            let t = widthOfExpression(Substring(String(trueBranch)), symbols: symbols, helperReturnWidths: helperReturnWidths)
+            let f = widthOfExpression(Substring(String(falseBranch)), symbols: symbols, helperReturnWidths: helperReturnWidths)
+            return combineWidth(t, f)
+        }
+
+        var i = 0
+        var accumulated: Int?
+        var hasTerm = false
+        while true {
+            while i < chars.count, chars[i].isWhitespace { i += 1 }
+            while i < chars.count, "+-!~".contains(chars[i]) {
+                i += 1
+                while i < chars.count, chars[i].isWhitespace { i += 1 }
+            }
+            guard i < chars.count, let (termWidth, end) = widthOfPrimary(chars, i, symbols: symbols, helperReturnWidths: helperReturnWidths) else { return nil }
+            // `hasTerm`, not `accumulated == nil`, distinguishes "no term folded in yet" from "a
+            // term folded in with an unknown width" — the two look identical under a plain nil
+            // check, but only the first should let a bare `termWidth` (however unknown) become the
+            // running total outright; once any term's width is unknown, every later term must fold
+            // through `combineWidth` (which correctly keeps the result `nil`) rather than letting a
+            // later, confidently-known term silently paper over the earlier unknown one.
+            accumulated = hasTerm ? combineWidth(accumulated, termWidth) : termWidth
+            hasTerm = true
+            i = end
+            while i < chars.count, chars[i].isWhitespace { i += 1 }
+            guard i < chars.count else { break }
+            guard "+-*/%".contains(chars[i]) else { return nil } // Leftover token this inferencer doesn't model — bail.
+            i += 1
+        }
+        return accumulated
+    }
+
+    /// If `chars` (a complete, `;`-inclusive statement chunk — see `narrowWideAssignments`) ends in
+    /// a declaration or reassignment target this pass can confidently width-check — `[<type>]
+    /// <identifier>[.<swizzle>] <op> <rhs>;`, where `<type>` is present only for a fresh declaration,
+    /// `.<swizzle>` only for a component write, and `<op>` is `=` or a compound `+=`/`-=`/`*=`/`/=`
+    /// — rewrites the RHS with a narrowing swizzle when its inferred width is provably wider than
+    /// the target's own width, matching HLSL's own implicit narrowing conversion (see this section's
+    /// own header). A fresh declaration into an `int`/`int2`/`int3`/`int4` target instead gets an
+    /// explicit `intN(...)` cast wrapped around its whole RHS, unconditionally — a different, but
+    /// equally real, implicit-conversion gap (see `integerTypeKeywords`'s own doc comment). Returns
+    /// `chars` completely unchanged (as a `String`) whenever any part of this isn't confidently
+    /// known — no assignment found, an unrecognized lvalue, an unknown/matching/narrower RHS width —
+    /// silence, not a guess.
+    private static func processStatementChunk(_ chars: [Character], symbols: [String: Int], helperReturnWidths: [String: Int]) -> String {
+        var depth = 0
+        var eqIndex: Int?
+        var opLength = 1
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "(" || c == "[" { depth += 1 } else if c == ")" || c == "]" { depth -= 1 }
+            else if depth == 0, c == "=" {
+                let nextIsEquals = i + 1 < chars.count && chars[i + 1] == "="
+                let prevChar: Character? = i > 0 ? chars[i - 1] : nil
+                if nextIsEquals {
+                    i += 2 // `==` — not an assignment at all; keep scanning past both characters.
+                    continue
+                }
+                if let prevChar, "<>!%".contains(prevChar) {
+                    i += 1 // `<=`/`>=`/`!=`/`%=` — not a shape this pass models; keep scanning.
+                    continue
+                }
+                if let prevChar, "+-*/".contains(prevChar) {
+                    // `+=`/`-=`/`*=`/`/=` — narrowing the RHS alone is still semantically correct
+                    // here: for any of these operators, `(x op rhs).W == x op (rhs).W` whenever `x`
+                    // is already exactly `W` components wide (true by construction — `W` is `x`'s
+                    // own declared/swizzle width) and the combination is a plain scalar-broadcast
+                    // one (the only kind `combineWidth` ever confirms) — narrowing/broadcasting
+                    // commutes with taking a trailing swizzle component-wise.
+                    eqIndex = i - 1
+                    opLength = 2
+                    break
+                }
+                eqIndex = i
+                opLength = 1
+                break
+            }
+            i += 1
+        }
+        guard let eq = eqIndex else { return String(chars) }
+
+        let lhsChars = Array(chars[0..<eq])
+        let opText = String(chars[eq..<(eq + opLength)])
+        let rhsChars = Array(chars[(eq + opLength)...])
+        guard let semicolon = rhsChars.firstIndex(of: ";") else { return String(chars) }
+        let rhsText = String(rhsChars[0..<semicolon])
+        let trailing = String(rhsChars[semicolon...])
+
+        // A component write (`ret.xyz = wideExpr;`) targets exactly the swizzle's own width,
+        // regardless of the underlying variable's own declared width — checked first since
+        // `trailingTypedIdentifier` below would otherwise misread the swizzle member text
+        // (`"xyz"`) as if it were a plain identifier name.
+        if let swizzleWidth = trailingSwizzleWidth(lhsChars) {
+            return narrowedAssignment(lhsChars: lhsChars, op: opText, rhsText: rhsText, trailing: trailing, targetWidth: swizzleWidth, symbols: symbols, helperReturnWidths: helperReturnWidths) ?? String(chars)
+        }
+
+        guard let (declaredType, name) = trailingTypedIdentifier(lhsChars) else { return String(chars) }
+
+        if let declaredType, integerTypeKeywords.contains(declaredType) {
+            let castWidth = widthForTypeKeyword(declaredType) ?? 1
+            let cast = castWidth == 1 ? "int" : "int\(castWidth)"
+            let trimmedRHS = rhsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(lhsChars) + opText + "\(cast)(\(trimmedRHS))" + trailing
+        }
+
+        let targetWidth: Int?
+        if let declaredType { targetWidth = widthForTypeKeyword(declaredType) } else { targetWidth = symbolWidth(name, symbols: symbols) }
+        guard let targetWidth else { return String(chars) }
+
+        return narrowedAssignment(lhsChars: lhsChars, op: opText, rhsText: rhsText, trailing: trailing, targetWidth: targetWidth, symbols: symbols, helperReturnWidths: helperReturnWidths) ?? String(chars)
+    }
+
+    /// The narrowing-swizzle half of `processStatementChunk`, shared between a plain-identifier
+    /// target and a swizzle-write target — `nil` (meaning "leave the statement alone") whenever
+    /// `targetWidth` is already 4 (nothing is ever wider), the RHS's width isn't confidently known,
+    /// or it isn't provably wider than `targetWidth`.
+    private static func narrowedAssignment(
+        lhsChars: [Character], op: String, rhsText: String, trailing: String, targetWidth: Int,
+        symbols: [String: Int], helperReturnWidths: [String: Int]
+    ) -> String? {
+        guard (1...3).contains(targetWidth) else { return nil }
+        guard let rhsWidth = widthOfExpression(Substring(rhsText), symbols: symbols, helperReturnWidths: helperReturnWidths),
+              rhsWidth > targetWidth
+        else { return nil }
+        let swizzle = ["", ".x", ".xy", ".xyz"][targetWidth]
+        let trimmedRHS = rhsText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(lhsChars) + op + "(\(trimmedRHS))\(swizzle)" + trailing
+    }
+
+    /// If `chars` ends in `<expr>.<swizzle>` (`ret.xyz`, `neu.rgb` — a real corpus component-write
+    /// pattern) returns the swizzle's own length (1-4) as the assignment's target width — a
+    /// component write's width is exactly the swizzle's length, regardless of the underlying
+    /// variable's own declared width (`ret.xyz = wideExpr;` targets 3 components whether `ret`
+    /// itself is `float3` or wider), so this needs no symbol-table lookup at all. `nil` if `chars`
+    /// doesn't end in a `.member` access, or `member` isn't a genuine swizzle — not a shape real
+    /// Milkdrop shader code writes through.
+    private static func trailingSwizzleWidth(_ chars: [Character]) -> Int? {
+        var i = chars.count - 1
+        while i >= 0, chars[i].isWhitespace { i -= 1 }
+        guard i >= 0, isNarrowIdentChar(chars[i]) else { return nil }
+        let memberEnd = i + 1
+        while i >= 0, isNarrowIdentChar(chars[i]) { i -= 1 }
+        let member = String(chars[(i + 1)..<memberEnd])
+        guard i >= 0, chars[i] == ".", isSwizzleMember(member) else { return nil }
+        return member.count
+    }
+
+    /// If `chars` ends in `[<type> ]<identifier>` (optionally preceded by unrelated text — an `if`/
+    /// `for`/`{`/`}` glued on from a prior control-flow boundary that isn't itself terminated by a
+    /// `;`, see `narrowWideAssignments`'s statement-chunking doc comment), returns that trailing
+    /// type keyword (`nil` for a bare reassignment to an already-declared name) and identifier.
+    /// `nil` if `chars` doesn't end in a plain identifier at all (an lvalue like `arr[i]`, or a
+    /// swizzle write — handled separately by `trailingSwizzleWidth` above, checked first by
+    /// `processStatementChunk` so this never actually sees one — deliberately not modeled here).
+    private static func trailingTypedIdentifier(_ chars: [Character]) -> (type: String?, name: String)? {
+        var i = chars.count - 1
+        while i >= 0, chars[i].isWhitespace { i -= 1 }
+        guard i >= 0, isNarrowIdentChar(chars[i]) else { return nil }
+        let nameEnd = i + 1
+        while i >= 0, isNarrowIdentChar(chars[i]) { i -= 1 }
+        let name = String(chars[(i + 1)..<nameEnd])
+        guard let first = name.first, isNarrowIdentStart(first) else { return nil }
+
+        while i >= 0, chars[i].isWhitespace { i -= 1 }
+        let typeKeywords = ["float4", "float3", "float2", "float1", "float", "int4", "int3", "int2", "int", "bool"]
+        for kw in typeKeywords {
+            let kwChars = Array(kw)
+            let start = i - kwChars.count + 1
+            guard start >= 0, Array(chars[start...i]) == kwChars, start == 0 || !isNarrowIdentChar(chars[start - 1]) else { continue }
+            return (kw, name)
+        }
+        return (nil, name)
+    }
+
+    /// Splits `text` into `;`-terminated statement chunks (tracking `(`/`)`/`[`/`]` depth so a
+    /// `for (int i = 0; i < n; i++)` header's own internal `;`s — at depth > 0 — aren't mistaken for
+    /// statement boundaries) and runs `processStatementChunk` over each. A chunk can end up with
+    /// unrelated leading text glued on (e.g. `} else { y = expr` when the previous statement's own
+    /// `;` was the *last* boundary and `} else {` between it and this one has no `;` of its own) —
+    /// harmless, since `processStatementChunk`/`trailingTypedIdentifier` only ever look at the
+    /// *trailing* `name = rhs;` shape, not the chunk's start.
+    private static func narrowWideAssignments(_ text: String, symbols: [String: Int], helperReturnWidths: [String: Int]) -> String {
+        let chars = Array(text)
+        var result = ""
+        var chunkStart = 0
+        var depth = 0
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "(" || c == "[" { depth += 1 } else if c == ")" || c == "]" { depth -= 1 }
+            else if c == ";", depth == 0 {
+                result += processStatementChunk(Array(chars[chunkStart...i]), symbols: symbols, helperReturnWidths: helperReturnWidths)
+                chunkStart = i + 1
+            }
+            i += 1
+        }
+        if chunkStart < chars.count {
+            result += processStatementChunk(Array(chars[chunkStart...]), symbols: symbols, helperReturnWidths: helperReturnWidths)
+        }
+        return result
     }
 }

@@ -519,4 +519,290 @@ struct MilkdropShaderTranslatorTests {
         let result = try #require(MilkdropShaderTranslator.translate(source))
         #expect(result.body.contains("DOUBLE(uv.x)"))
     }
+
+    // MARK: - Implicit narrowing on plain assignments (the 7/26 full-corpus scan's dominant
+    // remaining cause, several thousand instances — see MilkdropShaderTranslator.swift's own
+    // "MARK: - Implicit narrowing on plain assignments" section).
+
+    @Test func wideExpressionReassignedToADeclaredScalarGetsNarrowed() throws {
+        // Mirrors "propre hypno.milk"'s comp_ verbatim: `mask` declared `float`, reassigned (not
+        // redeclared) from an expression that evaluates to `float3` because `neu` is `float3`.
+        let source = """
+        shader_body
+        {
+            float mask;
+            float3 neu = float3(1.0, 2.0, 3.0);
+            float dist = 0.5;
+            mask = 1-.9*saturate(8*dist)*saturate(64*neu);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        // The `*` chain gets normalized to single spaces by `rewriteFloatModulo`'s own chain-folding
+        // (a pre-existing pass that reformats every `*`/`/`/`%` chain, not just ones with a `%` in
+        // them — nothing to do with narrowing itself, which preserves the RHS text verbatim).
+        #expect(result.body.contains("mask =(1-.9 * milkdrop_saturate(8 * dist) * milkdrop_saturate(64 * neu)).x;"))
+    }
+
+    @Test func wideExpressionInAFreshDeclarationGetsNarrowed() throws {
+        let source = """
+        shader_body
+        {
+            float3 neu = float3(1.0, 2.0, 3.0);
+            float2 narrow2 = neu + neu;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("float2 narrow2 =(neu + neu).xy;"))
+    }
+
+    @Test func matchingWidthAssignmentIsLeftUntouched() throws {
+        let source = """
+        shader_body
+        {
+            float3 neu = float3(1.0, 2.0, 3.0);
+            float3 outp;
+            outp = neu * 2.0;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("outp = neu * 2.0;"))
+        #expect(!result.body.contains("outp =("))
+    }
+
+    @Test func scalarBroadcastIntoAVectorIsNotWidened() throws {
+        // Deliberately out of scope (see this section's own header in the translator) — only the
+        // narrowing direction is handled; a bare scalar splatting into a wider lvalue is left
+        // completely alone rather than risk an unverified widening rewrite.
+        let source = """
+        shader_body
+        {
+            float3 outp;
+            outp = 1.0;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("outp = 1.0;"))
+    }
+
+    @Test func unknownLvalueWidthIsLeftUntouched() throws {
+        // No declaration for `mystery` anywhere in this source — the symbol table can't know its
+        // width, so this must stay silent rather than guess.
+        let source = """
+        shader_body
+        {
+            float3 neu = float3(1.0, 2.0, 3.0);
+            mystery = neu;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("mystery = neu;"))
+    }
+
+    @Test func helperFunctionReturnWidthDrivesNarrowingAtTheCallSite() throws {
+        let source = """
+        float4 wideHelper(float2 domain) { return float4(domain, 0.0, 1.0); }
+        shader_body
+        {
+            float3 result;
+            result = wideHelper(uv);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains(").xyz;"))
+        #expect(result.body.contains("wideHelper(uv, uniforms)"))
+    }
+
+    @Test func helperFunctionOwnBodyGetsNarrowedToo() throws {
+        let source = """
+        float uv_ratio(float2 domain) {
+            float r;
+            r = domain*2.0;
+            return r;
+        }
+        shader_body
+        {
+            ret = float3(uv_ratio(uv), 0.0, 0.0);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.helperFunctions.contains("r =(domain * 2.0).x;"))
+    }
+
+    // MARK: - Second round: swizzled-LHS writes, compound assignment, int casts, static/const
+    // preamble declarations (7/27 follow-up to the narrowing pass above).
+
+    @Test func swizzledLHSWriteGetsNarrowed() throws {
+        // A component write (`ret.xyz = wideExpr;`) targets exactly the swizzle's own width,
+        // independent of `ret`'s own declared width — `trailingSwizzleWidth` handles this
+        // separately from `trailingTypedIdentifier` (which would otherwise misread `"xyz"` as if
+        // it were a plain variable name).
+        let source = """
+        shader_body
+        {
+            float4 wide = float4(1.0, 2.0, 3.0, 4.0);
+            ret.xyz = wide;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("ret.xyz =(wide).xyz;"))
+    }
+
+    @Test func compoundAssignmentGetsNarrowed() throws {
+        let source = """
+        shader_body
+        {
+            float3 neu = float3(1.0, 2.0, 3.0);
+            float mask = 0.0;
+            mask += length(neu)*neu;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("mask +=(length(neu) * neu).x;"))
+    }
+
+    @Test func compoundAssignmentOnASwizzleWriteGetsNarrowed() throws {
+        let source = """
+        shader_body
+        {
+            float4 wide = float4(1.0, 2.0, 3.0, 4.0);
+            ret.xy += wide;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("ret.xy +=(wide).xy;"))
+    }
+
+    @Test func int2DeclarationFromAFloat2ExpressionGetsCastWrapped() throws {
+        // Real, verbatim corpus pattern (42 files): `int2 k1 = (texsize.xy*uv)%2;` — HLSL/Cg
+        // implicitly truncates the float2 RHS to int2 on assignment; MSL has no such implicit
+        // conversion ("cannot initialize a variable of type 'int2' ... with an rvalue of type
+        // 'float2'").
+        let source = "shader_body\n{\nint2 k1 = (texsize.xy*uv)%2;\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("int2(fmod((texsize.xy * uv), 2))"))
+    }
+
+    @Test func plainIntDeclarationFromAFloatExpressionGetsCastWrapped() throws {
+        let source = "shader_body\n{\nfloat2 v = float2(1.5, 2.5);\nint x = v.x;\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("int x =int(v.x);"))
+    }
+
+    @Test func comparisonOperatorsAreNotMistakenForAssignment() throws {
+        let source = """
+        shader_body
+        {
+            float mask = 0.0;
+            if (mask == 1.0 && mask <= 2.0 && mask >= 0.0 && mask != 3.0) { mask = 1.0; }
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("mask == 1.0"))
+        #expect(result.body.contains("mask <= 2.0"))
+        #expect(result.body.contains("mask >= 0.0"))
+        #expect(result.body.contains("mask != 3.0"))
+    }
+
+    @Test func staticAndConstPrefixedPreambleDeclarationsAreKept() throws {
+        // Real corpus pattern (confirmed across "414.milk", "suksma - satanic teleprompter...",
+        // "...space gelatine burst...", "xtramartin (578).milk", "EoS - Phat - randombox..." —
+        // ~180x combined "undeclared identifier" errors in the 7/26 corpus scan): a preamble
+        // declaration prefixed with `static`/`const`/`static const` was being silently dropped by
+        // `preambleDeclarations`'s keyword-prefix check, which only ever looked for `float`/`int`/
+        // `bool` at the very start of the statement — never past a qualifier.
+        let source = """
+        static float2 sunpos = float2(1.0, 2.0);
+        static const float sw2 = 0.5;
+        const float4 samples[2] = { float4(1,2,3,4), float4(5,6,7,8) };
+        shader_body
+        {
+            ret = float3(sunpos, sw2) + samples[0].xyz;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("sunpos"))
+        #expect(result.body.contains("sw2"))
+        #expect(result.body.contains("samples"))
+    }
+
+    @Test func staticPreambleVariableReferencedFromAHelperFunctionSurvivesTranslation() throws {
+        // The same "static float2 sunpos = ...;" shape, but referenced from a preamble helper
+        // function's own body (the exact real corpus shape from "414.milk": `cloud()` reads
+        // `sunpos`, a preamble-scope `static` local, not a parameter) — before the
+        // `preambleDeclarations` fix, `sunpos` never made it into the generated MSL at all, so this
+        // failed with "undeclared identifier 'sunpos'" regardless of any helper-function threading.
+        let source = """
+        static float2 sunpos = float2(1.0, 2.0);
+        float3 cloud(float2 uv_in) {
+            return float3(length(uv_in - sunpos), 0.0, 0.0);
+        }
+        shader_body
+        {
+            ret = cloud(uv);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        // Precise check, not just "the text 'sunpos' appears somewhere": `sunpos` must actually be
+        // threaded as an explicit parameter on `cloud`'s own signature and passed at its call site
+        // — exactly the same treatment `uniforms`/textures already get.
+        #expect(result.helperFunctions.contains("float2 sunpos"))
+        #expect(result.body.contains("cloud(uv, uniforms, sunpos)"))
+    }
+
+    @Test func preambleLocalIsThreadedTransitivelyThroughACallingHelper() throws {
+        // `wrapper` doesn't reference `res` directly, but calls `fstep2`, which does — `wrapper`
+        // must still forward `res` along, the same transitive-closure treatment already proven for
+        // textures (`laterHelperFunctionCallingAnEarlierOneKeepsSourceOrder` et al.).
+        let source = """
+        static float res = 4.0;
+        float2 fstep2(float2 xy) { return 1.0/res*round(res*xy); }
+        float2 wrapper(float2 xy) { return fstep2(xy) * 2.0; }
+        shader_body
+        {
+            ret = float3(wrapper(uv), 0.0);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        // "constant float * uniforms" (space after `*`), not "*uniforms" — a pre-existing, unrelated
+        // cosmetic quirk of `rewriteFloatModulo`'s chain-folding, which treats every bare `*` as a
+        // multiplication operator (it has no notion of C pointer-declaration syntax) and normalizes
+        // missing inter-token whitespace around any `*`/`/`/`%` chain it touches.
+        #expect(result.helperFunctions.contains("float2 wrapper(float2 xy, constant float * uniforms, float res)"))
+        #expect(result.helperFunctions.contains("fstep2(xy, uniforms, res)"))
+    }
+
+    @Test func flatVectorArrayInitializerIsRegroupedForMSL() throws {
+        // Real, verbatim corpus pattern (56 files, always a `samples[4]`/`samples[5]` array): HLSL/
+        // Cg allows a flat, un-grouped scalar initializer list for an array of vectors, implicitly
+        // grouped by the element type's own component count — MSL has no such implicit grouping
+        // ("excess elements in array initializer").
+        let source = """
+        const float4 samples[2] = {
+            0.0, 0.0, 0, 1.0,
+            1.0, 1.0, 0, 2.0
+        };
+        shader_body
+        {
+            ret = samples[0].xyz;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("float4(0.0, 0.0, 0, 1.0), float4(1.0, 1.0, 0, 2.0)"))
+    }
+
+    @Test func bareStaticKeywordIsDroppedNotLeftAsInvalidMSL() throws {
+        // MSL rejects `static` on any function-scope variable outright — confirmed 7/27 as a real
+        // corpus pattern once `preambleDeclarations` stopped dropping `static`-qualified
+        // declarations wholesale (a `static const` pair already collapsed to `const`; a *bare*
+        // `static` has no `const` to fall back to, so it must be dropped outright instead).
+        let source = """
+        static float2 sunpos = float2(1.0, 2.0);
+        shader_body
+        {
+            ret = float3(sunpos, 0.0);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(!result.body.contains("static"))
+    }
 }

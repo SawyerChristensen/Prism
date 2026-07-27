@@ -12,31 +12,82 @@ measurement after a fix, don't assume it worked.
 
 ## Open — shader compile gaps (`MilkdropShaderTranslator.swift`/`MilkdropMetalRenderer.swift`)
 
-Current state (2026-07-26): full 9,795-file corpus, **warp_N= 63.35% (5,020/7,924), comp_N=
-68.06% (5,425/7,971)** compile through a real `MTLDevice`. See `PROJECT.md`'s development history
-for everything already fixed to get here. Ordered by real full-corpus error-signature counts as of
-the last scan (`dev-notes/corpus-shader-scan-2026-07-26-followup/README.md` explains how to rerun
-it) — re-measure before trusting these counts, they'll drift as fixes land.
+Current state (2026-07-27): full 9,795-file corpus, **warp_N= 72.69% (5,760/7,924), comp_N=
+79.54% (6,340/7,971)** compile through a real `MTLDevice` — up from 63.35%/68.06% at the start of
+7/26 (+9.34pt/+11.48pt, +740/+915 files, across three rounds of fixes this session). See
+`PROJECT.md`'s development history for everything already fixed to get here. Ordered by real
+full-corpus error-signature counts as of the last scan
+(`dev-notes/corpus-shader-scan-2026-07-27-round3/README.md` explains how to rerun it, and has the
+full three-round writeup) — re-measure before trusting these counts, they'll drift as fixes land.
 
-- [ ] **THE DOMINANT REMAINING CAUSE, several thousand instances**: general implicit vector
-  narrowing/widening on *plain* assignments and other expressions — not texture-sample calls
-  (already fixed). Real example: `mask = 1-.9*milkdrop_saturate(8*dist)*milkdrop_saturate(64*neu);`
-  where `mask` is declared `float` but the RHS evaluates to `float3` ("propre hypno.milk"'s
-  comp_). Needs real type-tracking: walk the shader body, infer each local's declared width from
-  its first declaration, insert a narrowing swizzle wherever a wider expression is assigned into
-  it — a lightweight symbol table, bigger than any fix so far (those were all call-site/text-
-  substitution scoped). Real regression risk to the 63.35%/68.06% that already compiles —
-  re-verify against the full corpus after, not just a sample.
-- [ ] **"ambiguous call to `dot`/`length`/`pow`" (375x/152x/47x)**: almost certainly cascading
-  symptoms of the narrowing item above (a wrongly-widened/narrowed argument makes overload
-  resolution ambiguous), not independent bugs. Re-measure after that fix before spending time here.
-- [ ] **45x `sw2`, 45x "expression is not assignable", 46x "called object type 'float4' is not a
-  function or function pointer", 62x undeclared `sunpos`, 41x undeclared `samples`, 30x undeclared
-  `res`**: smaller, not yet investigated individually. Some may be genuine bugs in the *original
-  preset*, not a translator gap — check a real failing example for each before assuming it's
-  fixable. (`sw2`/`sunpos`/`samples`/`res` look like they're read from `per_frame_*=` script
-  variables the shader expects to see as if they were `q`-vars — a different mechanism than the
-  `#define`-alias bug just below, unconfirmed.)
+- [x] **THE DOMINANT REMAINING CAUSE, several thousand instances**: general implicit vector
+  narrowing on *plain* assignments and other expressions — not texture-sample calls (already
+  fixed). Real example: `mask = 1-.9*milkdrop_saturate(8*dist)*milkdrop_saturate(64*neu);` where
+  `mask` is declared `float` but the RHS evaluates to `float3` ("propre hypno.milk"'s comp_).
+  **Fixed 7/26**: `narrowWideAssignments` walks each shader body/helper function, using a
+  lightweight symbol table (`collectDeclarations`/`collectParameterWidths` — every local's
+  declared width from its own `<type> name` declaration or parameter) plus a width inferencer
+  (`widthOfExpression`/`widthOfPrimary`/`widthOfCall`, covering arithmetic chains, componentwise
+  intrinsics, swizzles, ternaries, and preset-defined helper-function return widths) to insert a
+  narrowing swizzle wherever a *provably wider* RHS is assigned into a narrower-declared lvalue —
+  bailing silently (leaving the statement untouched) whenever the width isn't confidently known,
+  rather than guessing. Deliberately scoped to the narrowing direction only (not widening,
+  compound-assignment operators, or swizzled-LHS writes like `ret.xyz = ...` — see
+  `dev-notes/corpus-shader-scan-2026-07-26-narrowing/README.md` for what's still open in this
+  space). Measured impact on the full corpus: `warp_N=` 63.35% -> 66.56% (+3.21pt, 5,020 -> 5,274
+  OK), `comp_N=` 68.06% -> 76.26% (+8.20pt, 5,425 -> 6,079 OK) — the single largest single-fix jump
+  measured so far this project, especially for `comp_N=`. Real regression risk was the whole
+  reason this was flagged as the biggest remaining item to get right — re-verified against the
+  full corpus after landing, not just a sample; 0 parse failures, 0/0 `translateFail`, no new
+  runaway error signature (unlike the `%`-modulo rewrite's earlier comment-corruption regression).
+- [x] **Swizzled-LHS writes and compound assignment weren't narrowed** (`ret.xyz = wideExpr;`,
+  `mask += wideExpr;`): the narrowing pass above only recognized a plain-identifier `=` target.
+  **Fixed 7/27**: `trailingSwizzleWidth` recognizes a component write (target width = the swizzle's
+  own length, no symbol lookup needed); the assignment-operator scan now also recognizes `+=`/`-=`/
+  `*=`/`/=` (narrowing just the RHS is still correct there — see `processStatementChunk`'s own doc
+  comment on why that commutes).
+- [x] **`static`/`const`-qualified preamble declarations silently dropped** (~180x combined across
+  `sunpos`/`sw2`/`samples`/`res`/`n` "undeclared identifier" signatures): `preambleDeclarations`
+  only ever checked for `float`/`int`/`bool` at the very *start* of a statement, never past a
+  qualifier — `static float2 sunpos = ...;`/`const float4 samples[5] = {...};` were dropped
+  wholesale. **Fixed 7/27** (`preambleDeclarations`'s qualifier-stripping), plus two things this
+  surfaced once the declarations stopped being dropped: a bare `static` (no `const`) is invalid MSL
+  on a function-scope variable (**fixed**, `renameIntrinsics` now drops it, matching its existing
+  `static const` -> `const` handling); and a helper function referencing a preamble local (not a
+  parameter) has no more implicit access to it than to `uniforms`/a texture (**fixed**,
+  `extractHelperFunctions` now threads plain preamble locals the same way, including transitively
+  through a helper-calls-helper chain — see `collectDeclaredTypeKeywords`/`threadLocalParameters`).
+- [x] **`int`/`int2`/`int3`/`int4` declared from a float-typed RHS** (42x, e.g. `int2 k1 =
+  (texsize.xy*uv)%2;`, identical across all 42 files): real HLSL/Cg implicitly truncates float->int
+  on assignment; MSL doesn't. **Fixed 7/27**: a fresh int-typed declaration's whole RHS gets wrapped
+  in an explicit `intN(...)` cast, unconditionally.
+- [x] **35x "no matching function for call to `milkdrop_mul`"**: the existing matrix-shaped
+  overloads didn't cover real HLSL's *other* documented `mul` forms (scalar-scalar, scalar-vector —
+  confirmed against "Star Forge v13c.milk"'s warp_, `mul(pow(q3,1.25), .013*tex2D(...))`). **Fixed
+  7/27**: added `milkdrop_mul(float,float)`/`(float,floatN)`/`(floatN,float)` overloads (down to
+  15x after — the remaining ones are likely the *vector,vector* form, not attempted without a
+  confirmed real example of what that should do).
+- [x] **27x "no matching function for call to `all`"**: HLSL's `all`/`any` implicitly test each
+  component against zero on any numeric vector; MSL's only accept `boolN`. **Fixed 7/27**: added
+  `all(floatN)`/`any(floatN)` overloads to the shim header (a real overload, not a redefinition
+  risk, unlike `lerp`/`saturate`/`mul`).
+- [x] **56x "excess elements in array initializer"**: real HLSL/Cg allows a flat, ungrouped scalar
+  initializer list for an array of vectors (`const float4 samples[5] = {0.0,0.0,0,11.0/3.0, ...};`,
+  identical across all 56 files); MSL's aggregate initialization has no implicit grouping. **Fixed
+  7/27**: `regroupFlatVectorArrayInitializers` regroups the flat list into `floatN(...)` per
+  element, only when unambiguous (no existing brace nesting, value count divides evenly by width).
+- [ ] **"ambiguous call to `dot`/`length`/`clamp`/`min`/`pow`/`fmod`/`max`" (394x/156x/58x/51x/
+  47x/45x/21x) and the broader "implicit conversions between vector types" cluster
+  (521x/348x/307x/297x/273x/243x/192x/153x/66x/34x ≈ 2,400 instances)**: still the largest remaining
+  cluster after all of the above — some is the narrowing pass's own documented scope limit
+  (function-*call-argument* narrowing was never attempted, only assignment/compound-assignment/
+  swizzle-write targets), some may be distinct, uninvestigated bugs. See
+  `dev-notes/corpus-shader-scan-2026-07-27-round3/README.md` for the full remaining-gaps writeup,
+  including several newly-visible smaller signatures (49x "read-only variable is not assignable",
+  20x "redefinition of 'tmp'", 40x "invalid operands ... float2x2 and int", 28x "no matching member
+  function for call to 'sample'" — confirmed as a texture-helper call's *coordinate* argument
+  evaluating to `float3` instead of `float2`, a narrower variant of the same narrowing-scope-limit
+  issue, in a real preset).
 - [x] **~48x "undeclared identifier 'MyGet'"/69x broken `sat(...)` calls/~100x custom-texture
   aliases silently resolving to the wrong (likely-missing) texture**: **fixed 7/26** — root cause
   was a plain object-like preprocessor alias before `shader_body`, e.g. `#define MyGet GetPixel`,

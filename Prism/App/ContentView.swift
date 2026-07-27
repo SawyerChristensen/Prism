@@ -16,8 +16,13 @@ struct ContentView: View {
     @State private var visualizerModel = MilkdropVisualizerModel()
     @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var lastPresetStore = MilkdropLastPresetStore()
+    @State private var ratingStore = MilkdropPresetRatingStore()
     @State private var isPresetImporterPresented = false
     @State private var isLibraryFolderPickerPresented = false
+    // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
+    // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
+    // files it names — see MilkdropPresetLibrary.filterToFavorites/MilkdropNestDropFavoritesList.
+    @State private var isFavoritesBundlePickerPresented = false
     // Idle auto-cycling (TO DO.md Phase 3) — "A" toggles it on/off. Backed by a sleeping Task
     // rather than Foundation's Timer, matching the Task-based delay already used elsewhere in
     // this file (the "S" save confirmation). Any successful preset load, manual or automatic,
@@ -39,6 +44,16 @@ struct ContentView: View {
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
     @State private var showSavedConfirmation = false
+    // Transient confirmation after a "1"-"5"/"w" rating keybind records a rating/flag for the
+    // preset just left behind (see rateCurrentPreset/flagCurrentPresetWhite) — same one-shot,
+    // auto-clearing Task.sleep idiom as showSavedConfirmation above, since a review pass through
+    // dozens of presets in a row needs to trust each keypress actually recorded without checking
+    // a log after the fact.
+    @State private var ratingFeedback: String?
+    // "H" toggles the album art (+ track/artist text) overlay off entirely, independent of "P"
+    // (nowPlaying.processingEnabled, which stops the artwork *analysis* pipeline) — this just
+    // hides whatever's already computed, for looking at the wave alone without a track playing.
+    @State private var isAlbumArtHidden = false
     @FocusState private var isFocused: Bool
 
     // Temporarily off (TO DO.md Phase 3, 7/26): the true window background (and, via
@@ -58,10 +73,10 @@ struct ContentView: View {
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: { loadRandomPreset() })
+            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: { loadNextSequentialPreset() })
             
             // The album art
-            if let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
+            if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                 if let artwork = nowPlaying.artwork {
                     // Real alpha transparency where the artwork's own background was keyed
                     // out in NowPlayingManager (see NSImage.keyingOutBackground) — not a
@@ -70,7 +85,7 @@ struct ContentView: View {
                     Image(nsImage: artwork)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 300, height: 300)
+                        .frame(width: 240, height: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         //.shadow(color: fgColor, radius: 6)
                 } /*else {
@@ -111,10 +126,15 @@ struct ContentView: View {
         // that a load actually happened, since nothing else in the UI names the active preset.
         .overlay(alignment: .topLeading) {
             if let presetName = visualizerModel.presetName {
-                Text(presetName)
-                    .font(.caption)
-                    .foregroundStyle(fgColor.opacity(0.6))
-                    .padding(8)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(presetName)
+                    if let ratingFeedback {
+                        Text(ratingFeedback)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(fgColor.opacity(0.6))
+                .padding(8)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -131,6 +151,12 @@ struct ContentView: View {
                 }
                 if isAutoCycleEnabled {
                     Text("Auto-Cycle On")
+                }
+                if isAlbumArtHidden {
+                    Text("Album Art Hidden")
+                }
+                if presetLibrary.isShowingFavoritesOnly {
+                    Text("Reviewing Favorites List")
                 }
                 if !nowPlaying.processingEnabled {
                     Text("Processing Off")
@@ -165,7 +191,20 @@ struct ContentView: View {
         ) { result in
             guard case .success(let url) = result else { return }
             presetLibrary.setLibraryRoot(url)
-            loadRandomPreset()
+            loadNextSequentialPreset()
+        }
+        // "U": narrow sequential discovery to a NestDrop bundle's favorites list instead of the
+        // whole library — see MilkdropPresetLibrary.filterToFavorites. Re-picking the library
+        // folder (L) clears this back to the full scan.
+        .fileImporter(
+            isPresented: $isFavoritesBundlePickerPresented,
+            allowedContentTypes: [.xml]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            presetLibrary.filterToFavorites(from: url)
+            loadNextSequentialPreset()
         }
         .alert(
             "Couldn't Load Preset",
@@ -179,14 +218,21 @@ struct ContentView: View {
             Text(visualizerModel.presetLoadError ?? "")
         }
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
-        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space jumps
-        // to a random preset from the loaded library (same action as tapping the visualizer),
+        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space steps
+        // to the next preset in sequential library order (same action as tapping the visualizer),
         // F toggles fullscreen, L (re)picks the library folder, A toggles idle auto-cycling,
-        // Left/Right step back/forward through this session's preset history.
+        // Left/Right step back/forward through this session's preset history. "1"-"5" record a
+        // star rating; "w"/"j"/"x" flag the current preset as all-white, too jittery, or
+        // strobing/flashing respectively (for revisiting later) — "x" rather than "s" for
+        // strobing since "s" already saves the current artwork M/T preference below. All of these
+        // advance to the next sequential preset afterward, the same as Space, so reviewing a
+        // library is a single keypress per preset: rate (or flag), see the next one immediately.
+        // "H" toggles the album art overlay on/off. "U" (User Profile) picks a NestDrop bundle
+        // XML and narrows sequential discovery to just its favorites list.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "h", "H", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -197,7 +243,27 @@ struct ContentView: View {
             }
             switch press.characters {
             case " ":
-                loadRandomPreset()
+                loadNextSequentialPreset()
+                return .handled
+            case "1", "2", "3", "4", "5":
+                if let stars = Int(press.characters) {
+                    rateCurrentPreset(stars: stars)
+                }
+                return .handled
+            case "w", "W":
+                flagCurrentPreset(.allWhite, label: "Flagged: all white")
+                return .handled
+            case "j", "J":
+                flagCurrentPreset(.tooJittery, label: "Flagged: too jittery")
+                return .handled
+            case "x", "X":
+                flagCurrentPreset(.strobing, label: "Flagged: strobing/flashing")
+                return .handled
+            case "h", "H":
+                isAlbumArtHidden.toggle()
+                return .handled
+            case "u", "U":
+                isFavoritesBundlePickerPresented = true
                 return .handled
             case "f", "F":
                 NSApp.keyWindow?.toggleFullScreen(nil)
@@ -265,22 +331,53 @@ struct ContentView: View {
         }
     }
 
-    /// Space/tap's action: jump straight to a random preset from the configured library — no
-    /// preset history/prev-next concept exists yet (see TO DO.md's Phase 4), so every "skip" is an
-    /// independent uniform-random draw from the whole scanned folder, same as pressing it again
-    /// could re-pick the same file. Prompts for a library folder instead if none is configured yet
-    /// — `onAppear`'s own auto-prompt (added 7/26) handles the real first-launch case, so this is
-    /// now mainly a fallback for someone who dismissed that prompt without picking a folder.
+    /// Space/tap's action: step to the next preset in the configured library's sorted order —
+    /// deliberately sequential (not random) so a full review pass through a library, rating/
+    /// flagging as you go (see rateCurrentPreset/flagCurrentPresetWhite), eventually covers every
+    /// file exactly once instead of repeat draws with no completion guarantee. Prompts for a
+    /// library folder instead if none is configured yet — `onAppear`'s own auto-prompt (added
+    /// 7/26) handles the real first-launch case, so this is now mainly a fallback for someone who
+    /// dismissed that prompt without picking a folder.
     /// `resetAutoCycle` is false only when the auto-cycle loop itself calls this — its own
     /// while-loop cadence already provides the next interval, so restarting the countdown here too
     /// would just replace the in-flight sleeping Task with an equivalent new one for no reason.
-    private func loadRandomPreset(resetAutoCycle: Bool = true) {
+    private func loadNextSequentialPreset(resetAutoCycle: Bool = true) {
         guard presetLibrary.isConfigured else {
             isLibraryFolderPickerPresented = true
             return
         }
-        guard let url = presetLibrary.randomPresetURL() else { return }
+        guard let url = presetLibrary.nextSequentialPresetURL(after: visualizerModel.presetURL) else { return }
         loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
+    }
+
+    /// "1"-"5": records a star rating for whichever preset is on screen right now, then advances
+    /// to the next sequential preset (same as Space) so a review pass is one keypress per preset.
+    /// A no-op (no advance either) if nothing's loaded yet.
+    private func rateCurrentPreset(stars: Int) {
+        guard let url = visualizerModel.presetURL else { return }
+        ratingStore.setStars(stars, for: url)
+        showRatingFeedback(String(repeating: "★", count: stars) + String(repeating: "☆", count: 5 - stars))
+        loadNextSequentialPreset()
+    }
+
+    /// "w"/"j"/"x": flags whichever preset is on screen right now with a debug issue, for
+    /// revisiting later (MilkdropPresetRatingStore.urls(flaggedWith:)), then advances to the next
+    /// sequential preset (same as Space). A no-op (no advance either) if nothing's loaded yet.
+    private func flagCurrentPreset(_ issue: MilkdropPresetIssue, label: String) {
+        guard let url = visualizerModel.presetURL else { return }
+        ratingStore.flag(issue, for: url)
+        showRatingFeedback(label)
+        loadNextSequentialPreset()
+    }
+
+    /// Shared one-shot, auto-clearing confirmation for rateCurrentPreset/flagCurrentPresetWhite —
+    /// same Task.sleep idiom as showSavedConfirmation above.
+    private func showRatingFeedback(_ message: String) {
+        ratingFeedback = message
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            ratingFeedback = nil
+        }
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL
@@ -331,11 +428,11 @@ struct ContentView: View {
     }
 
     /// Right arrow: step forward to the next already-visited entry if one exists (from a prior
-    /// Left), otherwise falls back to drawing a fresh random preset — same as Space — since
-    /// there's no pre-built playlist to advance through past what's already been seen.
+    /// Left), otherwise falls back to the next sequential preset — same as Space — since there's
+    /// no pre-built playlist to advance through past what's already been seen.
     private func loadNextPreset() {
         guard presetHistoryIndex >= 0, presetHistoryIndex < presetHistory.count - 1 else {
-            loadRandomPreset()
+            loadNextSequentialPreset()
             return
         }
         presetHistoryIndex += 1
@@ -363,7 +460,7 @@ struct ContentView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.autoCycleInterval)
                 guard !Task.isCancelled else { return }
-                loadRandomPreset(resetAutoCycle: false)
+                loadNextSequentialPreset(resetAutoCycle: false)
             }
         }
     }

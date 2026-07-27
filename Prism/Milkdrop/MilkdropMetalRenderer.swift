@@ -489,6 +489,33 @@ final class MilkdropMetalRenderer: NSObject {
     float2 milkdrop_mul(float2 v, float2x2 m) { return v * m; }
     float3 milkdrop_mul(float3 v, float3x3 m) { return v * m; }
     float4 milkdrop_mul(float4 v, float4x4 m) { return v * m; }
+    // Real HLSL's `mul` also documents plain scalar-scalar and scalar-vector forms (ordinary/
+    // componentwise-scale multiplication, not matrix math at all) — confirmed against a real
+    // corpus preset ("Fumbling_Foo & Flexi, Martin, Orb - Star Forge v13c.milk"'s warp_21,
+    // `mul(pow(q3, 1.25), .013*tex2D(...))` — a scalar times a `float3`), 35x "no matching function
+    // for call to 'milkdrop_mul'" in the 7/26 corpus scan (the matrix-shaped overloads above don't
+    // cover this at all — a different HLSL `mul` form, not a missing edge case of the same one).
+    float milkdrop_mul(float a, float b) { return a * b; }
+    float2 milkdrop_mul(float a, float2 b) { return a * b; }
+    float3 milkdrop_mul(float a, float3 b) { return a * b; }
+    float4 milkdrop_mul(float a, float4 b) { return a * b; }
+    float2 milkdrop_mul(float2 a, float b) { return a * b; }
+    float3 milkdrop_mul(float3 a, float b) { return a * b; }
+    float4 milkdrop_mul(float4 a, float b) { return a * b; }
+    // Real HLSL's `all`/`any` implicitly test each component against zero on *any* numeric vector,
+    // not just a `boolN` one (confirmed against a real corpus preset, "Cope - domains.milk"'s
+    // warp_11, `if(all(modi)) {}` where `modi` is `float2`) — MSL's own `all`/`any` only accept
+    // `boolN` (no implicit float->bool-per-component conversion), so real Metal's overload
+    // resolution rejects the call outright (27x "no matching function for call to 'all'" in the
+    // 7/26 corpus scan). These are additional *overloads* on the existing MSL stdlib names — not a
+    // redefinition risk like `lerp`/`saturate`/`mul` above, since the parameter type (`floatN`
+    // rather than `boolN`) is different, so they can share the name safely.
+    bool all(float2 x) { return x.x != 0.0 && x.y != 0.0; }
+    bool all(float3 x) { return x.x != 0.0 && x.y != 0.0 && x.z != 0.0; }
+    bool all(float4 x) { return x.x != 0.0 && x.y != 0.0 && x.z != 0.0 && x.w != 0.0; }
+    bool any(float2 x) { return x.x != 0.0 || x.y != 0.0; }
+    bool any(float3 x) { return x.x != 0.0 || x.y != 0.0 || x.z != 0.0; }
+    bool any(float4 x) { return x.x != 0.0 || x.y != 0.0 || x.z != 0.0 || x.w != 0.0; }
     float milkdrop_saturate(float x) { return clamp(x, 0.0, 1.0); }
     float2 milkdrop_saturate(float2 x) { return clamp(x, float2(0.0), float2(1.0)); }
     float3 milkdrop_saturate(float3 x) { return clamp(x, float3(0.0), float3(1.0)); }

@@ -1,0 +1,51 @@
+Found 9795 preset files
+... 1000/9795 (116s elapsed)
+... 2000/9795 (237s elapsed)
+... 3000/9795 (390s elapsed)
+... 4000/9795 (464s elapsed)
+... 5000/9795 (548s elapsed)
+... 6000/9795 (636s elapsed)
+... 7000/9795 (716s elapsed)
+... 8000/9795 (790s elapsed)
+... 9000/9795 (867s elapsed)
+
+=== SUMMARY (over 9795 files, 956s) ===
+Parse failures: 0
+
+warp_N=: none=1871 translateFail=0 compileFail=2164 OK=5760
+  compile success rate among files WITH warp_N=: 72.69056032306915%
+
+comp_N=: none=1824 translateFail=0 compileFail=1631 OK=6340
+  compile success rate among files WITH comp_N=: 79.53832643332078%
+
+=== TOP ERROR SIGNATURES ===
+[521x] error: implicit conversions between vector types ('float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values) and 'float2' (vector of 2 'float' values)) are not permitted  (e.g. suksma - you never had it so good, ducky.milk [warp])
+[394x] error: no matching function for call to 'dot'  (e.g. ORB - Ethereal Plain.milk [comp])
+[348x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float4' (vector of 4 'float' values)) are not permitted  (e.g. suksma - drum not triggered.milk [warp])
+[307x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float3' (vector of 3 'float' values)) are not permitted  (e.g. ORB - Ethereal Plain.milk [warp])
+[297x] error: member reference base type 'float' is not a structure or union  (e.g. flexi + geiss - bipolar vs- reaction diffusion [mirror scoped] (Jelly 5-5) threx --- Isosceles edit.milk [comp])
+[273x] error: implicit conversions between vector types ('float3' (vector of 3 'float' values) and 'float4' (vector of 4 'float' values)) are not permitted  (e.g. Rozzor & Rovastar - Dynamic Swirls 3 (Mysticial Awakening Mix Tweak) - cpe flacc roam3-.milk [comp])
+[243x] error: implicit conversions between vector types ('float4' (vector of 4 'float' values) and 'float3' (vector of 3 'float' values)) are not permitted  (e.g. suksma - passive probabilistic roaming coin gods.milk [comp])
+[192x] error: implicit conversions between vector types ('float3' (vector of 3 'float' values) and 'float2' (vector of 2 'float' values)) are not permitted  (e.g. BADAZJust a TwistFX - Martin - Foggy Notation - Ft AdamFX n Eos - Ufoz in the Fog .milk [warp])
+[156x] error: call to 'length' is ambiguous  (e.g. suksma - adam martin geiss - come into my closet of rot.milk [comp])
+[153x] error: implicit conversions between vector types ('float2' (vector of 2 'float' values) and 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)) are not permitted  (e.g. out of the paradigm nz this advice will cost you a nickel.milk [comp])
+[73x] error: cannot initialize a variable of type 'float' with an rvalue of type 'bool __attribute__((ext_vector_type(3)))' (vector of 3 'bool' values)  (e.g. oslo - game hen vs ritter sport.milk [comp])
+[66x] error: implicit conversions between vector types ('float4' (vector of 4 'float' values) and 'float2' (vector of 2 'float' values)) are not permitted  (e.g. Flexi + orb + geiss - the computer is your friend trust the computer.milk [comp])
+[58x] error: call to 'clamp' is ambiguous  (e.g. LuxXx - Simple Circuitodes  (wow).milk [comp])
+[51x] error: call to 'min' is ambiguous  (e.g. suksma - satanic teleprompter - slubz hhtg spher.milk [comp])
+[49x] error: read-only variable is not assignable  (e.g. Flexi + Rovastar + suksma - Fractopia [sth].milk [comp])
+[47x] error: call to 'pow' is ambiguous  (e.g. ORB - The Deep Blue --- Isosceles edit.milk [comp])
+[46x] error: called object type 'float4' (vector of 4 'float' values) is not a function or function pointer  (e.g. suksma - drum not triggered.milk [comp])
+[45x] error: expression is not assignable  (e.g. LuxXx - the first beat-tube.milk [comp])
+[45x] error: call to 'fmod' is ambiguous  (e.g. suksma - barium titanate --- Isosceles edit08.milk [comp])
+[40x] error: invalid operands to binary expression ('metal::float2x2' (aka 'matrix<float, 2, 2>') and 'int')  (e.g. xtramartin (849).milk [warp])
+[34x] error: implicit conversions between vector types ('metal::float2' (aka 'float2') and 'float3' (vector of 3 'float' values)) are not permitted  (e.g. PHAT HD FX 2 FiShbRaiN  -  Flexi  ft AdamFX Aderrasi , Martin n Rova - Witchcraft Take OverFX  C.milk [comp])
+[28x] error: no matching member function for call to 'sample'  (e.g. Geiss - Reaction Diffusion 3 (Janky Ripple Effect again).milk [comp])
+[27x] error: implicit conversions between vector types ('float3' (vector of 3 'float' values) and 'bool __attribute__((ext_vector_type(3)))' (vector of 3 'bool' values)) are not permitted  (e.g. BADAZJust a TwistFX - Martin - Foggy Notation - Ft AdamFX n Eos - Ufoz in the Fog .milk [comp])
+[26x] error: called object type 'float2' (vector of 2 'float' values) is not a function or function pointer  (e.g. suksma - my throat be a wellspring of blood - copaesthete domaination.milk [warp])
+[25x] error: cannot initialize a variable of type 'float3' (vector of 3 'float' values) with an rvalue of type 'metal::float4' (aka 'float4')  (e.g. 414.milk [warp])
+[21x] error: call to 'max' is ambiguous  (e.g. Flexi - a stream of consciousness [ad absurdum] - having a will is about naive as 'having' nz+ w11 unmitigated union with roosta.milk [comp])
+[20x] error: redefinition of 'tmp'  (e.g. $$$ Royal - Mashup (324).milk [comp])
+[15x] error: no matching function for call to 'milkdrop_mul'  (e.g. EVET - The Beast of Eden.milk [comp])
+[14x] error: assigning to 'float3' (vector of 3 'float' values) from incompatible type 'bool __attribute__((ext_vector_type(3)))' (vector of 3 'bool' values)  (e.g. Flexi - disruptor [wolfram's rule 90 satanic teleprompter 01].milk [warp])
+[14x] error: cannot initialize a variable of type 'float4' (vector of 4 'float' values) with an rvalue of type 'float __attribute__((ext_vector_type(3)))' (vector of 3 'float' values)  (e.g. suksma - uncount afathoms --- Isosceles edit.milk [warp])
