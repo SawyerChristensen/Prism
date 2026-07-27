@@ -11,10 +11,11 @@ import MetalKit
 import SwiftUI
 
 struct ProjectMMetalView: NSViewRepresentable {
+    let audioEngine: CoreAudioTapEngine
     var model: ProjectMVisualizerModel
 
     func makeCoordinator() -> ProjectMCoordinator {
-        ProjectMCoordinator()
+        ProjectMCoordinator(audioEngine: audioEngine)
     }
 
     func makeNSView(context: Context) -> MTKView {

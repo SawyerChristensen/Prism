@@ -86,7 +86,7 @@ struct ContentView: View {
         ZStack {
             // The wave
             if Self.useProjectMEngine {
-                ProjectMMetalView(model: projectMModel)
+                ProjectMMetalView(audioEngine: audioEngine, model: projectMModel)
             } else {
                 MilkdropVisualizerView(
                     audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
@@ -341,7 +341,8 @@ struct ContentView: View {
             isFocused = true
             if Self.useProjectMEngine, projectMModel.presetURL == nil,
                let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
-                projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent("100-square.milk"))
+                let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
+                projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
             }
             // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
             // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a

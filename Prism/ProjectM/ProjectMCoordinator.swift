@@ -16,6 +16,7 @@ import IOSurface
 
 final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private let engine: ProjectMEngine?
+    private let audioEngine: CoreAudioTapEngine
     private var commandQueue: MTLCommandQueue?
     private var pipelineState: MTLRenderPipelineState?
 
@@ -29,8 +30,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
 
     private var lastLoadedPresetURL: URL?
 
-    override init() {
+    init(audioEngine: CoreAudioTapEngine) {
         engine = ProjectMEngine()
+        self.audioEngine = audioEngine
         super.init()
         if engine == nil {
             NSLog("ProjectMCoordinator: ProjectMEngine failed to initialize")
@@ -67,6 +69,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             pipelineState = Self.buildPipelineState(device: device, pixelFormat: view.colorPixelFormat)
         }
         guard let commandQueue, let pipelineState else { return }
+
+        ProjectMAudioBridge.feed(engine, from: audioEngine)
 
         let width = Int(view.drawableSize.width)
         let height = Int(view.drawableSize.height)
