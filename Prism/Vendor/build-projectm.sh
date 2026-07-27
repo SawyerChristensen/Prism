@@ -8,6 +8,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/projectm"
 BUILD_DIR="${PROJECTM_BUILD_DIR:-$SCRIPT_DIR/.build}"
 OUT_DIR="$SCRIPT_DIR/projectm-build/lib"
+PATCH_MARKER_FILE="$SRC_DIR/src/libprojectM/Renderer/Platform/GladLoader.cpp"
+PATCH_MARKER="PRISM_LOCAL_PATCH"
+
+# Local patches (see Prism/Vendor/projectm-local-patches/) aren't part of the submodule's
+# tracked commit, so `git submodule update` silently drops them. Re-apply idempotently.
+for patch in "$SCRIPT_DIR"/projectm-local-patches/*.patch; do
+    [ -e "$patch" ] || continue
+    if ! grep -q "$PATCH_MARKER" "$PATCH_MARKER_FILE" 2>/dev/null; then
+        echo "Applying local patch: $(basename "$patch")"
+        git -C "$SRC_DIR" apply "$patch"
+    fi
+done
 
 STAMP_FILE="$OUT_DIR/.built-commit"
 CURRENT_COMMIT="$(git -C "$SRC_DIR" rev-parse HEAD)"
