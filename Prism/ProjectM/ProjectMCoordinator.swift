@@ -13,6 +13,7 @@
 
 import MetalKit
 import IOSurface
+import QuartzCore
 
 final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private let engine: ProjectMEngine?
@@ -30,6 +31,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
 
     private var lastLoadedPresetURL: URL?
     private weak var model: ProjectMVisualizerModel?
+
+    // Smoothed FPS for ContentView's on-screen counter - exponential moving average (not raw
+    // per-frame 1/dt) so the displayed number doesn't jitter every single frame.
+    private var lastFrameTimestamp: CFTimeInterval?
+    private var smoothedFPS: Double = 60
 
     init(audioEngine: CoreAudioTapEngine) {
         engine = ProjectMEngine()
@@ -76,6 +82,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         guard let commandQueue, let pipelineState else { return }
 
         ProjectMAudioBridge.feed(engine, from: audioEngine)
+        updateDisplayFPS()
 
         let width = Int(view.drawableSize.width)
         let height = Int(view.drawableSize.height)
@@ -113,6 +120,17 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func updateDisplayFPS() {
+        let now = CACurrentMediaTime()
+        defer { lastFrameTimestamp = now }
+        guard let lastFrameTimestamp else { return }
+        let dt = now - lastFrameTimestamp
+        guard dt > 0 else { return }
+        let instantaneousFPS = 1.0 / dt
+        smoothedFPS = smoothedFPS * 0.9 + instantaneousFPS * 0.1
+        model?.displayFPS = smoothedFPS
     }
 
     private static func buildPipelineState(device: MTLDevice, pixelFormat: MTLPixelFormat) -> MTLRenderPipelineState? {

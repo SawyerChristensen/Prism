@@ -13,14 +13,7 @@ struct ContentView: View {
     @State private var audioEngine = CoreAudioTapEngine()
     @State private var nowPlaying = NowPlayingManager()
     @State private var permissions = PermissionsManager()
-    @State private var visualizerModel = MilkdropVisualizerModel()
-    // Phase 3 debug toggle for the projectM-vendor-rewrite branch: PRISM_USE_PROJECTM=1 swaps the
-    // old hand-rolled renderer for the new vendored-projectM/ANGLE path below. Temporary — both
-    // paths coexist only until the new one is verified against real presets (see TO DO.md), at
-    // which point this toggle and the old MilkdropVisualizerModel/MilkdropVisualizerView path get
-    // deleted rather than kept as a permanent option.
-    private static let useProjectMEngine = ProcessInfo.processInfo.environment["PRISM_USE_PROJECTM"] == "1"
-    @State private var projectMModel = ProjectMVisualizerModel()
+    @State private var visualizerModel = ProjectMVisualizerModel()
     @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
@@ -28,8 +21,8 @@ struct ContentView: View {
     @State private var isLibraryFolderPickerPresented = false
     // Drag-and-drop counterpart to "O"'s file picker — true only while a drag carrying a `.milk`
     // file is actually hovering the window, driven by `PresetDroppableMTKView.onDropTargetChanged`
-    // (MilkdropMetalView.swift) via `handlePresetDrop`'s sibling wiring below, for the brief
-    // highlight overlay that's the only feedback a valid drop target exists at all.
+    // via `handlePresetDrop`'s sibling wiring below, for the brief highlight overlay that's the
+    // only feedback a valid drop target exists at all.
     @State private var isDropTargeted = false
     // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
     // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
@@ -81,27 +74,16 @@ struct ContentView: View {
             .map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
         let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
 
-        let bassEnergy = audioEngine.levels.prefix(4).reduce(0, +) / 4
-
         ZStack {
             // The wave
-            if Self.useProjectMEngine {
-                ProjectMMetalView(
-                    audioEngine: audioEngine, model: projectMModel,
-                    onDropPreset: { url in handlePresetDrop(url) },
-                    onDropTargetChanged: { isDropTargeted = $0 }
-                )
-                    .contentShape(Rectangle())
-                    .onTapGesture { loadNextSequentialPreset() }
-            } else {
-                MilkdropVisualizerView(
-                    audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
-                    onTap: { loadNextSequentialPreset() },
-                    onDropPreset: { url in handlePresetDrop(url) },
-                    onDropTargetChanged: { isDropTargeted = $0 }
-                )
-            }
-            
+            ProjectMMetalView(
+                audioEngine: audioEngine, model: visualizerModel,
+                onDropPreset: { url in handlePresetDrop(url) },
+                onDropTargetChanged: { isDropTargeted = $0 }
+            )
+                .contentShape(Rectangle())
+                .onTapGesture { loadNextSequentialPreset() }
+
             // The album art
             if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                 if let artwork = nowPlaying.artwork {
@@ -148,13 +130,11 @@ struct ContentView: View {
         .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
         .background(bgColor)
         .animation(.easeInOut(duration: 0.5), value: bgColor)
-        // Wave-only .milk preset loading (see MilkdropPresetFile.swift/MilkdropVisualizerModel):
+        // Wave-only .milk preset loading (see ProjectMVisualizerModel):
         // "O" opens a file picker, and the preset's name shows briefly so there's some feedback
         // that a load actually happened, since nothing else in the UI names the active preset.
         .overlay(alignment: .topLeading) {
-            let presetName = Self.useProjectMEngine
-                ? projectMModel.presetURL?.deletingPathExtension().lastPathComponent
-                : visualizerModel.presetName
+            let presetName = visualizerModel.presetURL?.deletingPathExtension().lastPathComponent
             if let presetName {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(presetName)
@@ -173,7 +153,7 @@ struct ContentView: View {
             // invisible day to day.
             VStack(alignment: .trailing, spacing: 4) {
                 // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
-                // frame by MilkdropMetalRenderer.draw(in:) into visualizerModel.displayFPS.
+                // frame by ProjectMCoordinator.draw(in:) into visualizerModel.displayFPS.
                 Text("\(Int(visualizerModel.displayFPS.rounded())) FPS")
                     .monospacedDigit()
                 if showSavedConfirmation {
@@ -204,9 +184,9 @@ struct ContentView: View {
             .padding(8)
         }
         // Only visible feedback that a drag is actually hovering a valid drop target — driven by
-        // `PresetDroppableMTKView.onDropTargetChanged` (MilkdropMetalView.swift), not SwiftUI's own
-        // `.onDrop`/`isTargeted` (that modifier showed no drag recognition at all over this view —
-        // see PresetDroppableMTKView's doc comment for why drag-and-drop is handled at the AppKit
+        // `PresetDroppableMTKView.onDropTargetChanged`, not SwiftUI's own `.onDrop`/`isTargeted`
+        // (that modifier showed no drag recognition at all over this view — see
+        // PresetDroppableMTKView's doc comment for why drag-and-drop is handled at the AppKit
         // level here instead).
         .overlay {
             if isDropTargeted {
@@ -252,15 +232,13 @@ struct ContentView: View {
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(
-                get: {
-                    Self.useProjectMEngine ? projectMModel.presetLoadError != nil : visualizerModel.presetLoadError != nil
-                },
-                set: { if !$0 { Self.useProjectMEngine ? (projectMModel.presetLoadError = nil) : (visualizerModel.presetLoadError = nil) } }
+                get: { visualizerModel.presetLoadError != nil },
+                set: { if !$0 { visualizerModel.presetLoadError = nil } }
             )
         ) {
-            Button("OK") { Self.useProjectMEngine ? (projectMModel.presetLoadError = nil) : (visualizerModel.presetLoadError = nil) }
+            Button("OK") { visualizerModel.presetLoadError = nil }
         } message: {
-            Text((Self.useProjectMEngine ? projectMModel.presetLoadError : visualizerModel.presetLoadError) ?? "")
+            Text(visualizerModel.presetLoadError ?? "")
         }
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space steps
@@ -351,22 +329,22 @@ struct ContentView: View {
             nowPlaying.startPolling()
             isFocused = true
             // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
-            // presetURL == nil (checked against whichever engine is actually active) so a second
-            // onAppear (SwiftUI can re-fire this) never clobbers a preset the user has since
-            // picked. Falls back to PRISM_PROJECTM_DEV_PRESETS (a debug-only hardcoded preset
-            // path, since the App Sandbox blocks reading arbitrary paths that weren't
-            // user-selected/dropped) only when there's no real remembered preset to restore.
-            let currentPresetURL = Self.useProjectMEngine ? projectMModel.presetURL : visualizerModel.presetURL
-            if currentPresetURL == nil {
+            // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a
+            // preset the user has since picked. Falls back to PRISM_PROJECTM_DEV_PRESETS (a
+            // debug-only hardcoded preset path, since the App Sandbox blocks reading arbitrary
+            // paths that weren't user-selected/dropped) only when there's no real remembered
+            // preset to restore - useful for quick manual testing without a security-scoped
+            // bookmark on hand.
+            if visualizerModel.presetURL == nil {
                 var restoredFromLastLaunch = false
                 lastPresetStore.withLastPreset { url in
                     restoredFromLastLaunch = true
                     loadPresetAndTrack(from: url)
                 }
-                if !restoredFromLastLaunch, Self.useProjectMEngine,
+                if !restoredFromLastLaunch,
                    let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
                     let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
-                    projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
+                    visualizerModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
                 }
             }
             // First-launch (or any launch before one's ever been picked) auto-prompt for the
@@ -437,8 +415,8 @@ struct ContentView: View {
     }
 
     /// Drag-and-drop counterpart to "O"'s `.fileImporter`, called by `PresetDroppableMTKView`
-    /// (MilkdropMetalView.swift) once a `.milk` file's actually been dropped — the extension check
-    /// already happened there (`milkURL(from:)`), so anything reaching here is already known-good.
+    /// once a `.milk` file's actually been dropped — the extension check already happened there
+    /// (`milkURL(from:)`), so anything reaching here is already known-good.
     /// AppKit's dragging-destination callbacks always run on the main thread already (unlike this
     /// method's SwiftUI-`.onDrop`-based predecessor, which needed a `Task { @MainActor }` hop), so
     /// this can touch `@State`/call `loadPresetAndTrack` directly. Still brackets the actual read in
@@ -460,35 +438,21 @@ struct ContentView: View {
     /// the idle auto-cycle countdown so a manual skip doesn't get immediately followed by an
     /// auto-cycle a moment later.
     ///
-    /// Loads into a *fresh* `MilkdropVisualizerModel` instance rather than mutating the existing
-    /// `visualizerModel` in place (TO DO.md Phase 3 — "Preset blending/crossfade transitions"): the
-    /// renderer needs the outgoing preset's own live, still-evolving state to keep rendering for
-    /// the crossfade's duration, which isn't possible if loading the next preset overwrites it
-    /// destructively. `MilkdropMetalView.updateNSView` notices `visualizerModel` became a different
-    /// instance and starts the transition (see MilkdropMetalCoordinator.updateModelIfNeeded). A
-    /// failed load's error is surfaced on the *existing* (still on-screen) model, matching the old
-    /// behavior of the alert appearing over whatever preset is still visible.
+    /// Just sets `visualizerModel.presetURL` and lets real projectM handle the rest internally -
+    /// unlike the old hand-rolled renderer, which had to construct a whole new model/renderer
+    /// instance per preset and cross-fade them in Swift, real projectM performs preset
+    /// transitions (smooth_transition) inside the C++ engine on one persistent instance (see
+    /// ProjectMCoordinator.updateModelIfNeeded), so there's no outgoing/incoming model split here.
     /// `recordInHistory` is false only for a Left/Right history navigation itself
     /// (`loadPreviousPreset`/`loadNextPreset` below) — replaying an already-recorded URL from
     /// `presetHistory` shouldn't re-append it or truncate the very forward branch Right is about
     /// to step into.
     private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true, recordInHistory: Bool = true) {
-        if Self.useProjectMEngine {
-            // Unlike the old path below, real projectM's own load failures surface
-            // asynchronously (see ProjectMCoordinator's presetLoadFailureHandler wiring) rather
-            // than as a synchronous parse result here, so there's no failure gate before the
-            // shared bookkeeping - matches projectm_load_preset_file's own "keep showing the
-            // current preset" behavior on a bad file.
-            projectMModel.requestPreset(at: url)
-        } else {
-            let newModel = MilkdropVisualizerModel()
-            newModel.loadPreset(from: url)
-            guard newModel.presetLoadError == nil else {
-                visualizerModel.presetLoadError = newModel.presetLoadError
-                return
-            }
-            visualizerModel = newModel
-        }
+        // Real projectM's own load failures surface asynchronously (see ProjectMCoordinator's
+        // presetLoadFailureHandler wiring) rather than as a synchronous parse result here, so
+        // there's no failure gate before the shared bookkeeping below - matches
+        // projectm_load_preset_file's own "keep showing the current preset" behavior on a bad file.
+        visualizerModel.requestPreset(at: url)
         lastPresetStore.rememberLoaded(url)
         if recordInHistory {
             if presetHistoryIndex < presetHistory.count - 1 {

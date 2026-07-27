@@ -15,9 +15,11 @@ import Foundation
 @Observable
 final class ProjectMVisualizerModel {
     private(set) var presetURL: URL?
-    /// Not private(set): the view clears this once the user dismisses the load-failure alert,
-    /// matching MilkdropVisualizerModel's identical property.
+    /// Not private(set): the view clears this once the user dismisses the load-failure alert.
     var presetLoadError: String?
+    /// Smoothed (exponential moving average, not instantaneous) frames-per-second, written by
+    /// ProjectMCoordinator once per frame — read by ContentView's on-screen performance counter.
+    var displayFPS: Double = 60
 
     func requestPreset(at url: URL) {
         presetURL = url
