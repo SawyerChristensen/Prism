@@ -420,9 +420,18 @@ struct MilkdropVisualizerView: View {
     /// the spacebar shortcut. Used to cycle to a random preset from the loaded library; see
     /// MilkdropPresetLibrary.swift.
     var onTap: () -> Void
+    /// Called with a dropped `.milk` file's URL — see `PresetDroppableMTKView` (MilkdropMetalView.swift)
+    /// for why this is wired via AppKit's own drag-and-drop rather than SwiftUI's `.onDrop`.
+    var onDropPreset: (URL) -> Void
+    /// True while a drag carrying a `.milk` file is hovering the view — for the caller's own
+    /// highlight overlay (there's no view here to attach one to; MilkdropMetalView fills the frame).
+    var onDropTargetChanged: (Bool) -> Void
 
     var body: some View {
-        MilkdropMetalView(audioEngine: audioEngine, color: color, bassEnergy: bassEnergy, model: model)
+        MilkdropMetalView(
+            audioEngine: audioEngine, color: color, bassEnergy: bassEnergy, model: model,
+            onDropPreset: onDropPreset, onDropTargetChanged: onDropTargetChanged
+        )
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
     }

@@ -19,8 +19,9 @@ struct ContentView: View {
     @State private var ratingStore = MilkdropPresetRatingStore()
     @State private var isPresetImporterPresented = false
     @State private var isLibraryFolderPickerPresented = false
-    // Drag-and-drop counterpart to "O"'s file picker (see `.onDrop` below/`handlePresetDrop`) —
-    // true only while a drag carrying a file is actually hovering the window, for the brief
+    // Drag-and-drop counterpart to "O"'s file picker — true only while a drag carrying a `.milk`
+    // file is actually hovering the window, driven by `PresetDroppableMTKView.onDropTargetChanged`
+    // (MilkdropMetalView.swift) via `handlePresetDrop`'s sibling wiring below, for the brief
     // highlight overlay that's the only feedback a valid drop target exists at all.
     @State private var isDropTargeted = false
     // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
@@ -77,7 +78,12 @@ struct ContentView: View {
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel, onTap: { loadNextSequentialPreset() })
+            MilkdropVisualizerView(
+                audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
+                onTap: { loadNextSequentialPreset() },
+                onDropPreset: { url in handlePresetDrop(url) },
+                onDropTargetChanged: { isDropTargeted = $0 }
+            )
             
             // The album art
             if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
@@ -177,8 +183,11 @@ struct ContentView: View {
             .foregroundStyle(fgColor.opacity(0.6))
             .padding(8)
         }
-        // Only visible feedback that a drag is actually hovering a valid drop target — see
-        // `.onDrop`/`handlePresetDrop` below, which does the real work once something's released.
+        // Only visible feedback that a drag is actually hovering a valid drop target — driven by
+        // `PresetDroppableMTKView.onDropTargetChanged` (MilkdropMetalView.swift), not SwiftUI's own
+        // `.onDrop`/`isTargeted` (that modifier showed no drag recognition at all over this view —
+        // see PresetDroppableMTKView's doc comment for why drag-and-drop is handled at the AppKit
+        // level here instead).
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -186,11 +195,6 @@ struct ContentView: View {
                     .padding(10)
                     .allowsHitTesting(false)
             }
-        }
-        // Drag-and-drop counterpart to "O"'s file picker: dropping a `.milk` file anywhere on the
-        // window loads it as the current preset, same as picking it from the panel would.
-        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
-            handlePresetDrop(providers)
         }
         .fileImporter(
             isPresented: $isPresetImporterPresented,
@@ -399,49 +403,22 @@ struct ContentView: View {
         }
     }
 
-    /// Drag-and-drop counterpart to "O"'s `.fileImporter` — accepts any file drag (so Finder's
-    /// cursor doesn't show a reject indicator for a plain file drop) and only actually loads it if
-    /// it turns out to be a `.milk` file; anything else is silently ignored, same tolerance this
-    /// app already has for a cancelled/invalid `.fileImporter` result just above.
-    ///
-    /// Reads the dropped item via `loadObject(ofClass: URL.self)`, not a manual
-    /// `loadDataRepresentation(forTypeIdentifier:)` + `URL(dataRepresentation:relativeTo:)` decode
-    /// (an earlier version of this method did exactly that, and didn't work) — `dataRepresentation`
-    /// only round-trips bytes an app registered itself via that same property; a drag whose item
-    /// provider was vended by *Finder* isn't guaranteed to use that exact encoding. `URL` bridges to
-    /// `NSURL`, which conforms to `NSItemProviderReading` specifically to decode whatever form a
-    /// cross-process drag source (Finder included) actually uses, so this is the robust way to read
-    /// a dropped file URL from an arbitrary source rather than one this app wrote itself.
-    ///
-    /// The completion handler runs off the main actor, so the actual load — which touches `@State`
-    /// and needs security-scoped access to a URL handed to us by the drag session, not one this app
-    /// picked itself — hops back via `Task { @MainActor in }`, mirroring the `.fileImporter`
-    /// closure's own start/stop-access pattern below. `PrismDebug.trace` calls at each decision
-    /// point (no usable provider / load failed / wrong extension / success) since a drop that
-    /// silently does nothing is otherwise unobservable — see PrismDebug.swift's own doc comment on
-    /// why `startupTracing` (not `verboseLogging`) is on by default.
-    private func handlePresetDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) }) else {
-            PrismDebug.trace("handlePresetDrop: no provider can load a URL")
-            return false
-        }
-        _ = provider.loadObject(ofClass: URL.self) { url, error in
-            guard let url else {
-                PrismDebug.trace("handlePresetDrop: loadObject failed (\(String(describing: error)))")
-                return
-            }
-            guard url.pathExtension.lowercased() == "milk" else {
-                PrismDebug.trace("handlePresetDrop: dropped file isn't .milk (\(url.lastPathComponent))")
-                return
-            }
-            Task { @MainActor in
-                let accessing = url.startAccessingSecurityScopedResource()
-                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                PrismDebug.trace("handlePresetDrop: loading \(url.lastPathComponent)")
-                loadPresetAndTrack(from: url)
-            }
-        }
-        return true
+    /// Drag-and-drop counterpart to "O"'s `.fileImporter`, called by `PresetDroppableMTKView`
+    /// (MilkdropMetalView.swift) once a `.milk` file's actually been dropped — the extension check
+    /// already happened there (`milkURL(from:)`), so anything reaching here is already known-good.
+    /// AppKit's dragging-destination callbacks always run on the main thread already (unlike this
+    /// method's SwiftUI-`.onDrop`-based predecessor, which needed a `Task { @MainActor }` hop), so
+    /// this can touch `@State`/call `loadPresetAndTrack` directly. Still brackets the actual read in
+    /// `startAccessingSecurityScopedResource`/`stopAccessingSecurityScopedResource`, mirroring the
+    /// `.fileImporter` closures elsewhere in this file, for a URL this app didn't pick via its own
+    /// panel. `PrismDebug.trace` since a load that silently does nothing would otherwise be
+    /// unobservable — see PrismDebug.swift's own doc comment on why `startupTracing` (not
+    /// `verboseLogging`) is on by default.
+    private func handlePresetDrop(_ url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        PrismDebug.trace("handlePresetDrop: loading \(url.lastPathComponent)")
+        loadPresetAndTrack(from: url)
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL
