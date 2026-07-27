@@ -7,7 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		3825490B1DEE668ADCD42AE3 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
+		62F28C248C9EDB552DB5DFA6 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
+		6FCA5057353640E09DDB1BB5 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
 		BE0D51E03013C06900F41558 /* TO DO.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0D51DF3013C06900F41558 /* TO DO.md */; };
+		D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,11 +33,30 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		141407BA5A3D6307EECBC83A /* Embed Vendor Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				6FCA5057353640E09DDB1BB5 /* libprojectM-4.dylib in Embed Vendor Libraries */,
+				D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */,
+				3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */,
+			);
+			name = "Embed Vendor Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		66DECD745A5A6D582CF50763 /* libEGL.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libEGL.dylib; path = Vendor/angle/lib/libEGL.dylib; sourceTree = SOURCE_ROOT; };
+		7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = "libprojectM-4.dylib"; path = "Vendor/projectm-build/lib/libprojectM-4.dylib"; sourceTree = SOURCE_ROOT; };
 		BE0D51DF3013C06900F41558 /* TO DO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TO DO.md"; sourceTree = "<group>"; };
 		BEAB8FDD3012B50A005F68B6 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CB63489DA355B802D3656A96 /* libGLESv2.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libGLESv2.dylib; path = Vendor/angle/lib/libGLESv2.dylib; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -55,11 +80,15 @@
 		};
 		BEAB8FEF3012B50C005F68B6 /* PrismTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = PrismTests;
 			sourceTree = "<group>";
 		};
 		BEAB8FF93012B50C005F68B6 /* PrismUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = PrismUITests;
 			sourceTree = "<group>";
 		};
@@ -70,6 +99,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3825490B1DEE668ADCD42AE3 /* libprojectM-4.dylib in Frameworks */,
+				62F28C248C9EDB552DB5DFA6 /* libEGL.dylib in Frameworks */,
+				76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +122,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BCAF24C0B213990958B26549 /* Vendor Libraries */ = {
+			isa = PBXGroup;
+			children = (
+				7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */,
+				66DECD745A5A6D582CF50763 /* libEGL.dylib */,
+				CB63489DA355B802D3656A96 /* libGLESv2.dylib */,
+			);
+			name = "Vendor Libraries";
+			sourceTree = "<group>";
+		};
 		BEAB8FD43012B50A005F68B6 = {
 			isa = PBXGroup;
 			children = (
@@ -98,6 +140,7 @@
 				BEAB8FEF3012B50C005F68B6 /* PrismTests */,
 				BEAB8FF93012B50C005F68B6 /* PrismUITests */,
 				BEAB8FDE3012B50A005F68B6 /* Products */,
+				BCAF24C0B213990958B26549 /* Vendor Libraries */,
 			);
 			sourceTree = "<group>";
 		};
@@ -121,6 +164,7 @@
 				BEAB8FD93012B50A005F68B6 /* Sources */,
 				BEAB8FDA3012B50A005F68B6 /* Frameworks */,
 				BEAB8FDB3012B50A005F68B6 /* Resources */,
+				141407BA5A3D6307EECBC83A /* Embed Vendor Libraries */,
 			);
 			buildRules = (
 			);
@@ -130,8 +174,6 @@
 				BEAB8FDF3012B50A005F68B6 /* Prism */,
 			);
 			name = Prism;
-			packageProductDependencies = (
-			);
 			productName = Prism;
 			productReference = BEAB8FDD3012B50A005F68B6 /* Prism.app */;
 			productType = "com.apple.product-type.application";
@@ -153,8 +195,6 @@
 				BEAB8FEF3012B50C005F68B6 /* PrismTests */,
 			);
 			name = PrismTests;
-			packageProductDependencies = (
-			);
 			productName = PrismTests;
 			productReference = BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -176,8 +216,6 @@
 				BEAB8FF93012B50C005F68B6 /* PrismUITests */,
 			);
 			name = PrismUITests;
-			packageProductDependencies = (
-			);
 			productName = PrismUITests;
 			productReference = BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -439,12 +477,23 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
 				INFOPLIST_FILE = Prism/Info.plist;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Prism needs permission to see what track is currently playing.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism;
@@ -484,12 +533,23 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
 				INFOPLIST_FILE = Prism/Info.plist;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Prism needs permission to see what track is currently playing.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism;

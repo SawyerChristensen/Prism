@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds Prism/Vendor/projectm as a dylib and vendors the artifact into
-# Prism/Vendor/projectm-build/lib. Re-run after bumping the projectm submodule
-# (see Prism/Vendor/projectm-VERSION.md).
+# Builds Vendor/projectm as a dylib and vendors the artifact into
+# Vendor/projectm-build/lib. Re-run after bumping the projectm submodule
+# (see Vendor/projectm-VERSION.md).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -46,9 +46,13 @@ cmake -S "$SRC_DIR" -B "$BUILD_DIR" \
 make -C "$BUILD_DIR" -j"$(sysctl -n hw.ncpu)" projectM
 
 mkdir -p "$OUT_DIR"
-cp -P "$BUILD_DIR"/src/libprojectM/libprojectM-4*.dylib "$OUT_DIR/"
-install_name_tool -id "@rpath/libprojectM-4.4.dylib" "$OUT_DIR"/libprojectM-4.4.2.0.dylib
-codesign -f -s - "$OUT_DIR"/libprojectM-4.4.2.0.dylib
+rm -f "$OUT_DIR"/libprojectM-4*.dylib
+# Xcode's embed-and-codesign copy step doesn't handle a two-level SONAME symlink chain
+# (libprojectM-4.dylib -> libprojectM-4.4.dylib -> libprojectM-4.4.2.0.dylib) well, and that
+# versioning scheme is pointless for a single vendored artifact anyway - just vendor one real file.
+cp "$BUILD_DIR"/src/libprojectM/libprojectM-4.4.2.0.dylib "$OUT_DIR"/libprojectM-4.dylib
+install_name_tool -id "@rpath/libprojectM-4.dylib" "$OUT_DIR"/libprojectM-4.dylib
+codesign -f -s - "$OUT_DIR"/libprojectM-4.dylib
 
 # CMake-generated headers (generate_export_header + configure_file) aren't part of the source
 # tree, so they must be vendored separately alongside the built dylib.
