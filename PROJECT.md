@@ -16,12 +16,14 @@ This file is a map of the codebase (what each file is responsible for) plus a de
 ### `Prism/App/` — app shell
 - **`PrismApp.swift`** — `@main` entry point, window styling (hidden title bar).
 - **`ContentView.swift`** — root view: hosts the visualizer, the now-playing overlay, the FPS/status
-  overlay, preset-loading (`⌘O`), keyboard shortcuts (Space/tap = random preset, `A` = auto-cycle,
-  `L` = library folder picker, `←`/`→` = step back/forward through this session's preset history),
-  and the `loadPresetAndTrack` choke point every preset load funnels through (crossfade trigger,
-  last-preset persistence, auto-cycle reset, history recording). Also auto-prompts for the preset
-  library folder on launch if none is configured yet (added 7/26 — previously only prompted lazily,
-  the first time Space/`L` was pressed).
+  overlay, preset-loading (`⌘O`, or drag-and-drop a `.milk` file onto the window — `handlePresetDrop`,
+  added 7/27), keyboard shortcuts (Space/tap = random preset, `A` = auto-cycle, `L` = library folder
+  picker, `←`/`→` = step back/forward through this session's preset history), and the
+  `loadPresetAndTrack` choke point every preset load funnels through (crossfade trigger, last-preset
+  persistence, auto-cycle reset, history recording) — drag-and-drop feeds into this same choke point,
+  not a separate load path. Also auto-prompts for the preset library folder on launch if none is
+  configured yet (added 7/26 — previously only prompted lazily, the first time Space/`L` was
+  pressed).
 - **`PermissionsManager.swift`** — probes/requests the TCC permissions Prism needs (Screen Recording
   for `AudioCaptureEngine`, Automation for `NowPlayingManager`'s Apple Events).
 - **`PrismDebug.swift`** — master switch (`PrismDebug.isEnabled`) for verbose diagnostic logging
@@ -364,3 +366,100 @@ Also shipped two smaller `TO DO.md` items in `ContentView.swift`/`MilkdropMetalR
   fixed via a chained MSL macro (`blurTexsizeDefine`) expressing each level's real size as a
   deterministic function of the level above it, matching `updateBlurTextures`'s own halving loop —
   no new runtime uniform slot needed.
+
+### 2026-07-27 — systemic white-screen (NaN/Inf feedback poisoning) fix, further spazz reduction
+User report: *many* presets flagged "all white," including ones never individually flagged as
+buggy, often not white immediately but "animate for a bit and then become all white." That shape —
+fine for a while, then permanently broken, on a broad swath of otherwise-unrelated presets — doesn't
+match a per-preset authoring bug (those are wrong from frame one, on that one preset). It matches a
+non-finite (NaN/Inf) value entering the persistent GPU feedback texture at some unpredictable frame
+and never leaving: `feedback_fragment`/`feedback_mesh_fragment`'s bilinear sampling spreads one bad
+pixel to its neighbors every subsequent frame, it typically reads back as solid white once stored to
+the 8-bit UNORM feedback texture, and white is a stable fixed point most preset math can't pull back
+down from (comparisons against NaN are never true, so a later `pow`/`mix`/`clamp` can't rescue it).
+
+The 7/26 session had already found and fixed *one* source of this — fast-math-induced undefined
+behavior on div-by-zero/negative-`pow` inside dynamically-compiled `warp_N=`/`comp_N=` shaders,
+fixed via `.safe` math mode. Re-examined this session: `.safe` mode only removes the *compiler's*
+extra UB on top of an already-non-finite value — it does nothing to stop a preset's own math from
+legitimately computing NaN under plain IEEE rules in the first place (`pow` of a negative base to a
+fractional exponent is NaN whether or not fast-math is on; so is `asin`/`acos` of an out-of-domain
+input, and real presets commonly feed in unnormalized audio signals like `bass`, which routinely
+exceeds 1 — see `MilkdropBeatState.minimumBassFloor`). Confirmed by code inspection that nothing
+anywhere in the pipeline — the CPU NS-EEL evaluator, the per-frame `warpParams`/
+`oldStyleCompositeParams` funnel in `MilkdropVisualizerView.swift`, or the dynamically-compiled
+shaders' own final output — ever checked for or scrubbed a non-finite value before it became part
+of the persistent feedback state. (A corpus grep for direct `asin(`/`acos(` calls on an audio
+signal found only ~10 files — not "many" on its own — but that undercounts the real exposure: any
+NS-EEL expression chain can produce an out-of-range intermediate value feeding a later `pow`/`asin`/
+`acos`, not just a literal one-line call on `bass` itself, and a GPU-transpiled `per_pixel_N=`
+script has the identical exposure on the vertex side, which a CPU-side fix alone wouldn't reach.)
+
+**Fixed, defense-in-depth at every layer** rather than chasing one root cause, since NaN can enter
+from several independent places and the goal is that none of them can ever permanently break the
+picture:
+1. `MilkdropExpressionEvaluator.swift` — `asin`/`acos` clamp their input to `[-1, 1]` before calling
+   (matching the file's existing sqrt/log domain-guard convention) instead of reaching NaN on an
+   out-of-range input; `pow` returns 0 for a negative base with a non-integer exponent (same
+   convention) instead of NaN. Fixed identically in both `callFunction` implementations (the
+   resolved-slot fast path used by per-frame/per-vertex/per-shape evaluation, and the string-keyed
+   original used for one-shot init programs).
+2. `MilkdropVisualizerView.swift`'s `updatePresetPerFrame` — every `warpParams`/
+   `oldStyleCompositeParams` field read from `presetVariables` (the ten warp-transform fields that
+   drive the feedback pass's multiplicative zoom/rotate/decay, plus `gammaAdj`/`videoEchoZoom`/
+   `videoEchoAlpha`, the old-style composite path's equivalent) now only applies when `.isFinite`.
+   A non-finite per-frame result just holds last frame's value instead of latching the corruption
+   in forever — self-healing the instant the preset's own script produces a sane number again.
+3. `Shaders.metal` and `MilkdropMetalRenderer.swift`'s `shaderShimHeader` — a small
+   `milkdrop_sanitize`/`milkdrop_sanitize4` helper (`select(c, float(N)(0), !isfinite(c))`) now wraps
+   the final output of *every* pass that writes the persistent feedback texture: `feedback_fragment`,
+   `feedback_mesh_fragment`, the dynamically-compiled `comp_N=`/`warp_N=` wrappers' `ret` (the two
+   `return float4(ret, 1.0)` sites in `buildCompositeShaderSource`/`buildWarpShaderSource`), and the
+   old-style composite (layered on top of its existing `saturate`, since `clamp`'s NaN behavior is
+   implementation-defined, not guaranteed to land on 0). This is the actually-universal backstop:
+   whatever produced the non-finite value — a CPU per-frame variable (already caught by (2), but
+   defense-in-depth costs nothing here), a GPU-transpiled `per_pixel_N=` script's own `pow`/`asin`/
+   `acos` (not covered by (1)/(2) at all, since that path never goes through the CPU evaluator), or
+   something not yet identified — it gets scrubbed to black right at the one choke point everything
+   already funnels through, instead of needing every individual cause hunted down first.
+
+Verified: full `xcodebuild build` and `-only-testing:PrismTests build-for-testing` both succeed
+(this project's standing policy — never `xcodebuild test`, see `TO DO.md`). Additionally re-ran the
+standing full-corpus `warp_N=`/`comp_N=` real-`MTLDevice` compile scan (reusing
+`dev-notes/corpus-shader-scan-2026-07-27-round3/harness_main.swift`, per this project's "measure,
+don't guess" method) against the shim-header change specifically: **warp_N= 72.69% (5,760/7,924),
+comp_N= 79.54% (6,340/7,971)** — identical OK counts, 0 parse failures, 0 translateFail, and the
+same top-30 error signatures as the pre-change baseline — confirms `milkdrop_sanitize` is valid MSL
+everywhere it's inserted and introduces zero compile regressions across the full real corpus. This fix doesn't replace the three case-by-case white-screen investigations already in
+`TO DO.md` (none of those presets' shaders were found to produce NaN — their causes, where
+identified, are distinct and still open), but should close the broader "many presets, at
+unpredictable times" pattern the user actually reported.
+
+**Separately, a further "make it more relaxing" pass** on `MilkdropBeatState`'s beat-punch tuning
+(same user report: many presets read as jittery/spazzy even without an individual bug) — same
+direct-calculation verification method as the 7/26 reduction that established this pattern:
+`refractoryInterval` 0.16s -> 0.22s (~4.5 triggers/sec ceiling, still comfortably above a 260 BPM
+quarter-note rate — fewer re-triggers on dense/bassy material's sub-beat transients), `punchHalfLife`
+0.12s -> 0.18s (a hit swells in and fades more slowly, reading as calmer rather than a quick flash).
+`renderToTexture`'s zoom/rotation punch formula reduced again: baseline ~1.10x zoom/sec / ~2.1°/sec
+-> ~1.06x / ~1.4°/sec, full-punch ~2.0x / ~12.4°/sec -> ~1.52x / ~8.3°/sec (1.0010^60≈1.062,
+1.0070^60≈1.520, 0.0004·60 rad≈1.38°, 0.0024·60 rad≈8.25°). Waveform line-width's own punch
+coefficient cut 1.4 -> 0.8, so the stroke doesn't pulse as hard on a hit either. Still no live-audio
+A/B pass done (GUI automation is unreliable in this environment, and the project's testing policy
+avoids launching the real audio-capturing app via automation) — see `TO DO.md`'s open item.
+
+**Also shipped this session: drag-and-drop `.milk` loading.** `ContentView.handlePresetDrop`
+accepts any file drag onto the window (`.onDrop(of: [.fileURL], ...)`) and only actually loads it
+if `url.pathExtension.lowercased() == "milk"` — anything else is silently ignored rather than
+rejected up front, since narrowing the drop target's accepted types to just `.milk` would need a
+formally-exported UTI this app doesn't declare (the existing `.fileImporter` picker gets away with
+a dynamic `UTType(filenameExtension: "milk")` for its *own* filtering, but that doesn't extend to
+what a drag source advertises on the pasteboard). `NSItemProvider.loadDataRepresentation`'s
+completion handler runs off the main actor, so the actual load — touching `@State` and needing
+security-scoped access to a URL this app didn't pick via its own panel — hops back via
+`Task { @MainActor in }`, then brackets the load in `startAccessingSecurityScopedResource`/
+`stopAccessingSecurityScopedResource`, mirroring the `.fileImporter` closure's own pattern a few
+lines away. Feeds into the same `loadPresetAndTrack` choke point every other load path already
+uses, so crossfade/history/last-preset-persistence all work identically regardless of how the
+preset arrived. A thin `strokeBorder` overlay, shown only while `isDropTargeted` is true, is the
+one piece of feedback that a drag is hovering a valid target at all.

@@ -127,8 +127,51 @@ full three-round writeup) — re-measure before trusting these counts, they'll d
 
 ## Open — white-screen presets
 
-Root cause confirmed and fixed for one preset family; two others investigated but still open —
-see `PROJECT.md`'s development history for the full investigation writeup.
+**New 7/27: a systemic NaN/Inf-poisoning theory, fixed.** The user reported *many* presets going
+white — not just the handful individually investigated below — often after animating fine for a
+while first, not immediately. That "fine, then permanently white" pattern doesn't match a per-
+preset authoring bug (those would be wrong from frame one); it matches a non-finite (NaN/Inf) value
+entering the persistent GPU feedback texture at some unpredictable frame, then never leaving — the
+warp pass's bilinear sampling spreads a single bad pixel to its neighbors every subsequent frame,
+it typically reads back as solid white once stored to the 8-bit UNORM target, and white is a stable
+fixed point most preset math can't pull back down from (comparisons against NaN are never true).
+The 7/26 session already found and fixed one source of this (fast-math-induced UB on div-by-zero/
+negative-`pow` inside *compiled* shaders — see development history below), but `.safe` math mode
+only removes the compiler's *extra* UB on top of NaN; it doesn't stop a preset's own math from
+legitimately computing NaN under plain IEEE rules (e.g. `pow` of a negative base to a fractional
+exponent, or `asin`/`acos` of an unnormalized signal like `bass` — which routinely exceeds 1, see
+`MilkdropBeatState.minimumBassFloor`). Nothing anywhere in the pipeline — the CPU NS-EEL evaluator,
+the per-frame `warpParams`/`oldStyleCompositeParams` funnel, or the dynamically-compiled shaders'
+own final output — ever checked for or scrubbed a non-finite value before it became part of the
+persistent state. **Fixed**, defense-in-depth at every layer:
+  1. `MilkdropExpressionEvaluator.swift`: `asin`/`acos` now clamp their input to `[-1, 1]` before
+     calling (matching this file's existing sqrt/log domain-guard convention) instead of letting an
+     out-of-range input reach NaN; `pow` returns 0 for a negative base with a non-integer exponent
+     (same convention) instead of NaN. Both `callFunction` implementations (resolved-slot fast path
+     and the string-keyed original) fixed identically.
+  2. `MilkdropVisualizerView.swift`'s `updatePresetPerFrame`: every `warpParams`/
+     `oldStyleCompositeParams` field read from `presetVariables` (the ten warp-transform fields plus
+     `gammaAdj`/`videoEchoZoom`/`videoEchoAlpha`) now only applies if `.isFinite` — a non-finite
+     per-frame result just holds last frame's value instead of latching corruption in, so it
+     self-heals the moment the preset's own script produces a sane number again.
+  3. `Shaders.metal`/`MilkdropMetalRenderer.swift`'s shim header: a `milkdrop_sanitize`/
+     `milkdrop_sanitize4` helper (`select(c, 0, !isfinite(c))`) now wraps the final output of every
+     pass that writes the persistent feedback texture — `feedback_fragment`, `feedback_mesh_fragment`,
+     the dynamically-compiled `comp_N=`/`warp_N=` wrappers' `ret`, and the old-style composite (on
+     top of its existing `saturate`, whose own NaN behavior is implementation-defined) — so *any*
+     non-finite value, from *any* source (including ones (1)/(2) don't cover, like a GPU-transpiled
+     `per_pixel_N=` script's own `pow`/`asin`/`acos` use), gets scrubbed to black right where it
+     would otherwise become permanent, rather than needing every individual cause hunted down first.
+  - Verified: full app build + `PrismTests` build-for-testing both succeed (this project's policy —
+    never `xcodebuild test`, see below). Re-ran the standing full-corpus `warp_N=`/`comp_N=` compile
+    scan (`dev-notes/corpus-shader-scan-2026-07-27-round3/harness_main.swift` harness) after the
+    shim-header change: **warp_N= 72.69% (5,760/7,924), comp_N= 79.54% (6,340/7,971)** — identical
+    OK counts to the pre-change baseline (0 parse failures, 0 translateFail, same top-30 error
+    signatures) — confirms `milkdrop_sanitize` is valid MSL everywhere it's inserted, with zero
+    compile regressions across the full real corpus.
+  - This doesn't replace the case-by-case investigations below (none of those presets' shaders were
+    found to produce NaN — their causes, where identified, are distinct), but should stop the
+    broader "many presets, unpredictably, over time" pattern the user reported.
 
 - [ ] **"suksma - gss,sth - hogwoman style - species pay"** and **"carved in skin nz+"**: both
   `warp_N=` and `comp_N=` already compile successfully for both — **not a shader-compile bug**.
@@ -164,6 +207,18 @@ see `PROJECT.md`'s development history for the full investigation writeup.
 
 ## Open — other
 
+- [x] Drag-and-drop `.milk` loading — **done 7/27**: dropping a preset file anywhere on the window
+  loads it, same as `⌘O`'s picker. `ContentView.handlePresetDrop` accepts any file drag (so Finder's
+  cursor doesn't show a reject indicator over a plain file) and only actually loads it if
+  `url.pathExtension` is `milk`; a thin border overlay (`isDropTargeted`) is the only feedback while
+  a drag is hovering. `NSItemProvider`'s completion handler isn't MainActor-isolated, so the actual
+  load hops back via `Task { @MainActor in }` before touching `@State`/calling `loadPresetAndTrack`
+  (which itself needs security-scoped access to a URL the drag session handed us, not one this app
+  picked via its own panel — same `startAccessingSecurityScopedResource`/`stopAccessingSecurityScopedResource`
+  pattern the existing `.fileImporter` closure already uses). Verified via full `xcodebuild build`
+  (zero warnings, matching this project's zero-warning policy) — not eyeballed live (see testing
+  policy below on why GUI automation isn't used here), so a real drag-a-file-onto-the-window check
+  is still worth doing by hand.
 - [x] Fill out the app icon list in assets — **done 7/26**: `AppIcon.appiconset` only had the
   512x512@2x slot filled (`prismAppIcon.png`); every other mac idiom slot (16/32/128/256/512 at
   1x/2x) had no filename, so Xcode was synthesizing them by naive scaling instead of using real
@@ -180,7 +235,17 @@ see `PROJECT.md`'s development history for the full investigation writeup.
 - [ ] Live, extended-listening A/B pass on the "spazz factor" tuning (beat-punch magnitude,
   refractory interval) — verified correct in isolation (frame-rate independence, magnitude math)
   but never eyeballed against real audio for a full session. Adjust `MilkdropBeatState`'s constants
-  further by ear if still not right. (Dev Note: the goal is to make the spazz/constant zoom speed lesser. The visualizer should still be responsive but much more relaxed. Right now it is incredibly fast, spazzy, and jittery. It should be more calming and relaxing overall. Maybe we can increase the intensity if the BPM is especially fast, but we can get to that later as a possible future to-do item)
+  further by ear if still not right. **Reduced again 7/27** (user: "way too jittery" even on presets
+  not individually flagged) — `MilkdropBeatState.refractoryInterval` 0.16s -> 0.22s (~4.5 triggers/
+  sec ceiling, still above a 260 BPM quarter-note rate) and `punchHalfLife` 0.12s -> 0.18s (slower,
+  smoother swell per hit); `MilkdropMetalRenderer.renderToTexture`'s zoom/rotation punch formula cut
+  again (baseline ~1.10x zoom/sec / ~2.1°/sec -> ~1.06x / ~1.4°/sec; full-punch ~2.0x / ~12.4°/sec ->
+  ~1.52x / ~8.3°/sec — same direct-calculation verification method as the 7/26 reduction, see that
+  code's own comment); waveform line-width's punch coefficient 1.4 -> 0.8. Still hasn't had the
+  live-audio A/B pass this item asks for — tune further by ear from here. (Dev Note: the goal is to
+  make the spazz/constant zoom speed lesser. The visualizer should still be responsive but much more
+  relaxed. Maybe we can increase the intensity if the BPM is especially fast, but we can get to that
+  later as a possible future to-do item — still true, not attempted this round.)
 - [ ] `GetBlur1`/`GetBlur2`/`GetBlur3`'s missing dynamic-range rescale (`_c5.x`/`_c5.y` scale/bias
   from `blur1_min`/`blur1_max`/etc., real per-frame-scriptable variables Prism doesn't parse yet) —
   narrow (~10 files reference a blur sampler at all), scoped precisely in `PROJECT.md`.

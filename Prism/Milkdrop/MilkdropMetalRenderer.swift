@@ -41,12 +41,16 @@ final class MilkdropBeatState {
     // 240 BPM, an extreme tempo, is 4/sec) — so on dense/bassy material this could re-trigger on
     // sub-beat transients (hi-hats, texture) rather than settling on the actual beat, adding to the
     // "everything way too fast/spazzy" report alongside the zoom/rotation magnitude reduction just
-    // below. Raised to 0.16s (~6.25/sec ceiling) — still generous for fast electronic music, just
-    // no longer faster than music itself can be.
-    private let refractoryInterval: TimeInterval = 0.16
+    // below. Raised to 0.16s (~6.25/sec ceiling), then to 0.22s (~4.5/sec ceiling — still comfortably
+    // above a 260 BPM quarter-note rate) as part of a further "make it more relaxing" pass (still no
+    // live-audio A/B done — see TO DO.md) — the goal being fewer, more clearly-felt hits rather than
+    // a rapid patter on dense/bassy material.
+    private let refractoryInterval: TimeInterval = 0.22
     // Slightly longer than before (was 0.09s) so a hit reads as a brief, smooth swell rather than a
-    // one-frame flash — a secondary, smaller part of the same "tune down the spazz" pass.
-    private let punchHalfLife: TimeInterval = 0.12
+    // one-frame flash — a secondary, smaller part of the same "tune down the spazz" pass. Lengthened
+    // again (0.12s -> 0.18s) in the same further-relaxation pass as refractoryInterval above, for the
+    // same reason: a slower decay reads as a calmer swell instead of a quick flash-and-gone.
+    private let punchHalfLife: TimeInterval = 0.18
 
     /// Last frame's FPS estimate, for feeding a loaded preset's per-frame `fps` variable — see
     /// MilkdropVisualizerModel.updatePresetPerFrame.
@@ -559,6 +563,19 @@ final class MilkdropMetalRenderer: NSObject {
     #define M_PI 3.14159265359
     #define M_PI_2 6.28318530718
     #define M_INV_PI_2 0.159154943091895
+    // A preset's own math can legitimately produce NaN/Inf under plain IEEE float rules — a
+    // negative base to a fractional `pow` exponent, `GetPixel`-chain divide-by-near-zero blowing
+    // past finite range, etc. (`.safe` compile mode in MilkdropMetalRenderer only disables
+    // fast-math's *extra* undefined behavior on top of that; it doesn't make the underlying math
+    // finite). Once one non-finite pixel lands in the persistent feedback texture, the warp pass's
+    // bilinear sampling spreads it to its neighbors every subsequent frame, and it reads back as
+    // solid white when stored to the 8-bit UNORM target — a stable, self-reinforcing fixed point
+    // most preset math never recovers from (comparisons against NaN are never true, so a later
+    // `pow`/`mix`/`clamp` can't pull it back down). Scrubbing the shader's own final output here
+    // stops that at the source, for every preset, not just ones with a spotted bug.
+    float3 milkdrop_sanitize(float3 c) {
+        return select(c, float3(0.0), !isfinite(c));
+    }
     """
 
     /// Wraps a translated shader body into a complete MSL fragment function. Composite shaders run
@@ -598,7 +615,7 @@ final class MilkdropMetalRenderer: NSObject {
             float ang = atan2(pos.y, pos.x);
             float3 ret = float3(0.0);
         \(translated.body)
-            return float4(ret, 1.0);
+            return float4(milkdrop_sanitize(ret), 1.0);
         }
         """
     }
@@ -673,7 +690,7 @@ final class MilkdropMetalRenderer: NSObject {
             float ang = in.radiusAngle.y;
             float3 ret = float3(0.0);
         \(translated.body)
-            return float4(ret, 1.0);
+            return float4(milkdrop_sanitize(ret), 1.0);
         }
         """
     }
@@ -1086,7 +1103,10 @@ final class MilkdropMetalRenderer: NSObject {
         // Vertex data is built directly in physical-pixel (drawableSize) space, so a "points"
         // width needs the view's actual backing scale, not a hardcoded 2x.
         let backingScale = view.bounds.width > 0 ? pixelSize.width / view.bounds.width : 2.0
-        let lineWidthPx = Float(1.6 + bassEnergy * 2.2 + punch * 1.4) * Float(backingScale)
+        // `punch`'s own coefficient reduced (1.4 -> 0.8) alongside the zoom/rot punch-magnitude cut
+        // above, same relaxation pass — the waveform's per-hit width pulse was another part of the
+        // same "everything pops too hard on a beat" feel.
+        let lineWidthPx = Float(1.6 + bassEnergy * 2.2 + punch * 0.8) * Float(backingScale)
 
         guard let commandBuffer = commandQueue.makeCommandBuffer() else { return nil }
 
@@ -1124,16 +1144,25 @@ final class MilkdropMetalRenderer: NSObject {
         // layered on top of *every* loaded preset's own already-authored zoom, regardless of what
         // that preset's own animation intended (real Milkdrop has no "punch" concept at all — this
         // whole nudge is a Prism-only addition, so toning it down doesn't cost any preset
-        // fidelity). New values, same verification method: baseline ~1.10x zoom/sec / ~2.1°/sec
-        // (was ~1.43x / ~8.6°), full-punch ~2.0x zoom/sec / ~12.4°/sec (was ~11.1x / ~43°) — still
-        // a distinctly felt pop on a real beat, just not a jump-cut. Tune by ear from here rather
-        // than assuming these are final; unlike the frame-rate-scale fix above, "how strong should
-        // this feel" has no objectively-correct answer to verify against.
+        // fidelity). Values as of 7/26: baseline ~1.10x zoom/sec / ~2.1°/sec (was ~1.43x / ~8.6°),
+        // full-punch ~2.0x zoom/sec / ~12.4°/sec (was ~11.1x / ~43°) — still a distinctly felt pop
+        // on a real beat, just not a jump-cut.
+        //
+        // Reduced again in a further "make it more relaxing" pass (user-reported: many presets
+        // still read as jittery/spazzy even without a specific per-preset bug): baseline
+        // ~1.06x zoom/sec / ~1.4°/sec, full-punch ~1.52x zoom/sec / ~8.3°/sec (same direct-
+        // calculation method as the 7/26 note above — 1.0010^60≈1.062, 1.0070^60≈1.520,
+        // 0.0004*60 rad≈1.38°, 0.0024*60 rad≈8.25°). Paired with the longer refractoryInterval/
+        // punchHalfLife above, so hits are also less frequent and swell in more smoothly, not just
+        // individually smaller. Tune by ear from here rather than assuming these are final —
+        // unlike the frame-rate-scale fix mentioned above, "how strong should this feel" has no
+        // objectively-correct answer to verify against, and this still hasn't had a live-audio A/B
+        // pass (see TO DO.md).
         let rateScale = Float(60.0 / beat.lastFPS)
         let punchF = Float(punch)
-        var zoom = model.warpParams.zoom * powf(1.0016 + punchF * 0.010, rateScale)
+        var zoom = model.warpParams.zoom * powf(1.0010 + punchF * 0.006, rateScale)
         var zoomExponent = model.warpParams.zoomExponent
-        var rot = model.warpParams.rot + (0.0006 + punchF * 0.003) * rateScale
+        var rot = model.warpParams.rot + (0.0004 + punchF * 0.002) * rateScale
         var warpAmount = model.warpParams.warpAmount
         var cx = model.warpParams.rotCX
         var cy = model.warpParams.rotCY
