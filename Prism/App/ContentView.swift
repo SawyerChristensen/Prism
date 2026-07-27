@@ -402,21 +402,42 @@ struct ContentView: View {
     /// Drag-and-drop counterpart to "O"'s `.fileImporter` — accepts any file drag (so Finder's
     /// cursor doesn't show a reject indicator for a plain file drop) and only actually loads it if
     /// it turns out to be a `.milk` file; anything else is silently ignored, same tolerance this
-    /// app already has for a cancelled/invalid `.fileImporter` result just above. `NSItemProvider`'s
-    /// completion handler runs off the main actor, so the actual load — which touches `@State` and
-    /// needs security-scoped access to a URL handed to us by the drag session, not one this app
+    /// app already has for a cancelled/invalid `.fileImporter` result just above.
+    ///
+    /// Reads the dropped item via `loadObject(ofClass: URL.self)`, not a manual
+    /// `loadDataRepresentation(forTypeIdentifier:)` + `URL(dataRepresentation:relativeTo:)` decode
+    /// (an earlier version of this method did exactly that, and didn't work) — `dataRepresentation`
+    /// only round-trips bytes an app registered itself via that same property; a drag whose item
+    /// provider was vended by *Finder* isn't guaranteed to use that exact encoding. `URL` bridges to
+    /// `NSURL`, which conforms to `NSItemProviderReading` specifically to decode whatever form a
+    /// cross-process drag source (Finder included) actually uses, so this is the robust way to read
+    /// a dropped file URL from an arbitrary source rather than one this app wrote itself.
+    ///
+    /// The completion handler runs off the main actor, so the actual load — which touches `@State`
+    /// and needs security-scoped access to a URL handed to us by the drag session, not one this app
     /// picked itself — hops back via `Task { @MainActor in }`, mirroring the `.fileImporter`
-    /// closure's own start/stop-access pattern below.
+    /// closure's own start/stop-access pattern below. `PrismDebug.trace` calls at each decision
+    /// point (no usable provider / load failed / wrong extension / success) since a drop that
+    /// silently does nothing is otherwise unobservable — see PrismDebug.swift's own doc comment on
+    /// why `startupTracing` (not `verboseLogging`) is on by default.
     private func handlePresetDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: URL.self) }) else {
+            PrismDebug.trace("handlePresetDrop: no provider can load a URL")
             return false
         }
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
-            guard let data, let url = URL(dataRepresentation: data, relativeTo: nil),
-                  url.pathExtension.lowercased() == "milk" else { return }
+        _ = provider.loadObject(ofClass: URL.self) { url, error in
+            guard let url else {
+                PrismDebug.trace("handlePresetDrop: loadObject failed (\(String(describing: error)))")
+                return
+            }
+            guard url.pathExtension.lowercased() == "milk" else {
+                PrismDebug.trace("handlePresetDrop: dropped file isn't .milk (\(url.lastPathComponent))")
+                return
+            }
             Task { @MainActor in
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                PrismDebug.trace("handlePresetDrop: loading \(url.lastPathComponent)")
                 loadPresetAndTrack(from: url)
             }
         }
