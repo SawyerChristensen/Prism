@@ -181,7 +181,6 @@ final class NowPlayingManager {
     /// thread — `refresh()` is called from a `Timer` on the main run loop every 2 seconds, and a
     /// single slow round-trip there would freeze the UI for that long, repeatedly.
     private func refresh() {
-        PrismDebug.trace("refresh() dispatched")
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             for app in Self.supportedApps {
@@ -233,12 +232,9 @@ final class NowPlayingManager {
         end tell
         return ""
         """
-        PrismDebug.trace("queryNowPlaying(\(app.name)) start")
         guard let result = runScript(script, appName: app.name) else {
-            PrismDebug.trace("queryNowPlaying(\(app.name)) -> nil")
             return nil
         }
-        PrismDebug.trace("queryNowPlaying(\(app.name)) done")
 
         let value = result.stringValue ?? ""
         if PrismDebug.verboseLogging {
