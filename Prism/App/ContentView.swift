@@ -86,7 +86,13 @@ struct ContentView: View {
         ZStack {
             // The wave
             if Self.useProjectMEngine {
-                ProjectMMetalView(audioEngine: audioEngine, model: projectMModel)
+                ProjectMMetalView(
+                    audioEngine: audioEngine, model: projectMModel,
+                    onDropPreset: { url in handlePresetDrop(url) },
+                    onDropTargetChanged: { isDropTargeted = $0 }
+                )
+                    .contentShape(Rectangle())
+                    .onTapGesture { loadNextSequentialPreset() }
             } else {
                 MilkdropVisualizerView(
                     audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
@@ -146,7 +152,10 @@ struct ContentView: View {
         // "O" opens a file picker, and the preset's name shows briefly so there's some feedback
         // that a load actually happened, since nothing else in the UI names the active preset.
         .overlay(alignment: .topLeading) {
-            if let presetName = visualizerModel.presetName {
+            let presetName = Self.useProjectMEngine
+                ? projectMModel.presetURL?.deletingPathExtension().lastPathComponent
+                : visualizerModel.presetName
+            if let presetName {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(presetName)
                     if let ratingFeedback {
@@ -243,13 +252,15 @@ struct ContentView: View {
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(
-                get: { visualizerModel.presetLoadError != nil },
-                set: { if !$0 { visualizerModel.presetLoadError = nil } }
+                get: {
+                    Self.useProjectMEngine ? projectMModel.presetLoadError != nil : visualizerModel.presetLoadError != nil
+                },
+                set: { if !$0 { Self.useProjectMEngine ? (projectMModel.presetLoadError = nil) : (visualizerModel.presetLoadError = nil) } }
             )
         ) {
-            Button("OK") { visualizerModel.presetLoadError = nil }
+            Button("OK") { Self.useProjectMEngine ? (projectMModel.presetLoadError = nil) : (visualizerModel.presetLoadError = nil) }
         } message: {
-            Text(visualizerModel.presetLoadError ?? "")
+            Text((Self.useProjectMEngine ? projectMModel.presetLoadError : visualizerModel.presetLoadError) ?? "")
         }
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space steps
@@ -339,17 +350,23 @@ struct ContentView: View {
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
-            if Self.useProjectMEngine, projectMModel.presetURL == nil,
-               let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
-                let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
-                projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
-            }
             // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
-            // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a
-            // preset the user has since picked.
-            if visualizerModel.presetURL == nil {
+            // presetURL == nil (checked against whichever engine is actually active) so a second
+            // onAppear (SwiftUI can re-fire this) never clobbers a preset the user has since
+            // picked. Falls back to PRISM_PROJECTM_DEV_PRESETS (a debug-only hardcoded preset
+            // path, since the App Sandbox blocks reading arbitrary paths that weren't
+            // user-selected/dropped) only when there's no real remembered preset to restore.
+            let currentPresetURL = Self.useProjectMEngine ? projectMModel.presetURL : visualizerModel.presetURL
+            if currentPresetURL == nil {
+                var restoredFromLastLaunch = false
                 lastPresetStore.withLastPreset { url in
+                    restoredFromLastLaunch = true
                     loadPresetAndTrack(from: url)
+                }
+                if !restoredFromLastLaunch, Self.useProjectMEngine,
+                   let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
+                    let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
+                    projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
                 }
             }
             // First-launch (or any launch before one's ever been picked) auto-prompt for the
@@ -456,13 +473,22 @@ struct ContentView: View {
     /// `presetHistory` shouldn't re-append it or truncate the very forward branch Right is about
     /// to step into.
     private func loadPresetAndTrack(from url: URL, resetAutoCycle: Bool = true, recordInHistory: Bool = true) {
-        let newModel = MilkdropVisualizerModel()
-        newModel.loadPreset(from: url)
-        guard newModel.presetLoadError == nil else {
-            visualizerModel.presetLoadError = newModel.presetLoadError
-            return
+        if Self.useProjectMEngine {
+            // Unlike the old path below, real projectM's own load failures surface
+            // asynchronously (see ProjectMCoordinator's presetLoadFailureHandler wiring) rather
+            // than as a synchronous parse result here, so there's no failure gate before the
+            // shared bookkeeping - matches projectm_load_preset_file's own "keep showing the
+            // current preset" behavior on a bad file.
+            projectMModel.requestPreset(at: url)
+        } else {
+            let newModel = MilkdropVisualizerModel()
+            newModel.loadPreset(from: url)
+            guard newModel.presetLoadError == nil else {
+                visualizerModel.presetLoadError = newModel.presetLoadError
+                return
+            }
+            visualizerModel = newModel
         }
-        visualizerModel = newModel
         lastPresetStore.rememberLoaded(url)
         if recordInHistory {
             if presetHistoryIndex < presetHistory.count - 1 {

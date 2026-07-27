@@ -29,6 +29,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var cachedHeight = 0
 
     private var lastLoadedPresetURL: URL?
+    private weak var model: ProjectMVisualizerModel?
 
     init(audioEngine: CoreAudioTapEngine) {
         engine = ProjectMEngine()
@@ -37,8 +38,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         if engine == nil {
             NSLog("ProjectMCoordinator: ProjectMEngine failed to initialize")
         }
-        engine?.presetLoadFailureHandler = { filename, message in
+        engine?.presetLoadFailureHandler = { [weak self] filename, message in
             NSLog("ProjectMCoordinator: preset load failed for \(filename): \(message)")
+            DispatchQueue.main.async {
+                self?.model?.presetLoadError = "Couldn't load \((filename as NSString).lastPathComponent): \(message)"
+            }
         }
     }
 
@@ -46,6 +50,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// MilkdropMetalCoordinator used for its own model - called every SwiftUI update, but only
     /// triggers an actual engine call when the requested preset URL has changed.
     func updateModelIfNeeded(_ model: ProjectMVisualizerModel) {
+        self.model = model
         guard let url = model.presetURL, url != lastLoadedPresetURL else { return }
         lastLoadedPresetURL = url
         engine?.loadPreset(at: url, smoothTransition: true)

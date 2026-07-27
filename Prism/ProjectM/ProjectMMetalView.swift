@@ -2,9 +2,10 @@
 //  ProjectMMetalView.swift
 //  Prism
 //
-//  Bridges MTKView into SwiftUI for the new projectM-backed path — deliberately minimal for this
-//  first-pixels-on-screen milestone: no drag-and-drop yet (that's PresetDroppableMTKView's job,
-//  still used by the old MilkdropMetalView; repointing it at this path is Phase 5, not this one).
+//  Bridges MTKView into SwiftUI for the new projectM-backed path. Reuses PresetDroppableMTKView
+//  (MilkdropMetalView.swift) as-is for drag-and-drop rather than a second implementation - see
+//  that class's own header for why it's a raw AppKit NSDraggingDestination rather than SwiftUI's
+//  .onDrop. Only the render delegate differs between the two paths.
 //
 
 import MetalKit
@@ -13,13 +14,16 @@ import SwiftUI
 struct ProjectMMetalView: NSViewRepresentable {
     let audioEngine: CoreAudioTapEngine
     var model: ProjectMVisualizerModel
+    var onDropPreset: (URL) -> Void
+    var onDropTargetChanged: (Bool) -> Void
 
     func makeCoordinator() -> ProjectMCoordinator {
         ProjectMCoordinator(audioEngine: audioEngine)
     }
 
-    func makeNSView(context: Context) -> MTKView {
-        let view = MTKView()
+    func makeNSView(context: Context) -> PresetDroppableMTKView {
+        let view = PresetDroppableMTKView()
+        view.registerForDraggedTypes([.fileURL])
         view.device = MTLCreateSystemDefaultDevice()
         view.delegate = context.coordinator
         view.colorPixelFormat = .bgra8Unorm
@@ -27,10 +31,14 @@ struct ProjectMMetalView: NSViewRepresentable {
         view.enableSetNeedsDisplay = false
         view.isPaused = false
         view.preferredFramesPerSecond = 120
+        view.onDropPreset = onDropPreset
+        view.onDropTargetChanged = onDropTargetChanged
         return view
     }
 
-    func updateNSView(_ nsView: MTKView, context: Context) {
+    func updateNSView(_ nsView: PresetDroppableMTKView, context: Context) {
         context.coordinator.updateModelIfNeeded(model)
+        nsView.onDropPreset = onDropPreset
+        nsView.onDropTargetChanged = onDropTargetChanged
     }
 }
