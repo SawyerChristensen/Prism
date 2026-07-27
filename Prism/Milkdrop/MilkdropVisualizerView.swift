@@ -280,17 +280,27 @@ final class MilkdropVisualizerModel {
         // wave_r/g/b land in presetVariables too, for a future preset-color pass — not consumed
         // yet since color is currently driven by album art (see AlbumColors.swift).
 
-        if let zoom = presetVariables["zoom"] { warpParams.zoom = zoom }
-        if let zoomExponent = presetVariables["zoomexp"] { warpParams.zoomExponent = zoomExponent }
-        if let rot = presetVariables["rot"] { warpParams.rot = rot }
-        if let cx = presetVariables["cx"] { warpParams.rotCX = cx }
-        if let cy = presetVariables["cy"] { warpParams.rotCY = cy }
-        if let dx = presetVariables["dx"] { warpParams.xPush = dx }
-        if let dy = presetVariables["dy"] { warpParams.yPush = dy }
-        if let warp = presetVariables["warp"] { warpParams.warpAmount = warp }
-        if let sx = presetVariables["sx"] { warpParams.stretchX = sx }
-        if let sy = presetVariables["sy"] { warpParams.stretchY = sy }
-        if let decay = presetVariables["decay"] { warpParams.decay = decay }
+        // `.isFinite` guards below: these ten feed the GPU feedback pass's multiplicative warp/
+        // decay every frame (Shaders.metal's feedback_fragment), the one persistent, self-
+        // reinforcing state in the whole renderer — a single NaN/Inf frame (a preset's per-frame
+        // script hitting a real math domain edge, e.g. `pow`/`asin`/`acos` of an out-of-range
+        // value; see MilkdropExpressionEvaluator.swift's matching guards, which reduce but can't
+        // eliminate how often this fires) poisons every pixel it touches via bilinear sampling and
+        // typically reads back as solid white, permanently, since most preset math can't pull a
+        // NaN back down. Skipping a non-finite update just holds last frame's value instead —
+        // self-healing the moment the script produces a sane number again, rather than latching
+        // the corruption in forever.
+        if let zoom = presetVariables["zoom"], zoom.isFinite { warpParams.zoom = zoom }
+        if let zoomExponent = presetVariables["zoomexp"], zoomExponent.isFinite { warpParams.zoomExponent = zoomExponent }
+        if let rot = presetVariables["rot"], rot.isFinite { warpParams.rot = rot }
+        if let cx = presetVariables["cx"], cx.isFinite { warpParams.rotCX = cx }
+        if let cy = presetVariables["cy"], cy.isFinite { warpParams.rotCY = cy }
+        if let dx = presetVariables["dx"], dx.isFinite { warpParams.xPush = dx }
+        if let dy = presetVariables["dy"], dy.isFinite { warpParams.yPush = dy }
+        if let warp = presetVariables["warp"], warp.isFinite { warpParams.warpAmount = warp }
+        if let sx = presetVariables["sx"], sx.isFinite { warpParams.stretchX = sx }
+        if let sy = presetVariables["sy"], sy.isFinite { warpParams.stretchY = sy }
+        if let decay = presetVariables["decay"], decay.isFinite { warpParams.decay = decay }
 
         if let obSize = presetVariables["ob_size"] { borderParams.outerSize = obSize }
         if let obR = presetVariables["ob_r"] { borderParams.outerR = obR }
@@ -304,9 +314,12 @@ final class MilkdropVisualizerModel {
         if let ibA = presetVariables["ib_a"] { borderParams.innerA = ibA }
         if let darkenCenter = presetVariables["darken_center"] { borderParams.darkenCenter = darkenCenter }
 
-        if let gamma = presetVariables["gamma"] { oldStyleCompositeParams.gammaAdj = gamma }
-        if let echoZoom = presetVariables["echo_zoom"] { oldStyleCompositeParams.videoEchoZoom = echoZoom }
-        if let echoAlpha = presetVariables["echo_alpha"] { oldStyleCompositeParams.videoEchoAlpha = echoAlpha }
+        // Same non-finite-skips-the-update reasoning as warpParams above — gammaAdj/videoEchoZoom/
+        // videoEchoAlpha are the old-style composite path's equivalent multiplicative feedback
+        // inputs (Shaders.metal's milkdrop_old_style_final_composite).
+        if let gamma = presetVariables["gamma"], gamma.isFinite { oldStyleCompositeParams.gammaAdj = gamma }
+        if let echoZoom = presetVariables["echo_zoom"], echoZoom.isFinite { oldStyleCompositeParams.videoEchoZoom = echoZoom }
+        if let echoAlpha = presetVariables["echo_alpha"], echoAlpha.isFinite { oldStyleCompositeParams.videoEchoAlpha = echoAlpha }
         if let echoOrient = presetVariables["echo_orient"] { oldStyleCompositeParams.videoEchoOrientation = echoOrient }
         if let brighten = presetVariables["brighten"] { oldStyleCompositeParams.brighten = brighten }
         if let darken = presetVariables["darken"] { oldStyleCompositeParams.darken = darken }

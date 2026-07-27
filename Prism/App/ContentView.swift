@@ -19,6 +19,10 @@ struct ContentView: View {
     @State private var ratingStore = MilkdropPresetRatingStore()
     @State private var isPresetImporterPresented = false
     @State private var isLibraryFolderPickerPresented = false
+    // Drag-and-drop counterpart to "O"'s file picker (see `.onDrop` below/`handlePresetDrop`) —
+    // true only while a drag carrying a file is actually hovering the window, for the brief
+    // highlight overlay that's the only feedback a valid drop target exists at all.
+    @State private var isDropTargeted = false
     // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
     // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
     // files it names — see MilkdropPresetLibrary.filterToFavorites/MilkdropNestDropFavoritesList.
@@ -172,6 +176,21 @@ struct ContentView: View {
             .font(.caption)
             .foregroundStyle(fgColor.opacity(0.6))
             .padding(8)
+        }
+        // Only visible feedback that a drag is actually hovering a valid drop target — see
+        // `.onDrop`/`handlePresetDrop` below, which does the real work once something's released.
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(fgColor, lineWidth: 3)
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
+        // Drag-and-drop counterpart to "O"'s file picker: dropping a `.milk` file anywhere on the
+        // window loads it as the current preset, same as picking it from the panel would.
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            handlePresetDrop(providers)
         }
         .fileImporter(
             isPresented: $isPresetImporterPresented,
@@ -378,6 +397,30 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(1.5))
             ratingFeedback = nil
         }
+    }
+
+    /// Drag-and-drop counterpart to "O"'s `.fileImporter` — accepts any file drag (so Finder's
+    /// cursor doesn't show a reject indicator for a plain file drop) and only actually loads it if
+    /// it turns out to be a `.milk` file; anything else is silently ignored, same tolerance this
+    /// app already has for a cancelled/invalid `.fileImporter` result just above. `NSItemProvider`'s
+    /// completion handler runs off the main actor, so the actual load — which touches `@State` and
+    /// needs security-scoped access to a URL handed to us by the drag session, not one this app
+    /// picked itself — hops back via `Task { @MainActor in }`, mirroring the `.fileImporter`
+    /// closure's own start/stop-access pattern below.
+    private func handlePresetDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else {
+            return false
+        }
+        provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+            guard let data, let url = URL(dataRepresentation: data, relativeTo: nil),
+                  url.pathExtension.lowercased() == "milk" else { return }
+            Task { @MainActor in
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                loadPresetAndTrack(from: url)
+            }
+        }
+        return true
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL

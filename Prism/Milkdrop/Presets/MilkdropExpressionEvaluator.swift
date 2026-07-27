@@ -245,14 +245,24 @@ final class MilkdropResolvedProgram {
         case .sin: return sin(a0)
         case .cos: return cos(a0)
         case .tan: return tan(a0)
-        case .asin: return asin(a0)
-        case .acos: return acos(a0)
+        // asin/acos are only defined on [-1, 1] — a preset feeding in an unnormalized signal
+        // (`bass` routinely exceeds 1, see MilkdropBeatState's minimumBassFloor) hits NaN under
+        // plain IEEE rules otherwise, with nothing downstream to catch it before it reaches a
+        // per-frame variable like `decay`/`zoom` and poisons the GPU feedback texture (see
+        // Shaders.metal's milkdrop_sanitize4 for the fuller mechanism). Clamping to the domain
+        // degrades to the nearest valid answer instead, matching this file's existing sqrt/log
+        // domain-guard convention below.
+        case .asin: return asin(Swift.min(1, Swift.max(-1, a0)))
+        case .acos: return acos(Swift.min(1, Swift.max(-1, a0)))
         case .atan: return atan(a0)
         case .atan2: return atan2(a0, a1)
         case .abs: return abs(a0)
         case .sqrt: return a0 < 0 ? 0 : sqrt(a0)
         case .sqr: return a0 * a0
-        case .pow: return pow(a0, a1)
+        // A negative base with a non-integer exponent is NaN under IEEE pow (e.g. `pow(x-1,
+        // 0.5)` when x dips below 1) — same domain-violation-returns-0 convention as sqrt/log
+        // just below, rather than letting NaN through.
+        case .pow: return (a0 < 0 && a1 != a1.rounded()) ? 0 : pow(a0, a1)
         case .exp: return exp(a0)
         case .log: return a0 > 0 ? log(a0) : 0
         case .log10: return a0 > 0 ? log10(a0) : 0
@@ -477,14 +487,16 @@ final class MilkdropExpressionProgram {
         case "sin": return sin(a0)
         case "cos": return cos(a0)
         case "tan": return tan(a0)
-        case "asin": return asin(a0)
-        case "acos": return acos(a0)
+        // See MilkdropResolvedProgram.callFunction's matching asin/acos/pow guards above — this is
+        // the same domain-safety fix applied to the string-keyed evaluator path.
+        case "asin": return asin(Swift.min(1, Swift.max(-1, a0)))
+        case "acos": return acos(Swift.min(1, Swift.max(-1, a0)))
         case "atan": return atan(a0)
         case "atan2": return atan2(a0, a1)
         case "abs": return abs(a0)
         case "sqrt": return a0 < 0 ? 0 : sqrt(a0)
         case "sqr": return a0 * a0
-        case "pow": return pow(a0, a1)
+        case "pow": return (a0 < 0 && a1 != a1.rounded()) ? 0 : pow(a0, a1)
         case "exp": return exp(a0)
         case "log": return a0 > 0 ? log(a0) : 0
         case "log10": return a0 > 0 ? log10(a0) : 0

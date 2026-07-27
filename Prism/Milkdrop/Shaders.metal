@@ -18,6 +18,17 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// A CPU-evaluated per-frame preset variable (decay/zoom/gammaAdj/...) can go non-finite from
+// perfectly ordinary NS-EEL math (e.g. `pow` of a negative base to a fractional exponent) with
+// nothing upstream catching it before it's handed to the GPU as a uniform — see
+// MilkdropMetalRenderer.swift's shaderShimHeader (`milkdrop_sanitize`) for the fuller rationale,
+// shared here since a separately-compiled MTLLibrary can't reuse that one. Applied at every point
+// in this file that writes the persistent feedback texture, so a single non-finite frame can't
+// permanently poison it via the warp pass's own bilinear neighbor-spreading.
+static inline float4 milkdrop_sanitize4(float4 c) {
+    return select(c, float4(0.0), !isfinite(c));
+}
+
 // MARK: - Solid-color geometry (waveform line / spectrum bars)
 
 struct SolidVertexOut {
@@ -209,7 +220,7 @@ fragment float4 feedback_fragment(
     if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
         return float4(0.0);
     }
-    return previousTexture.sample(s, float2(u, v)) * decay;
+    return milkdrop_sanitize4(previousTexture.sample(s, float2(u, v)) * decay);
 }
 
 fragment float4 present_fragment(
@@ -355,7 +366,10 @@ fragment float4 milkdrop_old_style_final_composite(
     if (filterFlags[2] != 0.0) { color = 2.0 * color - 2.0 * color * color; }
     if (filterFlags[3] != 0.0) { color = 1.0 - color; }
 
-    return float4(saturate(color), 1.0);
+    // saturate(NaN)'s result is implementation-defined (clamp's NaN handling isn't specified),
+    // so scrub explicitly rather than relying on it to happen to land on 0 — see
+    // milkdrop_sanitize4's doc comment above.
+    return milkdrop_sanitize4(float4(saturate(color), 1.0));
 }
 
 // MARK: - Per-pixel warp mesh (per_pixel_N= — see MilkdropPerPixelMesh.swift)
@@ -451,5 +465,5 @@ fragment float4 feedback_mesh_fragment(
     if (in.uv.x < 0.0 || in.uv.x > 1.0 || in.uv.y < 0.0 || in.uv.y > 1.0) {
         return float4(0.0);
     }
-    return previousTexture.sample(s, in.uv) * decay;
+    return milkdrop_sanitize4(previousTexture.sample(s, in.uv) * decay);
 }
