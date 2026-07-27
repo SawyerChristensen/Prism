@@ -14,6 +14,13 @@ struct ContentView: View {
     @State private var nowPlaying = NowPlayingManager()
     @State private var permissions = PermissionsManager()
     @State private var visualizerModel = MilkdropVisualizerModel()
+    // Phase 3 debug toggle for the projectM-vendor-rewrite branch: PRISM_USE_PROJECTM=1 swaps the
+    // old hand-rolled renderer for the new vendored-projectM/ANGLE path below. Temporary — both
+    // paths coexist only until the new one is verified against real presets (see TO DO.md), at
+    // which point this toggle and the old MilkdropVisualizerModel/MilkdropVisualizerView path get
+    // deleted rather than kept as a permanent option.
+    private static let useProjectMEngine = ProcessInfo.processInfo.environment["PRISM_USE_PROJECTM"] == "1"
+    @State private var projectMModel = ProjectMVisualizerModel()
     @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
@@ -78,12 +85,16 @@ struct ContentView: View {
 
         ZStack {
             // The wave
-            MilkdropVisualizerView(
-                audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
-                onTap: { loadNextSequentialPreset() },
-                onDropPreset: { url in handlePresetDrop(url) },
-                onDropTargetChanged: { isDropTargeted = $0 }
-            )
+            if Self.useProjectMEngine {
+                ProjectMMetalView(model: projectMModel)
+            } else {
+                MilkdropVisualizerView(
+                    audioEngine: audioEngine, color: fgColor, bassEnergy: bassEnergy, model: visualizerModel,
+                    onTap: { loadNextSequentialPreset() },
+                    onDropPreset: { url in handlePresetDrop(url) },
+                    onDropTargetChanged: { isDropTargeted = $0 }
+                )
+            }
             
             // The album art
             if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
@@ -328,6 +339,10 @@ struct ContentView: View {
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
+            if Self.useProjectMEngine, projectMModel.presetURL == nil,
+               let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
+                projectMModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent("100-square.milk"))
+            }
             // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
             // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a
             // preset the user has since picked.

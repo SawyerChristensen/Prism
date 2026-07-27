@@ -21,7 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Loads a preset from a local file URL. Fire-and-forget: if loading fails, the
 /// currently displayed preset keeps rendering (this matches projectm_load_preset_file's
 /// own behavior). Failures are reported asynchronously via -presetLoadFailureHandler.
-- (void)loadPresetAtURL:(NSURL *)url smoothTransition:(BOOL)smoothTransition;
+- (void)loadPresetAtURL:(NSURL *)url smoothTransition:(BOOL)smoothTransition NS_SWIFT_NAME(loadPreset(at:smoothTransition:));
 
 /// Called when projectM reports a preset failed to load. Runs on whatever thread
 /// projectM's callback fires on (in practice, the same thread that calls
@@ -31,7 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Feeds interleaved stereo PCM samples (LRLRLR..., each in [-1, 1]) into projectM's
 /// internal audio buffer. Safe to call every frame with a small chunk of samples.
-- (void)addInterleavedStereoPCM:(const float *)samples frameCount:(NSUInteger)frameCount;
+- (void)addInterleavedStereoPCM:(const float *)samples frameCount:(NSUInteger)frameCount NS_SWIFT_NAME(addInterleavedStereoPCM(_:frameCount:));
 
 /// Renders one frame at the given pixel size into an internal IOSurface-backed
 /// target, and returns that IOSurface. The caller (Metal side) wraps it as an
@@ -39,7 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// identity is stable across frames of the same size, only its contents change, so
 /// the Metal-side wrap only needs to happen once per size, not every frame.
 /// Returns NULL on failure (e.g. width/height is 0).
-- (nullable IOSurfaceRef)renderFrameWithWidth:(size_t)width height:(size_t)height CF_RETURNS_NOT_RETAINED;
+- (nullable IOSurfaceRef)renderFrameWithWidth:(size_t)width height:(size_t)height CF_RETURNS_NOT_RETAINED NS_SWIFT_NAME(renderFrame(width:height:));
 
 @end
 

@@ -80,15 +80,11 @@
 		};
 		BEAB8FEF3012B50C005F68B6 /* PrismTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismTests;
 			sourceTree = "<group>";
 		};
 		BEAB8FF93012B50C005F68B6 /* PrismUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismUITests;
 			sourceTree = "<group>";
 		};
