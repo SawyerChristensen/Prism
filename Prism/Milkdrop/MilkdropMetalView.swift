@@ -40,8 +40,18 @@ final class PresetDroppableMTKView: MTKView {
         return urls.first { $0.pathExtension.lowercased() == "milk" }
     }
 
+    // Temporary diagnostic logging (unconditional `NSLog`, not `PrismDebug.trace`) while tracking
+    // down a "drag-and-drop still doesn't work, cursor never changes" report — `NSLog` shows up in
+    // Console.app regardless of how the app was launched (Xcode's console, a directly-executed
+    // binary in Terminal, or a plain Finder double-click, unlike a raw `print()`, which only reaches
+    // *somewhere visible* for the first two of those). If `draggingEntered` never logs at all, this
+    // view isn't being asked about drags in the first place — a different problem than the URL/
+    // extension check being wrong. Remove once drag-and-drop is confirmed working live.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let types = sender.draggingPasteboard.types?.map(\.rawValue) ?? []
+        NSLog("Prism[drop]: draggingEntered, pasteboard types = %@", types)
         let accepts = milkURL(from: sender) != nil
+        NSLog("Prism[drop]: draggingEntered accepts=%@", accepts ? "true" : "false")
         onDropTargetChanged?(accepts)
         return accepts ? .copy : []
     }
@@ -51,12 +61,17 @@ final class PresetDroppableMTKView: MTKView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        NSLog("Prism[drop]: draggingExited")
         onDropTargetChanged?(false)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        NSLog("Prism[drop]: performDragOperation")
         onDropTargetChanged?(false)
-        guard let url = milkURL(from: sender) else { return false }
+        guard let url = milkURL(from: sender) else {
+            NSLog("Prism[drop]: performDragOperation found no .milk URL")
+            return false
+        }
         onDropPreset?(url)
         return true
     }
@@ -77,6 +92,7 @@ struct MilkdropMetalView: NSViewRepresentable {
     func makeNSView(context: Context) -> PresetDroppableMTKView {
         let view = PresetDroppableMTKView()
         view.registerForDraggedTypes([.fileURL])
+        NSLog("Prism[drop]: makeNSView registered draggedTypes = %@", view.registeredDraggedTypes.map(\.rawValue))
         view.device = MTLCreateSystemDefaultDevice()
         view.delegate = context.coordinator
         view.colorPixelFormat = .bgra8Unorm
