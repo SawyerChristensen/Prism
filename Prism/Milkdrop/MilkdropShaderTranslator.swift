@@ -145,13 +145,18 @@ enum MilkdropShaderTranslator {
         source = stripSamplerStateBlocks(source)
         // Captured before `extractShaderBody` below discards everything preceding `shader_body`'s
         // own `{` — see `preambleDeclarations` for why this text still matters.
-        let preamble = source.range(of: "shader_body").map { String(source[source.startIndex..<$0.lowerBound]) } ?? ""
+        let rawPreamble = source.range(of: "shader_body").map { String(source[source.startIndex..<$0.lowerBound]) } ?? ""
         guard let bodyRange = extractShaderBody(&source) else { return nil }
         let rawBody = String(source[bodyRange])
 
-        guard let textures = discoverTextures(in: rawBody) else { return nil }
+        // Must run before texture discovery/helper-function extraction below: a preamble alias
+        // like `#define MyGet GetPixel` needs to already read as `GetPixel` by the time anything
+        // else looks for that name — see `expandObjectMacros`'s own doc comment.
+        let (preamble, expandedBody) = expandObjectMacros(preamble: rawPreamble, body: rawBody)
 
-        var body = rewriteTextureSampleCalls(rawBody, textures: textures)
+        guard let textures = discoverTextures(in: expandedBody) else { return nil }
+
+        var body = rewriteTextureSampleCalls(expandedBody, textures: textures)
         body = renameIntrinsics(body)
 
         // Must run before `preambleDeclarations` below: that function splits on `;`, which would
@@ -500,6 +505,61 @@ enum MilkdropShaderTranslator {
             i = k + 1
         }
         return result
+    }
+
+    /// Real preset shaders sometimes alias a name via a plain object-like `#define ALIAS TARGET`
+    /// before `shader_body` — confirmed against real corpus patterns: `#define MyGet GetPixel`
+    /// (an implicit-texture-function alias, ~48x across the corpus), `#define sat saturate` (an
+    /// intrinsic alias, 69x), `#define sampler_pic sampler_prayerwheel`-style custom-texture
+    /// aliases (~100x combined across several texture names). None of these are function
+    /// *definitions* (`extractHelperFunctions`'s `<type> name(args) { }` shape) or plain variable
+    /// declarations (`preambleDeclarations`'s semicolon-split shape) — a `#define` line has no
+    /// trailing `;` at all, so `preambleDeclarations` was silently merging it into whatever
+    /// statement followed and dropping the merged garbage (no recognized keyword prefix). Since
+    /// nothing downstream in this file runs a real C preprocessor, each ALIAS is textually
+    /// substituted with its TARGET everywhere else in the preamble and the shader body itself
+    /// before any other pass runs, so texture call-site discovery/intrinsic renaming/helper-
+    /// function extraction all see the real name, not the alias. Parameterized (`#define FOO(x)
+    /// ...`) macros aren't handled — not observed in a real corpus scan of preamble `#define`s
+    /// (only plain single-identifier-name macros were); each such line, and any malformed
+    /// `#define` with no name, is just dropped.
+    private static func expandObjectMacros(preamble: String, body: String) -> (preamble: String, body: String) {
+        var macros: [(name: String, value: String)] = []
+        var remainderLines: [String] = []
+        for line in preamble.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("#define") else {
+                remainderLines.append(line)
+                continue
+            }
+            let afterDefine = trimmed.dropFirst("#define".count)
+            guard let nameStart = afterDefine.firstIndex(where: { !$0.isWhitespace }) else { continue }
+            var nameEnd = nameStart
+            while nameEnd < afterDefine.endIndex,
+                  afterDefine[nameEnd].isLetter || afterDefine[nameEnd].isNumber || afterDefine[nameEnd] == "_" {
+                nameEnd = afterDefine.index(after: nameEnd)
+            }
+            let name = String(afterDefine[nameStart..<nameEnd])
+            // A function-like macro (`NAME(` immediately, no space before the paren) isn't a
+            // plain alias — skip it rather than mis-substitute a bare name for something that
+            // needs arguments.
+            guard !name.isEmpty, nameEnd == afterDefine.endIndex || afterDefine[nameEnd] != "(" else { continue }
+            let value = afterDefine[nameEnd...].trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { continue }
+            macros.append((name: name, value: value))
+        }
+        guard !macros.isEmpty else { return (preamble, body) }
+
+        var expandedPreamble = remainderLines.joined(separator: "\n")
+        var expandedBody = body
+        // Applied in declaration order, matching how a real preprocessor would expand a chain
+        // (`#define A B` then `#define C A`) — not observed in any real corpus example, but a
+        // single ordered pass costs nothing extra and stays correct if one shows up.
+        for macro in macros {
+            expandedPreamble = renameIdentifier(macro.name, to: macro.value, in: expandedPreamble)
+            expandedBody = renameIdentifier(macro.name, to: macro.value, in: expandedBody)
+        }
+        return (expandedPreamble, expandedBody)
     }
 
     private static func preambleDeclarations(_ preamble: String) -> String {

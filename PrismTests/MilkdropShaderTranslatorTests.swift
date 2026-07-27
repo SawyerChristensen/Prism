@@ -451,4 +451,72 @@ struct MilkdropShaderTranslatorTests {
         let name = MilkdropShaderTranslator.getPixelTextureName
         #expect(result.body.contains("\(name).sample(\(name)_smp, uv).xyz + \(name).sample(\(name)_smp, uv).xyz"))
     }
+
+    @Test func preambleDefineAliasingGetPixelIsExpandedBeforeTextureDiscovery() throws {
+        // Real, verbatim corpus pattern (48x across the corpus, e.g. "Stahlregen & fiShbRaiN +
+        // Geiss + spookytay - Circuits in Flames (Jelly V3).milk"'s warp_): a preset aliases
+        // GetPixel/GetBlur1 to a shorter local name via a plain `#define`, then calls the alias
+        // from shader_body. This isn't a helper function definition (extractHelperFunctions) or a
+        // `;`-terminated variable declaration (preambleDeclarations) — previously silently
+        // dropped, leaving the alias as an unrecognized call and "undeclared identifier 'MyGet'"
+        // at compile (46x in the 7/26 corpus scan).
+        let source = """
+        #define MyGet GetPixel
+        shader_body
+        {
+            ret = MyGet(uv);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.textures.map(\.declaredName) == [MilkdropShaderTranslator.getPixelTextureName])
+        #expect(!result.body.contains("MyGet"))
+    }
+
+    @Test func preambleDefineAliasingAnIntrinsicIsExpanded() throws {
+        // Real corpus pattern (69x): `#define sat saturate` before shader_body, then `sat(x)`
+        // used in the body — without expansion, `renameIntrinsics` (which only knows the real
+        // name `saturate`) never touches `sat(...)`, leaving it as a call to a nonexistent MSL
+        // function.
+        let source = """
+        #define sat saturate
+        shader_body
+        {
+            ret = sat(uv.x);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("milkdrop_saturate(uv.x)"))
+    }
+
+    @Test func preambleDefineAliasingACustomSamplerIsExpanded() throws {
+        // Real corpus pattern (~100x combined): a preset defines its own short sampler name
+        // (`sampler_pic`) as an alias for the pack's real custom texture (`sampler_prayerwheel`)
+        // — without expansion, `sampler_pic` would resolve as its own (likely missing) custom
+        // texture instead of the intended one.
+        let source = """
+        #define sampler_pic sampler_prayerwheel
+        shader_body
+        {
+            ret = tex2D(sampler_pic, uv).xyz;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.textures.map(\.declaredName) == ["sampler_prayerwheel"])
+    }
+
+    @Test func functionLikeMacroIsNotMistakenForAPlainAlias() throws {
+        // `#define FOO(x) ...` takes an argument list — substituting the bare name `FOO` for its
+        // replacement text would be wrong (real callers always pass an argument). Not observed as
+        // a preamble pattern in the real corpus scan; this just confirms it's safely dropped
+        // rather than corrupting the shader body.
+        let source = """
+        #define DOUBLE(x) ((x)*2)
+        shader_body
+        {
+            ret = DOUBLE(uv.x);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("DOUBLE(uv.x)"))
+    }
 }
