@@ -331,6 +331,13 @@ final class MilkdropMetalRenderer: NSObject {
          // `buildDynamicShaderUniforms` below.
          ("roam_cos", 4), ("roam_sin", 4), ("slow_roam_cos", 4), ("slow_roam_sin", 4)]
         + (1...32).map { ("q\($0)", 1) }
+        // Overall-volume uniforms (`_c3.w`/`_c4.w` in projectM's PresetShaderHeaderGlsl330.inc) —
+        // confirmed against projectM's own PCM.cpp: `vol = (bass+mid+treb)*0.333`, `vol_att =
+        // (bass_att+mid_att+treb_att)*0.333`, not independently measured signals of their own.
+        // Appended at the very end (indices 74/75) rather than inline near bass/mid/treb so every
+        // existing hardcoded `uniforms[N] = ...` index in buildDynamicShaderUniforms below stays
+        // correct without renumbering. 52x "undeclared identifier 'vol'" in the 7/26 corpus scan.
+        + [("vol", 1), ("vol_att", 1)]
 
     private static var totalUniformCount: Int { uniformLayout.reduce(0) { $0 + $1.count } }
 
@@ -345,6 +352,30 @@ final class MilkdropMetalRenderer: NSObject {
                 lines.append("#define \(name) float\(count)(\(components))")
             }
             index += count
+        }
+        // Real Milkdrop's slowly-drifting "hue shader" grid overlay (confirmed against projectM's
+        // FinalComposite::ApplyHueShaderColors) — 95-110x "undeclared identifier 'hue_shader'" in
+        // 1,500-file corpus samples, the single largest remaining named gap after the 7/26 corpus
+        // scan's original priority list was addressed. Real Milkdrop computes 4 independent corner
+        // colors (one per composite-mesh grid corner) and bilinearly interpolates across the screen;
+        // this port has no subdivided composite mesh to interpolate across (a plain full-screen
+        // quad — see buildCompositeShaderSource), so `milkdrop_hue_shader` (shaderShimHeader below)
+        // returns the bilinear interpolant's *center* value instead (the average of the same 4
+        // corner colors, since bilinear weights are all 0.25 at the screen center) — a single global
+        // per-frame value rather than a spatially-varying one, in the same documented-approximation
+        // spirit as `.blur`'s texsize. `rand_preset` (already generated once per preset load, not
+        // reused for anything hue-related before now) stands in for real Milkdrop's own
+        // once-per-preset-load `hueRandomOffsets`, so no new uniform-buffer slot is needed.
+        lines.append("#define hue_shader milkdrop_hue_shader(time, rand_preset)")
+        // Real Milkdrop also exposes the raw `_qa`-`_qh` float4 banks `q1`-`q32` individually alias
+        // into (confirmed against projectM's PresetShaderHeaderGlsl330.inc:29-36/89-120) — a real
+        // corpus preset ("propre hypno.milk") uses one directly as a whole, e.g.
+        // `uv = mul(uv,float2x2(_qa));`, not through any individual `qN`. Defined purely in terms of
+        // the `q1`-`q32` #defines just emitted above, so no separate uniform-buffer slot is needed.
+        let qBankNames = ["_qa", "_qb", "_qc", "_qd", "_qe", "_qf", "_qg", "_qh"]
+        for (bankIndex, bankName) in qBankNames.enumerated() {
+            let base = bankIndex * 4
+            lines.append("#define \(bankName) float4(q\(base + 1), q\(base + 2), q\(base + 3), q\(base + 4))")
         }
         return lines.joined(separator: "\n")
     }
@@ -375,15 +406,55 @@ final class MilkdropMetalRenderer: NSObject {
     /// get baked-in literal values. `.custom` (MilkdropCustomTextureManager) textures fall into
     /// this same generic-`texsize` branch too — their real on-disk dimensions aren't threaded
     /// through as a uniform, a documented approximation in the same spirit as `.blur`'s.
+    ///
+    /// The noise catalog's five entries are *always* emitted, regardless of whether `textures`
+    /// discovered a call site for them — confirmed against a real corpus file ("LuxXx - All That I
+    /// Am.milk"'s `warp_`, e.g. `float corr = texsize.xy*texsize_noise_lq.zw;`) that reads
+    /// `texsize_noise_lq` for a pure size calculation without ever actually sampling
+    /// `sampler_noise_lq` in that same shader, so `discoverTextures` (which only walks `tex2D`/
+    /// `tex3D` call sites) never learns the shader needs it — 257x "undeclared identifier
+    /// 'texsize_noise_lq'" in the 7/26 corpus scan. Safe to always emit: unlike `main`/`blurN`/
+    /// `.custom`, these are compile-time literals with no runtime texture binding required, so
+    /// emitting one nobody references costs nothing.
+    /// A blur cascade level's real size is half the previous level's (floored, with a 16px floor)
+    /// — an exact match for `updateBlurTextures`'s own CPU-side `w = max(16, w / 2)` loop, expressed
+    /// as a chained MSL macro instead of a separate uniform-buffer slot (`texsize`/`texsize_blur1`/
+    /// `texsize_blur2` are all resize-dependent, so a compile-time literal like the noise catalog's
+    /// isn't an option — but unlike `texsize` itself, which needs a real per-frame CPU value, each
+    /// blur level's size is a pure deterministic function of the level above it, so a macro chain
+    /// rooted at the real `texsize` uniform reproduces it with no new runtime plumbing at all).
+    private static func blurTexsizeDefine(level: Int) -> String {
+        let source = level == 1 ? "texsize" : "texsize_blur\(level - 1)"
+        let halfW = "max(16.0, floor(\(source).x * 0.5))"
+        let halfH = "max(16.0, floor(\(source).y * 0.5))"
+        return "#define texsize_blur\(level) float4(\(halfW), \(halfH), 1.0 / (\(halfW)), 1.0 / (\(halfH)))"
+    }
+
+    /// Per-texture `texsize_<baseName>` defines. `main`/`.custom` alias the existing generic
+    /// `texsize` uniform (their pixel size changes on resize, same as `texsize` itself, so there's
+    /// no separate value to alias to). `.blur` levels used to alias the same generic `texsize` too
+    /// — wrong, since a blur level's real dimensions are smaller than the main frame's (see
+    /// `updateBlurTextures`) — a shader doing `texsize_blur1.zw`-style math got a plausible-looking
+    /// but incorrect value. Fixed via `blurTexsizeDefine`'s chained formula instead.
     private static func textureSizeDefines(_ textures: [MilkdropShaderTranslator.TextureBinding]) -> String {
         var lines: [String] = []
         var seen: Set<String> = []
+        for (base, size) in noiseTextureSizes {
+            seen.insert(base)
+            lines.append("#define texsize_\(base) float4(\(size.width), \(size.height), \(1.0 / size.width), \(1.0 / size.height))")
+        }
         for texture in textures {
             let base = textureResourceBaseName(texture.resource)
             guard !seen.contains(base) else { continue }
             seen.insert(base)
-            if let size = noiseTextureSizes[base] {
-                lines.append("#define texsize_\(base) float4(\(size.width), \(size.height), \(1.0 / size.width), \(1.0 / size.height))")
+            if case .blur(let level) = texture.resource, (1...3).contains(level) {
+                // Always emit the full 1...level chain, regardless of which specific blur levels
+                // this shader references (a shader can call `GetBlur3` without `GetBlur1`/`GetBlur2`
+                // at all) — `texsize_blur3`'s formula needs `texsize_blur2` already defined above it.
+                for l in 1...level where !seen.contains("blur\(l)") {
+                    seen.insert("blur\(l)")
+                    lines.append(blurTexsizeDefine(level: l))
+                }
             } else {
                 lines.append("#define texsize_\(base) texsize")
             }
@@ -408,6 +479,16 @@ final class MilkdropMetalRenderer: NSObject {
     float2 milkdrop_mul(float2x2 m, float2 v) { return m * v; }
     float3 milkdrop_mul(float3x3 m, float3 v) { return m * v; }
     float4 milkdrop_mul(float4x4 m, float4 v) { return m * v; }
+    // Real HLSL's `mul(a,b)` intrinsic overloads on argument *order*, not just type: `mul(matrix,
+    // vector)` does the usual M*v, but `mul(vector, matrix)` does row-vector v*M instead (a
+    // different, and not generally equal, result) — confirmed against a real corpus preset
+    // ("suksma - bonnie self.milk"'s comp_, `mul(uv-0.5,rot)`) that calls it vector-first. Without
+    // these, real Metal's overload resolution correctly rejects the call (171x "no matching
+    // function for call to 'milkdrop_mul'" in the 7/26 corpus scan) since a plain `m * v` vs `v * m`
+    // are different operations, not something a single overload could paper over.
+    float2 milkdrop_mul(float2 v, float2x2 m) { return v * m; }
+    float3 milkdrop_mul(float3 v, float3x3 m) { return v * m; }
+    float4 milkdrop_mul(float4 v, float4x4 m) { return v * m; }
     float milkdrop_saturate(float x) { return clamp(x, 0.0, 1.0); }
     float2 milkdrop_saturate(float2 x) { return clamp(x, float2(0.0), float2(1.0)); }
     float3 milkdrop_saturate(float3 x) { return clamp(x, float3(0.0), float3(1.0)); }
@@ -423,6 +504,34 @@ final class MilkdropMetalRenderer: NSObject {
     // PresetShaderHeaderGlsl330.inc (`#define lum(x) (dot(x,float3(0.32,0.49,0.29)))`). A pure
     // math macro (no texture involved), unlike GetPixel/GetBlurN, so a plain #define here is safe.
     #define lum(x) (dot(x, float3(0.32, 0.49, 0.29)))
+    // Real Milkdrop's "hue shader" grid-corner color formula (confirmed against projectM's
+    // FinalComposite::ApplyHueShaderColors), collapsed to its screen-center value — see the
+    // `hue_shader` #define's doc comment (uniformDefines() below) for why. Takes `time`/`randPreset`
+    // as explicit parameters, not the `time`/`rand_preset` #defines directly, so this can live here
+    // in the order-independent shim header rather than after uniformDefines() (which is what
+    // actually makes those two names resolve to real uniform-buffer reads).
+    float3 milkdrop_hue_shader(float time, float4 randPreset) {
+        float3 shade[4];
+        for (int i = 0; i < 4; i++) {
+            float idx = float(i);
+            float3 s = float3(
+                0.6 + 0.3 * sin(time * 30.0 * 0.0143 + 3.0 + idx * 21.0 + randPreset.y),
+                0.6 + 0.3 * sin(time * 30.0 * 0.0107 + 1.0 + idx * 13.0 + randPreset.z),
+                0.6 + 0.3 * sin(time * 30.0 * 0.0129 + 6.0 + idx * 9.0 + randPreset.w)
+            );
+            s /= max(s.x, max(s.y, s.z));
+            shade[i] = 0.5 + 0.5 * s;
+        }
+        return 0.25 * (shade[0] + shade[1] + shade[2] + shade[3]);
+    }
+    // Real Milkdrop's own shader header (confirmed against projectM's PresetShaderHeaderGlsl330.inc)
+    // defines these three, matching real HLSL's naming rather than C math.h's (`M_PI_2` here is
+    // 2*pi, not pi/2). `<metal_stdlib>` already supplies MSL's own `M_PI_F` etc. under different
+    // names, so presets referencing the Milkdrop names directly (268x "undeclared identifier
+    // 'M_INV_PI_2'" in the 7/26 corpus scan — by far the most common of the three) need these too.
+    #define M_PI 3.14159265359
+    #define M_PI_2 6.28318530718
+    #define M_INV_PI_2 0.159154943091895
     """
 
     /// Wraps a translated shader body into a complete MSL fragment function. Composite shaders run
@@ -448,6 +557,8 @@ final class MilkdropMetalRenderer: NSObject {
 
         \(uniformDefines())
         \(textureSizeDefines(translated.textures))
+
+        \(translated.helperFunctions)
 
         fragment float4 milkdrop_composite_main(
             FullscreenVertexOut in [[stage_in]],
@@ -522,6 +633,8 @@ final class MilkdropMetalRenderer: NSObject {
 
         \(uniformDefines())
         \(textureSizeDefines(translated.textures))
+
+        \(translated.helperFunctions)
 
         fragment float4 milkdrop_warp_main(
             MeshVertexOut in [[stage_in]],
@@ -799,6 +912,8 @@ final class MilkdropMetalRenderer: NSObject {
         }
 
         for i in 0..<qVars.count { uniforms[42 + i] = qVars[i] }
+        uniforms[74] = (energy.bass + energy.mid + energy.treb) * 0.333
+        uniforms[75] = (energy.bassAtt + energy.midAtt + energy.trebAtt) * 0.333
         return uniforms
     }
 

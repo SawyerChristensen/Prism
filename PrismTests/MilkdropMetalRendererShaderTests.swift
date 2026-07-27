@@ -75,6 +75,100 @@ struct MilkdropMetalRendererShaderTests {
         #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
     }
 
+    @Test func mulAcceptsBothMatrixFirstAndVectorFirstArgumentOrder() throws {
+        // Real HLSL's `mul(a,b)` intrinsic overloads on argument *order*: `mul(matrix, vector)` is
+        // the usual M*v, but `mul(vector, matrix)` does row-vector v*M instead — confirmed against a
+        // real corpus preset ("suksma - bonnie self.milk"'s comp_, `mul(uv-0.5,rot)`) that calls it
+        // vector-first. 171x "no matching function for call to 'milkdrop_mul'" in the 7/26 corpus
+        // scan before the vector-first overloads existed.
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            float2x2 rot = { 1, 0, 0, 1 };
+            float2 a = mul(rot, uv);
+            float2 b = mul(uv, rot);
+            ret = float3(a + b, 0.0);
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
+    @Test func mPiConstantsAndQBankAliasesCompile() throws {
+        // M_PI/M_PI_2/M_INV_PI_2 (268x "undeclared identifier 'M_INV_PI_2'" in the 7/26 scan) and
+        // the raw `_qa`-`_qh` float4 banks `q1`-`q32` individually alias into (a real corpus preset,
+        // "propre hypno.milk", uses `_qa` directly as a whole: `mul(uv,float2x2(_qa))`).
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            float a = M_PI * M_PI_2 * M_INV_PI_2;
+            float2 b = mul(uv, float2x2(_qa)) * a;
+            ret = float3(b + _qh.xy, q32);
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
+    @Test func hueShaderCompilesAndUsesRandPresetAndTime() throws {
+        // Real Milkdrop's per-vertex "hue shader" grid overlay (confirmed against projectM's
+        // FinalComposite::ApplyHueShaderColors) — 95-110x "undeclared identifier 'hue_shader'" in
+        // 1,500-file corpus samples before this existed, the single largest remaining named gap
+        // after the 7/26 corpus scan's original priority list was addressed.
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            ret = pow(tex2D(sampler_main, uv).xyz, hue_shader);
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
+    @Test func volAndVolAttCompileAsOverallAudioLevelUniforms() throws {
+        // `vol`/`vol_att` (`_c3.w`/`_c4.w` in projectM's PresetShaderHeaderGlsl330.inc, real formula
+        // confirmed against projectM's PCM.cpp: `vol = (bass+mid+treb)*0.333`) — 52x "undeclared
+        // identifier 'vol'" in the 7/26 corpus scan.
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            float dec = milkdrop_saturate(vol / vol_att - 1.1) * 0.5 + 0.004;
+            ret = float3(dec);
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
+    @Test func float2x2FromASingleVectorArgumentCompiles() throws {
+        // Real HLSL supports constructing a matrix from a single vector, packing its components
+        // row-major (`float2x2(_qa)`) — MSL's own float2x2 constructor has no equivalent
+        // single-vector overload. Confirmed as a real, common pattern: 397 real corpus presets
+        // build a rotation matrix straight from a `_qa`/`_qb` q-var bank this way (e.g.
+        // "martin - neon space ps2 (ati fix).milk"'s comp_, `mul(uv, float2x2(_qb))`).
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            uv = mul(uv, float2x2(_qa));
+            ret = float3(uv, 0.0);
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
+    @Test func noiseTexsizeDefinesCompileEvenWithoutATextureCallSiteForThem() throws {
+        // Real corpus pattern ("LuxXx - All That I Am.milk"'s warp_): a preset reads
+        // `texsize_noise_lq` for a pure size calculation without ever sampling `sampler_noise_lq` in
+        // that same shader, so `discoverTextures` (which only walks tex2D/tex3D call sites) never
+        // learns the shader needs it — 257x "undeclared identifier 'texsize_noise_lq'" in the 7/26
+        // scan. All five noise catalog entries must compile unconditionally.
+        let library = try compiledLibrary(for: """
+        shader_body
+        {
+            float2 corr = texsize.xy * texsize_noise_lq.zw * texsize_noise_mq.zw * texsize_noise_hq.zw
+                * texsize_noisevol_lq.zw * texsize_noisevol_hq.zw;
+            ret = tex2D(sampler_main, uv + corr).xyz;
+        }
+        """)
+        #expect(library.makeFunction(name: "milkdrop_composite_main") != nil)
+    }
+
     // MARK: - warp_N= (buildWarpShaderSource — see MilkdropPerPixelMeshRuntime.trivialVertices'
     // doc comment on why a warp shader always draws via the mesh path, hence MeshVertexOut here
     // rather than FullscreenVertexOut)

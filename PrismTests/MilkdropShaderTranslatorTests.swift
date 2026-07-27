@@ -258,6 +258,117 @@ struct MilkdropShaderTranslatorTests {
         #expect(result.body.contains("sampler_main.sample(sampler_main_smp, uv).xyz;"))
     }
 
+    // "function definition is not allowed here" (2nd-largest cause in the 7/26 corpus scan, 483x):
+    // real presets sometimes declare complete helper functions before `shader_body`, not just plain
+    // variables — confirmed verbatim against "propre hypno.milk"'s comp_N=, which defines
+    // `uv_polar`/`uv_lens_half_sphere` above `shader_body` and calls them from inside it.
+    // `extractHelperFunctions` pulls these out and `Result.helperFunctions` carries them separately
+    // so the caller can paste them at true top-level MSL scope instead of nesting a function
+    // definition inside another function (illegal in MSL, same as C).
+
+    @Test func helperFunctionBeforeShaderBodyIsHoistedOutOfTheBody() throws {
+        let source = """
+        float2 uv_polar(float2 domain, float2 center){
+           float2 c = domain - center;
+           return float2(atan2(c.x,c.y), length(c));
+        }
+
+        shader_body
+        {
+            ret = float3(uv_polar(uv, float2(0.5,0.5)), 0.0);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.helperFunctions.contains("float2 uv_polar(float2 domain, float2 center){"))
+        #expect(!result.body.contains("float2 uv_polar"))
+        #expect(result.body.contains("uv_polar(uv, float2(0.5,0.5))"))
+    }
+
+    @Test func laterHelperFunctionCallingAnEarlierOneKeepsSourceOrder() throws {
+        // `uv_lens_half_sphere` calls `uv_polar`, defined just above it in the real preset — MSL
+        // (like C) requires a function be declared before its first use, so hoisting must preserve
+        // the original source order, not e.g. reverse or alphabetize it.
+        let source = """
+        float2 uv_polar(float2 domain, float2 center){
+           return domain - center;
+        }
+
+        float2 uv_lens_half_sphere(float2 domain, float2 position){
+           return uv_polar(domain, position) * 2.0;
+        }
+
+        shader_body
+        {
+            ret = float3(uv_lens_half_sphere(uv, float2(0.5,0.5)), 0.0);
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        let polarRange = try #require(result.helperFunctions.firstRange(of: "float2 uv_polar"))
+        let lensRange = try #require(result.helperFunctions.firstRange(of: "float2 uv_lens_half_sphere"))
+        #expect(polarRange.lowerBound < lensRange.lowerBound)
+    }
+
+    @Test func plainDeclarationsBeforeAndAfterAHelperFunctionAreStillHoistedIntoTheBody() throws {
+        // Real shape (e.g. "propre hypno.milk"): plain scratch-variable declarations, then one or
+        // more helper functions, all before `shader_body`. `preambleDeclarations`'s semicolon-split
+        // logic must only ever see what's left *after* `extractHelperFunctions` removes the function
+        // text — otherwise it would shred the function body's own statement-terminating `;`s.
+        let source = """
+        float3 ret1, neu;
+        float k, m;
+
+        float2 helper(float2 x){
+            return x * 2.0;
+        }
+
+        shader_body
+        {
+            ret1 = float3(helper(uv), 0.0);
+            ret = ret1;
+        }
+        """
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.helperFunctions.contains("float2 helper(float2 x){"))
+        #expect(result.body.contains("float3 ret1, neu;"))
+        #expect(result.body.contains("float k, m;"))
+        #expect(!result.body.contains("float2 helper(float2 x){"))
+    }
+
+    @Test func shaderWithNoHelperFunctionsHasAnEmptyHelperFunctionsString() throws {
+        let source = "shader_body\n{\nret = float3(1.0);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(!result.helperFunctions.contains(where: { !$0.isWhitespace }))
+    }
+
+    @Test func singleArgumentFloat2x2ConstructorIsRewrittenToTwoColumnForm() throws {
+        // Real HLSL supports `float2x2(v)` from a single float4 (row-major packing) — MSL's own
+        // float2x2 constructor has no equivalent single-vector overload, so this rewrites the call
+        // site to the two-column form MSL does support. Confirmed as a real, common pattern: 397
+        // real corpus presets build a rotation matrix straight from a `_qa`/`_qb` q-var bank this
+        // way (e.g. `mul(uv, float2x2(_qa))`).
+        let source = "shader_body\n{\nuv = mul(uv, float2x2(_qa));\nret = float3(uv, 0.0);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("float2x2((_qa).xy, (_qa).zw)"))
+        // A genuine 4-scalar-argument float2x2(...) call must be left alone.
+        let scalarSource = "shader_body\n{\nfloat2x2 m = float2x2(1,0,0,1);\nret = float3(mul(uv,m), 0.0);\n}"
+        let scalarResult = try #require(MilkdropShaderTranslator.translate(scalarSource))
+        #expect(scalarResult.body.contains("float2x2(1,0,0,1)"))
+    }
+
+    @Test func doubleTypesAreAliasedToFloatEquivalents() throws {
+        // Real Cg/HLSL treats `double`/`double2`-`double4` as plain aliases for `float`/`floatN`
+        // on profiles without true double-precision support (which Milkdrop's own shader profiles
+        // never had) — confirmed as a real pattern via a white-screen preset report
+        // ("suksma - schlotkin(k).milk"'s warp_, `double3 ist = GetBlur1(uv*1);`). MSL's own
+        // `double` is a reserved-but-unimplemented keyword ("incomplete type" at compile), so
+        // leaving it as-is would fail outright.
+        let source = "shader_body\n{\ndouble3 ist = GetBlur1(uv);\ndouble d = 1.0;\nret = ist*float(d);\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        #expect(result.body.contains("float3 ist"))
+        #expect(result.body.contains("float d = 1.0;"))
+        #expect(!result.body.contains("double"))
+    }
+
     @Test func lowercaseTex2dAndTex3dAreRecognized() throws {
         // Confirmed against real corpus presets that use lowercase `tex2d`/`tex3d` — a small
         // fraction of compile failures (6/1384 in the 7/25 measurement), but a free fix once
@@ -301,6 +412,26 @@ struct MilkdropShaderTranslatorTests {
         #expect(result.body.contains("\(blur1Name).sample(\(blur1Name)_smp, uv).xyz"))
         #expect(result.body.contains("\(blur3Name).sample(\(blur3Name)_smp, uv_orig).xyz"))
         #expect(!result.body.contains("GetPixel(")) // No trace of the original call left.
+    }
+
+    @Test func nestedTextureCallInsideAnotherCallsArgumentsIsDiscoveredAndRewritten() throws {
+        // Real corpus pattern (e.g. "suksma - bonnie self.milk"'s comp_): a texture call used as
+        // *another* texture call's coordinate argument, `tex2D(sampler_main, GetBlur1(uv))`.
+        // `scanTextureCalls` only ever reports the outermost call starting at a given position, so
+        // without recursing into each call's own arguments, the nested `GetBlur1(uv)` was silently
+        // left as untranslated HLSL — both undiscovered as a needed texture binding and never
+        // rewritten to MSL's `.sample(...)` form (16x/13x "undeclared identifier 'GetBlur1'/
+        // 'GetPixel'" in the 7/26 corpus scan, both nested this way, not genuinely unrecognized).
+        let source = "shader_body\n{\nfloat3 blur = tex2D(sampler_main, GetBlur1(uv)).xyz;\n}"
+        let result = try #require(MilkdropShaderTranslator.translate(source))
+        let blur1Name = MilkdropShaderTranslator.getBlurTextureName(1)
+        #expect(result.textures.map(\.declaredName).contains(blur1Name))
+        #expect(result.textures.map(\.declaredName).contains("sampler_main"))
+        #expect(!result.body.contains("GetBlur1(")) // No trace of the original nested call left.
+        // The nested call is itself a UV *coordinate*, not a `<type> name = ...` initializer, so it
+        // must default to a float2 (`.xy`) swizzle, not the top-level float3 (`.xyz`) default —
+        // `sampler_main.sample` expects a `float2` coordinate argument.
+        #expect(result.body.contains("\(blur1Name).sample(\(blur1Name)_smp, uv).xy)"))
     }
 
     @Test func getBlurResolvesToMainTextureAsADocumentedApproximation() throws {
