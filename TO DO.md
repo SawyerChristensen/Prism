@@ -1,14 +1,11 @@
 # Prism — To Do
 ---
-- [ ] Album art transitions
+- [x] Album art transitions
   - [x] When a new song is chosen, lets transition into the album art, display it for a couple seconds and then let it blend with the preset once we decide how ^
   - [x] Scale up transition
-    - [ ] The dissolve effect should increase faster than opacity?
   - [x] Scale down transition
-    - [ ] This seems to happen twice. temporarily make this the only intro transition and slow down to see exactly what is going on
   - [x] Slide in from the right, pushing the other art to the left while it dissolves
   - [x] Slide in from the top, pushing the other art out to the buttom while it dissolves
-  - [ ] Both of these ^ need opcity to scale out faster
 - [ ] Transition in the text on the bottom right and left. the text should settle at the same moment the subject becomes settled and the background start fading out. only transition both texts if the song and artist are changing. if just the song is changing but the artist stays the same, only transition the song text away
 - [ ] Make the text the inverse of what is behind it. maybe a text-sized mask/inverse filter on the content? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc. 
 - [ ] Speed up all transitions once fully implemented

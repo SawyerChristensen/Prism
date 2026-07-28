@@ -32,39 +32,44 @@ private struct AlbumArtUniforms {
     // keeps going at that exact same rate.
     var subjectScale: Float
     var backgroundScale: Float
-    // 0...1 fade used by the reverse (scale-down) and slide intros - see introStyle. The forward
-    // intro's own materialize effect comes entirely from scale (see AlbumArtStage.scaleIn's own
-    // doc comment), so this stays pinned at 1 the whole time for that variant; a no-op multiply.
+    // 0...1 fade every introStyle uses to materialize, shared identically across all four - see
+    // introAlpha().
     var introAlpha: Float
-    // Which of the four intro choreographies this track got (see AlbumArtIntroStyle) - only
-    // consulted by the shader during stage 0.
-    var introStyle: Float
     // Screen-space translation (same [0,1] space as artCenter/texCoord) applied to each layer's own
     // effective art center - (0, 0) for forward/reverseScale (no movement at all); for slideRight,
     // x runs slideStartOffset -> 0 -> negative (y stays 0); for slideDown, y runs -slideStartOffset
     // -> 0 -> positive (x stays 0) - see albumArtOffsets().
     var subjectOffset: SIMD2<Float>
     var backgroundOffset: SIMD2<Float>
+    // Whether the previous track's art is concurrently dissolving away underneath this one - see
+    // outgoingActiveAndProgress. Rendered as a fully independent layer in the shader (its own
+    // wave-dissolve tear-apart, composited under whatever this struct's stage/stageProgress etc.
+    // describe for the *incoming* track) rather than a fourth value of `stage`, since both now run
+    // at the same time instead of one waiting for the other to finish - see advanceAlbumArtAnimation.
+    var outgoingActive: Float
+    var outgoingProgress: Float
 }
 
-/// The four stages of the album-art choreography (see ProjectMCompositeShader.metal's own header)
-/// - raw Float, not an enum, since it's written straight into AlbumArtUniforms.stage.
+/// The three stages of the *incoming* track's own choreography (see ProjectMCompositeShader.metal's
+/// own header) - raw Float, not an enum, since it's written straight into AlbumArtUniforms.stage.
+/// The previous track's exit is no longer one of these - it runs concurrently as its own layer, see
+/// AlbumArtUniforms.outgoingActive.
 private enum AlbumArtStage {
     static let scaleIn: Float = 0
     static let separate: Float = 1
     static let steady: Float = 2
-    static let outgoingExit: Float = 3
 }
 
-/// The four intro choreographies stage 0 can play - raw Float, not an enum, for the same reason
-/// as AlbumArtStage above (written straight into AlbumArtUniforms.introStyle).
+/// The four intro choreographies stage 0 can play - raw Float, not an enum, for consistency with
+/// AlbumArtStage above. Resolved into subjectScale/backgroundScale/subjectOffset/backgroundOffset
+/// on the Swift side (see albumArtScales/albumArtOffsets) before crossing into AlbumArtUniforms -
+/// the shader itself no longer branches on which style this is, since all four now share the same
+/// dissolve/opacity/distortion treatment and differ only in that resolved scale/offset math.
 private enum AlbumArtIntroStyle {
     static let forward: Float = 0
     static let reverseScale: Float = 1
     static let slideRight: Float = 2
     static let slideDown: Float = 3
-    // In this fixed order, cycled through one-per-track by promoteToCurrentTrack (TEMP TESTING) so
-    // every style gets a turn in a predictable sequence rather than a random draw.
     static let all: [Float] = [forward, reverseScale, slideRight, slideDown]
 }
 
@@ -82,23 +87,23 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var cachedWidth = 0
     private var cachedHeight = 0
 
-    // Album art choreography - see ProjectMCompositeShader.metal's header for the four stages and
+    // Album art choreography - see ProjectMCompositeShader.metal's header for the incoming track's
+    // three stages plus the outgoing track's independent, concurrent exit layer, and
     // advanceAlbumArtAnimation below for the state machine that drives them. emptyAlbumArtTexture
     // stands in for any texture slot with nothing real to show, so the shader always runs the same
     // code path rather than branching per-frame on "has art or not."
-    private static let scaleInDuration: Float = 8.0
-    private static let separateDuration: Float = 8.0
-    private static let subjectExitDuration: Float = 8.0
+    private static let scaleInDuration: Float = 1.5
+    private static let separateDuration: Float = 1.5
+    private static let subjectExitDuration: Float = 1.5
     private static let albumArtSizePixels: Float = 640
     private static let globalAlphaEaseSpeed: Float = 8
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
     // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
     // separate, same "one continuous ramp" shape as the forward intro's 0 -> 1 -> beyond.
-    // introAlpha's cubic ease-in (shared with the slide intros - do not change to "fix" this) stays
-    // under ~50% opacity until t > ~0.79 of scaleIn, so only the last ~20% of this ramp is ever seen
-    // at any meaningful opacity. 2.2 left that visible tail shrinking from only ~1.25x -> 1x - too
-    // subtle to read as motion at all. 4.0 leaves a ~1.6x -> 1x shrink still happening as opacity
-    // climbs through that same tail, so the zoom is actually visible once the art materializes.
+    // introAlpha's cubic ease-*out* (shared with every introStyle - see introAlpha's own doc
+    // comment) crosses 50% opacity early, around t ~ 0.21 of scaleIn, so most of this ramp is
+    // visible at meaningful opacity rather than just a brief tail - retune this if the shrink reads
+    // as too subtle or too extreme once it's visible for that much longer.
     private static let reverseIntroStartScale: Float = 4.0
     // How far off-screen (screen-normalized, same space as artCenter) the slide intros start -
     // shared by slideRight (starts to the right) and slideDown (starts above) - the ramp runs
@@ -133,34 +138,28 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var currentRawImage: NSImage?
     private var trackAnimationClock: Float = 0
     // Which of the four intro choreographies this track got, picked once per track in
-    // promoteToCurrentTrack:
-    //   forward      - scale 0 -> 1, materializes via the shrink-to-a-point UV trick (see
-    //                  AlbumArtStage.scaleIn).
-    //   reverseScale - starts at reverseIntroStartScale - zoomed in, fully transparent, and pre-
-    //                  dissolved/scattered by the wave's own gradient field, same as outgoingExit's
-    //                  own tear-apart but run backward - then shrinks to 1, fades in, and
-    //                  reassembles all in lockstep.
+    // promoteToCurrentTrack. All four now share the exact same dissolve/opacity/distortion
+    // treatment (introAlpha's fade plus the shader's wave_dissolve_walk scatter-and-reassemble,
+    // `stage == 0` in ProjectMCompositeShader.metal) - every entrance starts equally scattered,
+    // equally transparent, and equally pushed around by the wave before it lands solid at center.
+    // The *only* thing that differs between them is the geometric motion layered on top:
+    //   forward      - scale ramps 0 -> 1 (materializes by growing from a point); no offset.
+    //   reverseScale - scale ramps reverseIntroStartScale -> 1 (materializes by shrinking down to
+    //                  size from a zoomed-in crop); no offset.
     //   slideRight   - scale pinned at 1 throughout (no zoom at all); instead starts
-    //                  slideStartOffset off to the right, fully transparent and pre-dissolved just
-    //                  like reverseScale, and slides in to center while fading in and reassembling.
+    //                  slideStartOffset off to the right and slides in to center.
     //   slideDown    - same as slideRight, just rotated 90 degrees: starts slideStartOffset off the
     //                  top of the screen and slides down to center instead.
-    // See albumArtScales/albumArtOffsets/introAlpha and the shader's own wave_dissolve_walk. Only
-    // affects how scaleIn plays out; separate/steady/outgoingExit are identical across all three.
+    // See albumArtScales/albumArtOffsets for the per-style scale/offset math, and introAlpha/the
+    // shader's own wave_dissolve_walk for the shared dissolve. Only affects how scaleIn plays out;
+    // separate/steady/outgoingExit are identical across all four.
     private var introStyle: Float = AlbumArtIntroStyle.forward
-    // TEMP TESTING: advances by one every promoteToCurrentTrack call, indexing into
-    // AlbumArtIntroStyle.all round-robin - see that call site.
-    private var introStyleCycleIndex = 0
 
-    // Next track's assets, queued the moment NowPlayingManager hands over new artwork but held
-    // back from becoming "current" until the outgoing subject below has finished dissolving away -
-    // so the two tracks' art never overlaps on screen.
-    private var pendingRawImage: NSImage?
-    private var pendingColorKeyedImage: NSImage?
-    private var pendingSubjectImage: NSImage?
-
-    // Previous track's subject (or, if Vision found no subject, its whole raw cover) dissolving
-    // away before `pending` is promoted to `current` - see advanceAlbumArtAnimation.
+    // Previous track's subject (or, if Vision found no subject, its whole raw cover), captured the
+    // instant a track change is detected and left to dissolve away on its own clock while the new
+    // track is promoted to `current` immediately and starts its own entrance in the very same frame
+    // - see advanceAlbumArtAnimation. The two tracks' art deliberately *does* overlap on screen now:
+    // one is still tearing apart while the other is already scaling/fading in over it.
     private var outgoingTexture: MTLTexture?
     private var outgoingExitClock: Float = 0
     private var isOutgoingExitActive = false
@@ -277,7 +276,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // centered - the same spot SwiftUI's ZStack centered it by default before this moved
         // into the shader.
         let (stage, stageProgress) = albumArtStageAndProgress()
-        let hasSubjectMask = !isOutgoingExitActive && currentSubjectTexture != nil
+        let (outgoingActive, outgoingProgress) = outgoingActiveAndProgress()
+        let hasSubjectMask = currentSubjectTexture != nil
         let (subjectScale, backgroundScale) = albumArtScales(hasSubjectMask: hasSubjectMask)
         let (subjectOffset, backgroundOffset) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
         var uniforms = AlbumArtUniforms(
@@ -294,9 +294,10 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             subjectScale: subjectScale,
             backgroundScale: backgroundScale,
             introAlpha: introAlpha(),
-            introStyle: introStyle,
             subjectOffset: subjectOffset,
-            backgroundOffset: backgroundOffset
+            backgroundOffset: backgroundOffset,
+            outgoingActive: outgoingActive,
+            outgoingProgress: outgoingProgress
         )
 
         // scaleIn shows the genuinely full cover (no hole) as its background layer; separate/steady
@@ -304,12 +305,16 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // pulling away - see currentFullBackgroundTexture/currentBackgroundTexture's own doc comment.
         let backgroundTex = (stage == AlbumArtStage.scaleIn ? currentFullBackgroundTexture : currentBackgroundTexture)
             ?? emptyAlbumArtTexture
-        let subjectTex = (isOutgoingExitActive ? outgoingTexture : currentSubjectTexture) ?? emptyAlbumArtTexture
+        let subjectTex = currentSubjectTexture ?? emptyAlbumArtTexture
+        // Previous track's snapshot, dissolving away as its own layer underneath the incoming
+        // track above - see outgoingTexture's own doc comment.
+        let outgoingTex = outgoingTexture ?? emptyAlbumArtTexture
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentTexture(texture, index: 0)
         encoder.setFragmentTexture(backgroundTex, index: 1)
         encoder.setFragmentTexture(subjectTex, index: 2)
+        encoder.setFragmentTexture(outgoingTex, index: 3)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<AlbumArtUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
@@ -317,16 +322,19 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    /// Drives the scaleIn -> separate -> steady -> (on a track change) outgoingExit state machine:
-    /// detects a new track's artwork, uploads its textures, advances whichever clock is currently
-    /// active, and promotes `pending` to `current` once an outgoing subject has fully dissolved
-    /// away. Cheap when nothing's changing - the common case is just two clock increments.
+    /// Drives the scaleIn -> separate -> steady state machine for the incoming track, running
+    /// concurrently alongside the previous track's own independent outgoingExit dissolve (see
+    /// outgoingActiveAndProgress) rather than waiting for it to finish first: detects a new track's
+    /// artwork, snapshots whatever was on screen as the new `outgoing` layer, and promotes the new
+    /// track to `current` immediately, in the same frame, so its entrance starts the instant the
+    /// old art starts dissolving away. Cheap when nothing's changing - the common case is just two
+    /// clock increments.
     private func advanceAlbumArtAnimation(device: MTLDevice, now: CFTimeInterval) {
         if emptyAlbumArtTexture == nil {
             emptyAlbumArtTexture = Self.makeEmptyTexture(device: device)
         }
 
-        if latestRawImage !== currentRawImage, latestRawImage !== pendingRawImage {
+        if latestRawImage !== currentRawImage {
             if currentRawImage == nil {
                 // First track this launch - nothing on screen yet to dissolve away first.
                 promoteToCurrentTrack(
@@ -334,16 +342,18 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
                     subjectImage: latestSubjectImage
                 )
             } else {
-                pendingRawImage = latestRawImage
-                pendingColorKeyedImage = latestColorKeyedImage
-                pendingSubjectImage = latestSubjectImage
-                if !isOutgoingExitActive {
-                    // Vision may have found no subject for the outgoing track either - erode the
-                    // whole cover in that case rather than nothing at all.
-                    outgoingTexture = currentSubjectTexture ?? currentBackgroundTexture
-                    isOutgoingExitActive = true
-                    outgoingExitClock = 0
-                }
+                // Whatever's currently on screen - however far along its own entrance happens to be
+                // - becomes the outgoing layer, replacing any still-dissolving previous outgoing
+                // layer if tracks are changing faster than subjectExitDuration (e.g. rapid skips).
+                // Vision may have found no subject for it either - erode the whole cover in that
+                // case rather than nothing at all.
+                outgoingTexture = currentSubjectTexture ?? currentBackgroundTexture
+                isOutgoingExitActive = true
+                outgoingExitClock = 0
+                promoteToCurrentTrack(
+                    device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
+                    subjectImage: latestSubjectImage
+                )
             }
         }
 
@@ -355,27 +365,21 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             if outgoingExitClock >= Self.subjectExitDuration {
                 isOutgoingExitActive = false
                 outgoingTexture = nil
-                promoteToCurrentTrack(
-                    device: device, rawImage: pendingRawImage, colorKeyedImage: pendingColorKeyedImage,
-                    subjectImage: pendingSubjectImage
-                )
-                pendingRawImage = nil
-                pendingColorKeyedImage = nil
-                pendingSubjectImage = nil
             }
-        } else {
-            trackAnimationClock += dt
         }
+        trackAnimationClock += dt
 
         let hasContent = currentBackgroundTexture != nil || currentSubjectTexture != nil || isOutgoingExitActive
         let target: Float = (hasContent && !albumArtHidden) ? 1 : 0
         globalAlpha += (target - globalAlpha) * min(1, max(0, dt) * Self.globalAlphaEaseSpeed)
     }
 
+    private func outgoingActiveAndProgress() -> (active: Float, progress: Float) {
+        guard isOutgoingExitActive else { return (0, 0) }
+        return (1, min(1, outgoingExitClock / Self.subjectExitDuration))
+    }
+
     private func albumArtStageAndProgress() -> (stage: Float, progress: Float) {
-        if isOutgoingExitActive {
-            return (AlbumArtStage.outgoingExit, min(1, outgoingExitClock / Self.subjectExitDuration))
-        }
         if trackAnimationClock < Self.scaleInDuration {
             return (AlbumArtStage.scaleIn, min(1, trackAnimationClock / Self.scaleInDuration))
         }
@@ -447,35 +451,41 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         }
     }
 
-    /// 0...1 fade the reverseScale and slideIn intros use to materialize (the forward intro doesn't
-    /// need this - see AlbumArtUniforms.introAlpha). Driven by the same clock as albumArtScales/
-    /// albumArtOffsets, so the fade and the shrink/slide-to-rest both land at the same instant;
-    /// freezes wherever it was (rather than snapping) if a track change interrupts scaleIn, since
-    /// trackAnimationClock itself stops advancing once isOutgoingExitActive - see
-    /// advanceAlbumArtAnimation. Cubic ease-in rather than a straight ramp, so the fade starts nearly
-    /// imperceptible and snaps up to full opacity right at the end instead of ticking up at a
-    /// constant rate - see easeIn's own doc comment.
+    /// 0...1 fade all four intros use to materialize, in lockstep with the shader's own
+    /// wave-dissolve reassembly (ProjectMCompositeShader.metal's `stage == 0` block) - shared by
+    /// every introStyle now, so every track's entrance starts equally dissolved/transparent
+    /// regardless of which one it got; only the scale ramp (albumArtScales) or slide offset
+    /// (albumArtOffsets) differs by style on top of this same fade. Driven by the same clock as
+    /// those, so the fade and the scale/slide-to-rest both land at the same instant.
+    /// trackAnimationClock now always advances regardless of whether a previous track is
+    /// concurrently dissolving away in its own outgoingExit layer - see advanceAlbumArtAnimation -
+    /// so a track change never pauses this. Cubic ease-*out* (not ease-in) - the fade rises fast
+    /// right away and only tapers at the end - see easeOut's own doc comment for why: with the
+    /// outgoing layer (see outgoingActiveAndProgress) dissolving away on the exact same clock, an
+    /// entrance that stayed nearly invisible until late in its own duration read as a dead gap
+    /// between the old art disappearing and the new art showing up, even though both clocks start
+    /// on the same frame - ease-out closes that gap by making the incoming layer visible almost
+    /// immediately, while still tapering into a clean finish rather than a linear ramp.
     private func introAlpha() -> Float {
-        guard introStyle != AlbumArtIntroStyle.forward else { return 1 }
-        return Self.easeIn(min(trackAnimationClock / Self.scaleInDuration, 1))
+        return Self.easeOut(min(trackAnimationClock / Self.scaleInDuration, 1))
     }
 
-    /// Cubic ease-in: 0...1 in, 0...1 out, starting flat and curving up into a steep, fast finish -
-    /// unlike a straight `t` ramp, equal steps in `t` produce ever-larger steps in the output, and
-    /// unlike a plain square this stays low for longer before its finishing snap. Shared by
-    /// introAlpha here and the shader's own dissolve-amount curve (ProjectMCompositeShader.metal's
-    /// ease_in), so the opacity fade and the wave-dissolve reassembly accelerate in lockstep.
-    private static func easeIn(_ t: Float) -> Float {
+    /// Cubic ease-out: 0...1 in, 0...1 out, starting with a fast, steep rise and flattening into the
+    /// finish - unlike a straight `t` ramp, equal steps in `t` produce ever-smaller steps in the
+    /// output. Shared by introAlpha here and the shader's own dissolve-amount curve
+    /// (ProjectMCompositeShader.metal's ease_out), so the opacity fade and the wave-dissolve
+    /// reassembly both rise together right from the start of scaleIn.
+    private static func easeOut(_ t: Float) -> Float {
         let clamped = min(max(t, 0), 1)
-        return clamped * clamped * clamped
+        let inv = 1 - clamped
+        return 1 - inv * inv * inv
     }
 
     private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
         currentRawImage = rawImage
-        // TEMP TESTING: step through all four intro styles in a fixed round-robin, one per track,
-        // instead of a random pick, so every style can be previewed in turn.
-        introStyle = AlbumArtIntroStyle.all[introStyleCycleIndex % AlbumArtIntroStyle.all.count]
-        introStyleCycleIndex += 1
+        // Random pick each track, excluded from repeating the style just used so back-to-back
+        // tracks never play the same intro choreography twice in a row.
+        introStyle = AlbumArtIntroStyle.all.filter { $0 != introStyle }.randomElement() ?? introStyle
 
         // The background layer always shows the *full* cover - color-keyed wherever a clean solid
         // background color was confidently detected (colorKeyedArtwork requires backgroundTone
