@@ -78,36 +78,19 @@ struct ContentView: View {
             // The wave
             ProjectMMetalView(
                 audioEngine: audioEngine, model: visualizerModel,
+                // The album art itself is composited (fade in, then background/subject erosion,
+                // distorted against the wave throughout) inside the Metal render pass now — see
+                // ProjectMCoordinator — rather than as a separate SwiftUI Image layered on top;
+                // only the track/artist text below is still a plain SwiftUI overlay.
+                albumArtRawImage: nowPlaying.rawArtwork, albumArtSubjectImage: nowPlaying.subjectArtwork,
+                isAlbumArtHidden: isAlbumArtHidden,
                 onDropPreset: { url in handlePresetDrop(url) },
                 onDropTargetChanged: { isDropTargeted = $0 }
             )
                 .contentShape(Rectangle())
                 .onTapGesture { loadNextSequentialPreset() }
 
-            // The album art
             if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
-                if let artwork = nowPlaying.artwork {
-                    // Real alpha transparency where the artwork's own background was keyed
-                    // out in NowPlayingManager (see NSImage.keyingOutBackground) — not a
-                    // blend mode, so only the actual background pixels go transparent, not
-                    // every dark/light pixel that happens to be part of the subject.
-                    Image(nsImage: artwork)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 240, height: 240)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        //.shadow(color: fgColor, radius: 6)
-                } /*else {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.quaternary)
-                        .frame(width: 250, height: 250)
-                        .overlay {
-                            Image(systemName: "music.note")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
-                        }
-                }*/
-                
                 VStack {
                     Spacer() // Text pinned to the bottom
                     

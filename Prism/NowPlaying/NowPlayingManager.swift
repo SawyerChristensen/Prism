@@ -71,6 +71,15 @@ final class NowPlayingManager {
     private(set) var artistName: String?
     private(set) var albumName: String?
     private(set) var artwork: NSImage?
+    /// Public window onto `cachedRawArtwork` (the unmodified fetched cover, before any masking/
+    /// color-keying) — exposed for ContentView's Metal album-art compositing, which needs the full
+    /// cover separately from `subjectArtwork` to choreograph a fade-in-then-background-erodes-away
+    /// sequence rather than just showing whatever `maskingMode` already flattened.
+    var rawArtwork: NSImage? { cachedRawArtwork }
+    /// Public window onto `cachedSubjectMask` (Vision's subject cutout: subject opaque, everything
+    /// else transparent) — nil when Vision found no discrete subject on this cover. Same reasoning
+    /// as `rawArtwork`.
+    var subjectArtwork: NSImage? { cachedSubjectMask }
     /// Text Vision found on the current artwork (see TextExtraction.swift), most-confident
     /// reading per line, in whatever order Vision returned them — not guaranteed to be reading
     /// order. Empty (not nil) when there's no text, which is the common case for most covers.

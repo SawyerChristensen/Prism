@@ -1,5 +1,6 @@
 # Prism — To Do
 ---
+- [ ] Change the projectM starting logo when the app first starts up
 - [ ] Is there a way we can combine the album subject with the preset? right now just floats above the preset. we isolate the subject in the album, but other than that we dont blend it with the visualizer at all. what are the options for blending it in?
   - [ ] When a new song is chosen, lets transition into the album art, display it for a couple seconds and then let it blend with the preset once we decide how ^
   - [ ] transition in the text on the bottom right and left, maybe make it the inverse of whatever is behind it? so that it is always visible? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc.

@@ -8,12 +8,21 @@
 //  .onDrop. Only the render delegate differs between the two paths.
 //
 
+import AppKit
 import MetalKit
 import SwiftUI
 
 struct ProjectMMetalView: NSViewRepresentable {
     let audioEngine: CoreAudioTapEngine
     var model: ProjectMVisualizerModel
+    // Album art now composites (fade in, background/subject erosion, distortion against the wave)
+    // inside the Metal render pass itself - see ProjectMCoordinator.updateAlbumArt/draw(in:) -
+    // rather than as a separate SwiftUI layer stacked on top. Both the unmodified cover and
+    // Vision's subject cutout are needed so the coordinator can choreograph the background eroding
+    // away before the subject does - see NowPlayingManager.rawArtwork/subjectArtwork.
+    var albumArtRawImage: NSImage?
+    var albumArtSubjectImage: NSImage?
+    var isAlbumArtHidden: Bool
     var onDropPreset: (URL) -> Void
     var onDropTargetChanged: (Bool) -> Void
 
@@ -38,6 +47,9 @@ struct ProjectMMetalView: NSViewRepresentable {
 
     func updateNSView(_ nsView: PresetDroppableMTKView, context: Context) {
         context.coordinator.updateModelIfNeeded(model)
+        context.coordinator.updateAlbumArt(
+            rawImage: albumArtRawImage, subjectImage: albumArtSubjectImage, hidden: isAlbumArtHidden
+        )
         nsView.onDropPreset = onDropPreset
         nsView.onDropTargetChanged = onDropTargetChanged
     }
