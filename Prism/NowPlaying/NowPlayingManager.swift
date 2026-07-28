@@ -271,6 +271,29 @@ final class NowPlayingManager {
         }
     }
 
+    /// "Space" (ContentView's onKeyPress): toggles play/pause on whichever supported player
+    /// (Spotify or Music) is actually current, mirroring the same key's effect when one of those
+    /// apps is itself frontmost. Prefers `sourceApp` (the last app `refresh()` saw actively
+    /// playing — still meaningful once paused, since `refresh()` leaves it untouched rather than
+    /// clearing it when nothing's playing, see `refresh()`'s trailing no-op branch) as long as
+    /// that app is still running; falls back to the first of `supportedApps` that's running
+    /// (Spotify checked before Music, same order `queryNowPlaying` already uses) for the
+    /// nothing's-played-yet-this-launch case. A no-op if neither supported app is running.
+    /// Dispatched off the main thread for the same reason `queryNowPlaying`/`runScript` are: a
+    /// blocking, synchronous Apple Events round-trip.
+    func togglePlayPause() {
+        let preferredBundleID = Self.supportedApps.first(where: { $0.name == sourceApp })?.bundleID
+        Task.detached(priority: .userInitiated) {
+            let running = NSWorkspace.shared.runningApplications
+            func isRunning(_ bundleID: String) -> Bool {
+                running.contains { $0.bundleIdentifier == bundleID }
+            }
+            guard let target = Self.supportedApps.first(where: { $0.bundleID == preferredBundleID && isRunning($0.bundleID) })
+                ?? Self.supportedApps.first(where: { isRunning($0.bundleID) }) else { return }
+            _ = Self.runScript("tell application id \"\(target.bundleID)\" to playpause", appName: target.name)
+        }
+    }
+
     private nonisolated static func queryNowPlaying(app: (name: String, bundleID: String)) -> (track: String, artist: String, album: String)? {
         // `application "X" is running` is unreliable from inside App Sandbox (returns false
         // even when the app is genuinely running), so check via NSWorkspace instead — that's a

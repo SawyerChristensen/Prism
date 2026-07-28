@@ -13,7 +13,7 @@
 - [ ] Deprecate the m, t and p keys for changing the art. comment them out for now! maybe revist later. right now they should do nothing. text still shows up on the screen for a deprecated function
 - [x] Add options in the view settings for hiding the album art and hiding the text
 - [ ] Allow importing of milk files in the file menu. when a milk file is imported, it should display that milk file until the user starts cycling through again or until the application closes. Next time its opened, it should start cycling through again as default behavior
-- [ ] Space should pause whatever music is playing
+- [x] Space should pause whatever music is playing
 - [ ] Change the projectM starting logo when the app first starts up
 - [ ] Slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
   - [ ] Add an intensity increase/decrease toggle in the macOS "View" settings for the app?

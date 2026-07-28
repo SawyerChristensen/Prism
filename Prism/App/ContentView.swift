@@ -262,23 +262,27 @@ struct ContentView: View {
             Text(visualizerModel.presetLoadError ?? "")
         }
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
-        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space steps
-        // to the next preset in sequential library order (same action as tapping the visualizer),
-        // F toggles fullscreen, L (re)picks the library folder, C toggles idle auto-cycling,
-        // Left/Right step back/forward through this session's preset history. "1"-"5" record a
-        // star rating; "w"/"j"/"x" flag the current preset as all-white, too jittery, or
-        // strobing/flashing respectively (for revisiting later) — "x" rather than "s" for
-        // strobing since "s" already saves the current artwork M/T preference below. All of these
-        // advance to the next sequential preset afterward, the same as Space, so reviewing a
-        // library is a single keypress per preset: rate (or flag), see the next one immediately.
-        // "U" (User Profile) picks a NestDrop bundle XML and narrows sequential discovery to just
-        // its favorites list. "A"/"T" (hide album art / hide text) are handled by the View menu's
-        // commands (PrismApp.swift), not here, since a menu key equivalent always intercepts a
-        // bare-letter press before it would reach this view's onKeyPress.
+        // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space
+        // toggles play/pause on whichever supported player (Spotify or Music) is current — see
+        // NowPlayingManager.togglePlayPause — the same effect that key has when one of those apps
+        // is itself frontmost, so it isn't lost just because Prism has focus instead. "N" steps to
+        // the next preset in sequential library order (same action as tapping the visualizer,
+        // which Space did before play/pause took it over). F toggles fullscreen, L (re)picks the
+        // library folder, C toggles idle auto-cycling, Left/Right step back/forward through this
+        // session's preset history. "1"-"5" record a star rating; "w"/"j"/"x" flag the current
+        // preset as all-white, too jittery, or strobing/flashing respectively (for revisiting
+        // later) — "x" rather than "s" for strobing since "s" already saves the current artwork
+        // M/T preference below. All of these advance to the next sequential preset afterward, the
+        // same as "N", so reviewing a library is a single keypress per preset: rate (or flag), see
+        // the next one immediately. "U" (User Profile) picks a NestDrop bundle XML and narrows
+        // sequential discovery to just its favorites list. "A"/"T" (hide album art / hide text)
+        // are handled by the View menu's commands (PrismApp.swift), not here, since a menu key
+        // equivalent always intercepts a bare-letter press before it would reach this view's
+        // onKeyPress.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "c", "C", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", "n", "N", "f", "F", "o", "O", "l", "L", "c", "C", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -289,6 +293,9 @@ struct ContentView: View {
             }
             switch press.characters {
             case " ":
+                nowPlaying.togglePlayPause()
+                return .handled
+            case "n", "N":
                 loadNextSequentialPreset()
                 return .handled
             case "1", "2", "3", "4", "5":
