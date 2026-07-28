@@ -11,7 +11,7 @@
 //
 //    0 scaleIn        - the new track's full cover (background and subject together) animates to
 //                       its full size and position, centered on the art square's own center. Picked
-//                       once per track (ProjectMCoordinator.introStyle), one of three:
+//                       once per track (ProjectMCoordinator.introStyle), one of four:
 //                         forward      - grows from nothing to full size; no separate opacity fade,
 //                           the zero-to-full scale itself reads as it materializing.
 //                         reverseScale - starts zoomed in (scale > 1), fully transparent, and *pre-
@@ -21,20 +21,27 @@
 //                           fades in (`introAlpha`), and reassembles out of the scatter all in
 //                           lockstep, so it reads as condensing and cohering into place at once
 //                           rather than growing into it.
-//                         slideIn      - scale pinned at 1 throughout (no zoom at all); starts
-//                           off-screen to the right (subjectOffsetX/backgroundOffsetX, a screen-
-//                           space X shift applied to each layer's own effective art center) and
-//                           otherwise identical to reverseScale - fully transparent, pre-dissolved,
-//                           fading in and reassembling in lockstep - but riding that horizontal
-//                           slide down to 0 (dead center) instead of a shrinking scale.
+//                         slideRight   - scale pinned at 1 throughout (no zoom at all); starts
+//                           off-screen to the right (subjectOffset/backgroundOffset, a screen-space
+//                           shift applied to each layer's own effective art center) and otherwise
+//                           identical to reverseScale - fully transparent, pre-dissolved, fading in
+//                           and reassembling in lockstep - but riding that horizontal slide down to
+//                           0 (dead center) instead of a shrinking scale.
+//                         slideDown    - same as slideRight, rotated 90 degrees onto the vertical
+//                           axis: starts off-screen above instead of to the right, and slides down
+//                           to center.
 //    1 separate        - the subject's own scale/position locks right where scaleIn left it, while
 //                       the *background* - the raw cover with a subject-shaped hole already punched
 //                       out of it, see ProjectMCoordinator.backgroundWithSubjectHole, so it never
 //                       carries a copy of the subject's own pixels underneath it - keeps growing
-//                       past full size (or, for slideIn, keeps sliding further left past center)
-//                       and fades away in per-pixel noise order. Background and subject visibly
-//                       pull apart, leaving the subject anchored in place as the background
-//                       dissolves outward.
+//                       past full size (or, for slideRight/slideDown, keeps sliding further past
+//                       center in the same direction it came from), gets torn apart by the same
+//                       wave_dissolve_walk scatter the reverseScale/slideRight/slideDown intros
+//                       reassemble out of (run in reverse - growing instead of shrinking), and fades
+//                       away in per-pixel noise order on top of that, sped up relative to the motion
+//                       (see dissolveSpeed below) so it finishes disappearing well before the motion
+//                       itself is done. Background and subject visibly pull apart, leaving the
+//                       subject anchored in place as the background scatters/dissolves outward.
 //    2 steady         - subject (or, with no detected subject, the whole cover) just sits there.
 //    3 outgoingExit    - on a track change, whatever's on screen gets swept away by the wave
 //                       itself: each pixel is walked backward, step by step, through the wave's
@@ -103,8 +110,8 @@ inline float2 wave_dissolve_walk(texture2d<float> waveTexture, sampler s, float2
     // to reliably steer the walk (see the dir select below) - a hash of the pixel's own starting UV,
     // not a single constant direction. A constant (this used to be a flat (0, 1)) biases every calm-
     // region pixel to scatter the exact same way, which reads as the whole image drifting in that
-    // direction once `ease` stays high for long enough to matter (e.g. slideIn's slower-to-resolve
-    // dissolve curve) - a per-pixel hash keeps calm regions scattering in varied directions instead,
+    // direction once `ease` stays high for long enough to matter (e.g. the slide intros' slower-to-
+    // resolve dissolve curve) - a per-pixel hash keeps calm regions scattering in varied directions instead,
     // while staying fully stable frame-to-frame (same pixel in, same angle out - no shimmer).
     float fallbackAngle = fract(sin(dot(startUV, float2(12.9898, 78.233))) * 43758.5453) * 6.28318530718;
     float2 fallbackDir = float2(cos(fallbackAngle), sin(fallbackAngle));
@@ -124,8 +131,8 @@ inline float2 wave_dissolve_walk(texture2d<float> waveTexture, sampler s, float2
 // Cubic ease-in: starts flat and curves up into a steep, fast finish, so equal steps in `t` produce
 // ever-larger steps in the output - stronger than a plain square, staying low for longer before its
 // finishing snap. Mirrors ProjectMCoordinator.easeIn - keep the two in sync. Used to curve the
-// reverseScale/slideIn intros' dissolve-amount and opacity-fade progress, so both gather speed into
-// place instead of ticking up at a constant rate.
+// reverseScale/slideRight/slideDown intros' dissolve-amount and opacity-fade progress, so both
+// gather speed into place instead of ticking up at a constant rate.
 inline float ease_in(float t)
 {
     float clamped = saturate(t);
@@ -159,19 +166,21 @@ struct AlbumArtUniforms {
     // locks at 1 the moment it gets there; backgroundScale just keeps going at that exact same rate.
     float subjectScale;
     float backgroundScale;
-    // 0...1 fade the reverseScale/slideIn intros use to materialize while they shrink/slide in (see
-    // the header above and ProjectMCoordinator.introAlpha) - pinned at 1 for the forward intro, a
-    // no-op multiply.
+    // 0...1 fade the reverseScale/slideRight/slideDown intros use to materialize while they shrink/
+    // slide in (see the header above and ProjectMCoordinator.introAlpha) - pinned at 1 for the
+    // forward intro, a no-op multiply.
     float introAlpha;
-    // 0 forward, 1 reverseScale, 2 slideIn - which of the three intro choreographies this track got,
-    // only consulted during stage 0 (see the header above and ProjectMCoordinator.introStyle).
+    // 0 forward, 1 reverseScale, 2 slideRight, 3 slideDown - which of the four intro choreographies
+    // this track got, only consulted during stage 0 (see the header above and
+    // ProjectMCoordinator.introStyle).
     float introStyle;
-    // Screen-space X shift (same [0,1] space as artCenter/texCoord) applied to each layer's own
-    // effective art center before computing its UV - 0 for forward/reverseScale (a no-op add), and
-    // slideStartOffsetX -> 0 -> negative for slideIn (see the header above and
-    // ProjectMCoordinator.albumArtOffsets).
-    float subjectOffsetX;
-    float backgroundOffsetX;
+    // Screen-space shift (same [0,1] space as artCenter/texCoord) applied to each layer's own
+    // effective art center before computing its UV - (0, 0) for forward/reverseScale (a no-op add);
+    // for slideRight, x runs slideStartOffset -> 0 -> negative (y stays 0); for slideDown, y runs
+    // -slideStartOffset -> 0 -> positive (x stays 0) - see the header above and
+    // ProjectMCoordinator.albumArtOffsets.
+    float2 subjectOffset;
+    float2 backgroundOffset;
 };
 
 fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[stage_in]],
@@ -194,14 +203,15 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // here, that gets clipped down to whatever already overlapped the square before the scale/
     // dissolve math even runs, instead of shrinking and reassembling smoothly into view. Same
     // generous margin as separate/dismissal, since the dissolve scatter alone can already reach
-    // about as far as those do. slideIn needs a further, much bigger allowance on top, since it
-    // starts a whole slideStartOffsetX off-screen to the right rather than merely overhanging the
-    // square - see slideBoundX below.
+    // about as far as those do. slideRight/slideDown need a further, much bigger allowance on top,
+    // since they start a whole slideStartOffset off-screen (to the right, or above) rather than
+    // merely overhanging the square - see slideBound below.
     float bound = (stage == 1 || stage == 3 || (stage == 0 && u.introStyle > 0.5)) ? 1.0 : 0.0;
-    float slideBoundX = max(abs(u.subjectOffsetX), abs(u.backgroundOffsetX)) / max(u.artHalfSize.x * 2.0, 0.0001);
+    float2 slideBound = max(abs(u.subjectOffset), abs(u.backgroundOffset)) / max(u.artHalfSize * 2.0, 0.0001);
     float2 artUV = (in.texCoord - u.artCenter) / (u.artHalfSize * 2.0) + 0.5;
-    if (artUV.x < -(bound + slideBoundX) || artUV.x > 1.0 + bound + slideBoundX
-        || artUV.y < -bound || artUV.y > 1.0 + bound || u.globalAlpha <= 0.0) {
+    if (artUV.x < -(bound + slideBound.x) || artUV.x > 1.0 + bound + slideBound.x
+        || artUV.y < -(bound + slideBound.y) || artUV.y > 1.0 + bound + slideBound.y
+        || u.globalAlpha <= 0.0) {
         return wave;
     }
 
@@ -210,9 +220,12 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
 
     // Cheap per-pixel hash, used as the background layer's own erosion order during separate: a
     // pixel "goes" once stageProgress passes its own noise value, smoothed by `band` so the
-    // dissolving edge reads as ragged/organic rather than a hard cutoff.
+    // dissolving edge reads as ragged/organic rather than a hard cutoff. Narrow rather than wide, so
+    // each pixel's own opaque -> transparent transition is a quick snap rather than a soft blend -
+    // that per-pixel sharpness is what reads as "intensity" here, separately from dissolveSpeed below
+    // (which controls how much of the stage's real time the whole population's sweep takes).
     float noise = fract(sin(dot(artUV * 41.13, float2(12.9898, 78.233))) * 43758.5453);
-    float band = 0.16;
+    float band = 0.08;
 
     float4 art;
     float alpha;
@@ -228,7 +241,19 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         float edgeAlpha = wave_dissolve_edge_alpha(sourceUV);
 
         art = subjectArtTexture.sample(artSampler, saturate(sourceUV));
-        alpha = art.a * edgeAlpha;
+        // edgeAlpha alone only fades a pixel once its own walked position has wandered far enough
+        // off the source image - purely spatial, no guarantee every pixel gets there by the time
+        // `ease` (and stageProgress) hits 1, since a busy/high-contrast patch of wave can curl a
+        // pixel's path back on itself almost as often as it pushes it outward. That left some
+        // pixels still partly opaque right when advanceAlbumArtAnimation hard-despawns this whole
+        // texture and promotes `pending` to current - a one-frame pop. exitOpacity is an explicit,
+        // whole-graphic fade keyed on stageProgress alone (not the walk), so it's guaranteed to hit
+        // exactly 0 the same instant stageProgress does - the same instant ease maxes out and this
+        // stage ends - regardless of what any individual pixel's walk happened to do. sqrt (rather
+        // than a straight 1 - stageProgress ramp) front-loads the fade so it visibly vanishes early
+        // rather than staying near-opaque for most of the stage and only dropping off at the end.
+        float exitOpacity = 1.0 - sqrt(saturate(u.stageProgress));
+        alpha = art.a * edgeAlpha * exitOpacity;
     } else {
         // scaleIn/separate/steady all work the same way: the subject cutout and the hole-punched
         // background are two puzzle-piece layers - together, at the same scale, they reconstitute
@@ -247,25 +272,25 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         float subjectScale = max(u.subjectScale, 0.02);
         float bgScale = max(u.backgroundScale, 0.02);
 
-        // Each layer gets its own effective art center, shifted by that layer's own slideIn offset
-        // (0 for forward/reverseScale, so subjectArtCenter/bgArtCenter just collapse back to
+        // Each layer gets its own effective art center, shifted by that layer's own slide offset
+        // ((0, 0) for forward/reverseScale, so subjectArtCenter/bgArtCenter just collapse back to
         // u.artCenter and this is a no-op for those two styles) - this is what actually moves the
-        // art horizontally, independent of the scale math right below.
-        float2 subjectArtCenter = u.artCenter + float2(u.subjectOffsetX, 0.0);
-        float2 bgArtCenter = u.artCenter + float2(u.backgroundOffsetX, 0.0);
+        // art, independent of the scale math right below.
+        float2 subjectArtCenter = u.artCenter + u.subjectOffset;
+        float2 bgArtCenter = u.artCenter + u.backgroundOffset;
         float2 subjectArtUV = (in.texCoord - subjectArtCenter) / (u.artHalfSize * 2.0) + 0.5;
         float2 bgArtUV = (in.texCoord - bgArtCenter) / (u.artHalfSize * 2.0) + 0.5;
 
         float2 subjectUV = 0.5 + (subjectArtUV - 0.5) / subjectScale;
         float2 bgUV = 0.5 + (bgArtUV - 0.5) / bgScale;
 
-        // reverseScale/slideIn only: on top of the zoomed-in crop (or, for slideIn, the shifted-
-        // center crop) above, additionally walk both UVs through the wave's own gradient field via
-        // wave_dissolve_walk - the same trick outgoingExit tears a track's art apart with, run
-        // backward (`ease` shrinking 1 -> 0 as scaleIn progresses instead of growing 0 -> 1) - so
-        // these two intros start scattered/pre-dissolved and reassemble into place at the same
-        // instant they shrink/slide to rest and fade in, rather than smoothly interpolating in from
-        // a clean crop. Each layer's walk is centered on that same layer's own shifted center, so
+        // reverseScale/slideRight/slideDown only: on top of the zoomed-in crop (or, for the slide
+        // styles, the shifted-center crop) above, additionally walk both UVs through the wave's own
+        // gradient field via wave_dissolve_walk - the same trick outgoingExit tears a track's art
+        // apart with, run backward (`ease` shrinking 1 -> 0 as scaleIn progresses instead of growing
+        // 0 -> 1) - so these three intros start scattered/pre-dissolved and reassemble into place at
+        // the same instant they shrink/slide to rest and fade in, rather than smoothly interpolating
+        // in from a clean crop. Each layer's walk is centered on that same layer's own shifted center, so
         // the scatter reads as happening wherever the art currently sits on screen rather than back
         // at the square's fixed home position. `dissolveEdgeAlpha` fades each layer out exactly
         // where its own walk has carried it off the source image - same reasoning as
@@ -275,6 +300,24 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         // barely drops through the early part of scaleIn (stays heavily scattered) and then falls
         // away fast right at the end - a quick, decisive snap into place rather than a gradual
         // unwind that decelerates into the finish.
+        // separate's own dissolve sweep - hoisted up here (rather than just above its one other use
+        // below) so the background's *walk/distortion* can ramp up in lockstep with its fade-out:
+        // the further stageProgress has swept through separate, the harder the wave shoves the
+        // background around, so it reads as getting dragged apart/melted into the wave on its way
+        // out rather than just uniformly fading in place at a fixed distortion. Subject is
+        // unaffected - it's anchored and staying, only the departing background accelerates.
+        // forward/reverseScale (introStyle 0/1) grow the background via *scale* (centered, so
+        // covering real screen distance takes proportionally longer to read as motion); slideRight/
+        // slideDown (2/3) grow it via a screen-space *slide* instead, which reads as motion almost
+        // immediately - so a flat 9.0 for both left the scale-driven styles' background fully
+        // dissolved (see the smoothstep sweep below) by stageProgress ~0.11, well before the scale
+        // growth itself had gone anywhere noticeable: it visibly popped/vanished in place rather than
+        // growing-while-dissolving. Slowed down only for the scale-driven pair - slideRight/slideDown
+        // keep the original 9.0 exactly, unchanged.
+        float dissolveSpeed = (u.introStyle < 1.5) ? 1.4 : 9.0;
+        float dissolveProgress = (stage == 1 && u.hasSubjectMask > 0.5) ? min(u.stageProgress * dissolveSpeed, 1.0) : 0.0;
+        const float bgDissolveDistortionBoost = 0.6;
+
         float subjectDissolveEdgeAlpha = 1.0;
         float bgDissolveEdgeAlpha = 1.0;
         if (stage == 0 && u.introStyle > 0.5) {
@@ -283,10 +326,20 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
             bgUV = wave_dissolve_walk(waveTexture, waveSampler, bgUV, ease, bgArtCenter, u.artHalfSize, u.waveTexelSize, luma);
             subjectDissolveEdgeAlpha = wave_dissolve_edge_alpha(subjectUV);
             bgDissolveEdgeAlpha = wave_dissolve_edge_alpha(bgUV);
+        } else if (stage == 1 && u.hasSubjectMask > 0.5) {
+            // The departing background's counterpart to the block above - the exact same
+            // wave_dissolve_walk scatter the reverseScale/slideRight/slideDown intros reassemble out
+            // of, just run in reverse: `ease` grows 0 -> 1 (riding dissolveProgress, so the scatter
+            // and the fade-out below stay in lockstep) instead of shrinking 1 -> 0, so the background
+            // visibly tears apart into the wave on its way out the same way it would cohere on its
+            // way in, rather than just fading and drifting in place. Subject stays anchored/untouched
+            // - only the background scatters.
+            bgUV = wave_dissolve_walk(waveTexture, waveSampler, bgUV, dissolveProgress, bgArtCenter, u.artHalfSize, u.waveTexelSize, luma);
+            bgDissolveEdgeAlpha = wave_dissolve_edge_alpha(bgUV);
         }
 
         float2 distortedSubjectUV = subjectUV + waveGradient * u.distortionStrength;
-        float2 distortedBgUV = bgUV + waveGradient * u.distortionStrength;
+        float2 distortedBgUV = bgUV + waveGradient * (u.distortionStrength + dissolveProgress * bgDissolveDistortionBoost);
 
         // Whether the *true* (pre-clamp) UV actually lands on the source image. clamp_to_edge
         // means sampling with an out-of-range UV doesn't come back transparent - it repeats the
@@ -315,12 +368,16 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
             // once, reading as solid-then-pop rather than dissolving. dissolveSpeed instead just
             // covers that same [0, 1) sweep in less real time (clamped once it gets there) - still a
             // constant-rate wipe, just a faster and shorter one - so separate's actual pull-apart
-            // *motion* (backgroundScale/backgroundOffsetX, arriving from Swift already at their own
+            // *motion* (backgroundScale/backgroundOffset, arriving from Swift already at their own
             // constant-velocity rate) is untouched, but the background finishes dissolving/fading out
-            // well before separate's motion itself is done.
-            float dissolveSpeed = 6.0;
-            float dissolveProgress = min(u.stageProgress * dissolveSpeed, 1.0);
-            bgA *= 1.0 - smoothstep(noise - band, noise + band, dissolveProgress);
+            // well before separate's motion itself is done. Upper edge clamped to 1 (rather than the
+            // raw noise + band, which reaches past 1 for noise close to 1) so every pixel - not just
+            // the ones with lower noise values - is guaranteed fully transparent once dissolveProgress
+            // itself hits 1, landing exactly on 0 opacity right as distortedBgUV's boost above (driven
+            // by that same dissolveProgress) tops out at its own maximum - full distortion and zero
+            // opacity arrive together, rather than a few stray high-noise pixels lingering until
+            // stage >= 2 above snaps them to 0 a moment later.
+            bgA *= 1.0 - smoothstep(noise - band, min(noise + band, 1.0), dissolveProgress);
         } else if (stage >= 2 && u.hasSubjectMask > 0.5) {
             // Fully separated by now - only the subject remains through steady state.
             bgA = 0.0;

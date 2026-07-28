@@ -32,18 +32,19 @@ private struct AlbumArtUniforms {
     // keeps going at that exact same rate.
     var subjectScale: Float
     var backgroundScale: Float
-    // 0...1 fade used by the reverse (scale-down) and slide-in intros - see introStyle. The forward
+    // 0...1 fade used by the reverse (scale-down) and slide intros - see introStyle. The forward
     // intro's own materialize effect comes entirely from scale (see AlbumArtStage.scaleIn's own
     // doc comment), so this stays pinned at 1 the whole time for that variant; a no-op multiply.
     var introAlpha: Float
-    // Which of the three intro choreographies this track got (see AlbumArtIntroStyle) - only
+    // Which of the four intro choreographies this track got (see AlbumArtIntroStyle) - only
     // consulted by the shader during stage 0.
     var introStyle: Float
-    // Screen-space X translation (same [0,1] space as artCenter/texCoord) applied to each layer's
-    // own effective art center - 0 for forward/reverseScale (no horizontal movement at all), and
-    // slideStartOffsetX -> 0 -> negative for slideIn - see albumArtOffsets().
-    var subjectOffsetX: Float
-    var backgroundOffsetX: Float
+    // Screen-space translation (same [0,1] space as artCenter/texCoord) applied to each layer's own
+    // effective art center - (0, 0) for forward/reverseScale (no movement at all); for slideRight,
+    // x runs slideStartOffset -> 0 -> negative (y stays 0); for slideDown, y runs -slideStartOffset
+    // -> 0 -> positive (x stays 0) - see albumArtOffsets().
+    var subjectOffset: SIMD2<Float>
+    var backgroundOffset: SIMD2<Float>
 }
 
 /// The four stages of the album-art choreography (see ProjectMCompositeShader.metal's own header)
@@ -55,12 +56,16 @@ private enum AlbumArtStage {
     static let outgoingExit: Float = 3
 }
 
-/// The three intro choreographies stage 0 can play - raw Float, not an enum, for the same reason
+/// The four intro choreographies stage 0 can play - raw Float, not an enum, for the same reason
 /// as AlbumArtStage above (written straight into AlbumArtUniforms.introStyle).
 private enum AlbumArtIntroStyle {
     static let forward: Float = 0
     static let reverseScale: Float = 1
-    static let slideIn: Float = 2
+    static let slideRight: Float = 2
+    static let slideDown: Float = 3
+    // In this fixed order, cycled through one-per-track by promoteToCurrentTrack (TEMP TESTING) so
+    // every style gets a turn in a predictable sequence rather than a random draw.
+    static let all: [Float] = [forward, reverseScale, slideRight, slideDown]
 }
 
 final class ProjectMCoordinator: NSObject, MTKViewDelegate {
@@ -89,34 +94,45 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
     // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
     // separate, same "one continuous ramp" shape as the forward intro's 0 -> 1 -> beyond.
-    private static let reverseIntroStartScale: Float = 2.2
-    // How far off to the right (screen-normalized, same space as artCenter) the slide-in intro
-    // starts - the ramp runs slideStartOffsetX -> 0 over scaleIn, then keeps going negative (past
-    // center, further left) at that same rate through separate - see albumArtOffsets(). Comfortably
-    // bigger than 1.0 (a whole screen width) so the art starts fully off-screen regardless of where
-    // the art square itself sits or how wide the window is.
-    private static let slideStartOffsetX: Float = 1.4
+    // introAlpha's cubic ease-in (shared with the slide intros - do not change to "fix" this) stays
+    // under ~50% opacity until t > ~0.79 of scaleIn, so only the last ~20% of this ramp is ever seen
+    // at any meaningful opacity. 2.2 left that visible tail shrinking from only ~1.25x -> 1x - too
+    // subtle to read as motion at all. 4.0 leaves a ~1.6x -> 1x shrink still happening as opacity
+    // climbs through that same tail, so the zoom is actually visible once the art materializes.
+    private static let reverseIntroStartScale: Float = 4.0
+    // How far off-screen (screen-normalized, same space as artCenter) the slide intros start -
+    // shared by slideRight (starts to the right) and slideDown (starts above) - the ramp runs
+    // slideStartOffset -> 0 over scaleIn, then keeps going past 0 (further off in the same
+    // direction it came from) at that same rate through separate - see albumArtOffsets().
+    // Comfortably bigger than 1.0 (a whole screen width/height) so the art starts fully off-screen
+    // regardless of where the art square itself sits or how wide/tall the window is.
+    private static let slideStartOffset: Float = 1.4
 
     private var textureLoader: MTKTextureLoader?
     private var emptyAlbumArtTexture: MTLTexture?
 
-    // "Current" track's two puzzle pieces - NowPlayingManager.subjectArtwork (Vision's subject
-    // cutout with any OCR'd text drawn back on top - the "end graphic," same as
-    // NowPlayingManager's `.combined` masking mode produces before its own recentering step), and
-    // the color-keyed cover (also `.combined`'s own step - see promoteToCurrentTrack) with an
-    // end-graphic-shaped hole punched out of it (see backgroundWithSubjectHole) so the two together
-    // reconstitute the full color-keyed cover with no pixel double-covered by both layers at once.
-    // Without the hole, the background layer growing past the locked end graphic during separate
-    // would show a faint enlarging "ghost" of it bleeding out from behind, since the background
-    // would otherwise still be carrying those same pixels underneath.
-    // currentBackgroundTexture is nil-mask-safe: backgroundWithSubjectHole just returns its input
-    // untouched when there's no subject to cut, so this degrades to a single-layer background
-    // automatically.
+    // "Current" track's puzzle pieces - NowPlayingManager.subjectArtwork (Vision's subject cutout
+    // with any OCR'd text drawn back on top - the "end graphic," same as NowPlayingManager's
+    // `.combined` masking mode produces before its own recentering step), and two versions of the
+    // color-keyed (or, absent a clean key, raw) cover:
+    //   currentFullBackgroundTexture - the cover completely untouched, no hole - used as the
+    //     background layer for the whole of scaleIn, so entrance always shows the genuinely full
+    //     album art regardless of how subject/background happen to line up frame to frame (no
+    //     reliance on two cutout layers reconstituting each other pixel-perfectly).
+    //   currentBackgroundTexture - the same cover with an end-graphic-shaped hole already punched
+    //     out of it (see backgroundWithSubjectHole) - swapped in starting at `separate`, once the
+    //     subject has locked in place and "everything else" is what pulls away; without the hole,
+    //     the background growing past the locked end graphic during separate would show a faint
+    //     enlarging "ghost" of it bleeding out from behind, since the background would otherwise
+    //     still be carrying those same pixels underneath. nil-mask-safe: backgroundWithSubjectHole
+    //     just returns its input untouched when there's no subject to cut, so this degrades to the
+    //     same single full-cover background as currentFullBackgroundTexture automatically.
+    private var currentFullBackgroundTexture: MTLTexture?
     private var currentBackgroundTexture: MTLTexture?
     private var currentSubjectTexture: MTLTexture?
     private var currentRawImage: NSImage?
     private var trackAnimationClock: Float = 0
-    // Which of the three intro choreographies this track got, picked once per track in
+    // Which of the four intro choreographies this track got, picked once per track in
     // promoteToCurrentTrack:
     //   forward      - scale 0 -> 1, materializes via the shrink-to-a-point UV trick (see
     //                  AlbumArtStage.scaleIn).
@@ -124,12 +140,17 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     //                  dissolved/scattered by the wave's own gradient field, same as outgoingExit's
     //                  own tear-apart but run backward - then shrinks to 1, fades in, and
     //                  reassembles all in lockstep.
-    //   slideIn      - scale pinned at 1 throughout (no zoom at all); instead starts
-    //                  slideStartOffsetX off to the right, fully transparent and pre-dissolved just
+    //   slideRight   - scale pinned at 1 throughout (no zoom at all); instead starts
+    //                  slideStartOffset off to the right, fully transparent and pre-dissolved just
     //                  like reverseScale, and slides in to center while fading in and reassembling.
+    //   slideDown    - same as slideRight, just rotated 90 degrees: starts slideStartOffset off the
+    //                  top of the screen and slides down to center instead.
     // See albumArtScales/albumArtOffsets/introAlpha and the shader's own wave_dissolve_walk. Only
     // affects how scaleIn plays out; separate/steady/outgoingExit are identical across all three.
     private var introStyle: Float = AlbumArtIntroStyle.forward
+    // TEMP TESTING: advances by one every promoteToCurrentTrack call, indexing into
+    // AlbumArtIntroStyle.all round-robin - see that call site.
+    private var introStyleCycleIndex = 0
 
     // Next track's assets, queued the moment NowPlayingManager hands over new artwork but held
     // back from becoming "current" until the outgoing subject below has finished dissolving away -
@@ -258,7 +279,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let (stage, stageProgress) = albumArtStageAndProgress()
         let hasSubjectMask = !isOutgoingExitActive && currentSubjectTexture != nil
         let (subjectScale, backgroundScale) = albumArtScales(hasSubjectMask: hasSubjectMask)
-        let (subjectOffsetX, backgroundOffsetX) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
+        let (subjectOffset, backgroundOffset) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
         var uniforms = AlbumArtUniforms(
             waveTexelSize: SIMD2(1.0 / Float(width), 1.0 / Float(height)),
             artCenter: SIMD2(0.5, 0.5),
@@ -274,11 +295,15 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             backgroundScale: backgroundScale,
             introAlpha: introAlpha(),
             introStyle: introStyle,
-            subjectOffsetX: subjectOffsetX,
-            backgroundOffsetX: backgroundOffsetX
+            subjectOffset: subjectOffset,
+            backgroundOffset: backgroundOffset
         )
 
-        let backgroundTex = currentBackgroundTexture ?? emptyAlbumArtTexture
+        // scaleIn shows the genuinely full cover (no hole) as its background layer; separate/steady
+        // switch to the hole-punched version the instant the subject locks and the rest starts
+        // pulling away - see currentFullBackgroundTexture/currentBackgroundTexture's own doc comment.
+        let backgroundTex = (stage == AlbumArtStage.scaleIn ? currentFullBackgroundTexture : currentBackgroundTexture)
+            ?? emptyAlbumArtTexture
         let subjectTex = (isOutgoingExitActive ? outgoingTexture : currentSubjectTexture) ?? emptyAlbumArtTexture
 
         encoder.setRenderPipelineState(pipelineState)
@@ -373,11 +398,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// scaleInDuration) then keeps growing past 1 through separate; reverseScale starts at
     /// `reverseIntroStartScale` and shrinks down to 1 at the same rate, then keeps shrinking past 1
     /// (towards, and eventually past, 0 - see the shader's own `max(scale, 0.02)` floor) through
-    /// separate. slideIn doesn't scale at all - see albumArtOffsets() instead - so both scales just
-    /// pin at 1 for that style. Either way `subjectScale` locks at exactly 1 the instant the ramp
-    /// crosses it.
+    /// separate. Neither slideRight nor slideDown scale at all - see albumArtOffsets() instead - so
+    /// both scales just pin at 1 for those styles. Either way `subjectScale` locks at exactly 1 the
+    /// instant the ramp crosses it.
     private func albumArtScales(hasSubjectMask: Bool) -> (subject: Float, background: Float) {
-        guard introStyle != AlbumArtIntroStyle.slideIn else { return (1, 1) }
+        guard introStyle == AlbumArtIntroStyle.forward || introStyle == AlbumArtIntroStyle.reverseScale
+        else { return (1, 1) }
         let t = trackAnimationClock / Self.scaleInDuration
         let ramp: Float
         let subjectScale: Float
@@ -392,20 +418,33 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         return (subjectScale, backgroundScale)
     }
 
-    /// The slideIn counterpart to albumArtScales - same "one continuous ramp, subject locks,
-    /// background keeps going" shape (see that function's doc comment), just moving position
-    /// instead of size: starts at `slideStartOffsetX` (off-screen right) and rides the ramp down to
-    /// 0 (dead center) over scaleIn, where `subjectOffsetX` locks for good; `backgroundOffsetX`
-    /// keeps riding the same ramp past that point, going negative - i.e. still moving left, off past
-    /// center - for as long as there's a subject to leave behind. Pinned at (0, 0) for forward/
+    /// The slideRight/slideDown counterpart to albumArtScales - same "one continuous ramp, subject
+    /// locks, background keeps going" shape (see that function's doc comment), just moving position
+    /// instead of size. slideRight rides its ramp along x: starts at `slideStartOffset` (off-screen
+    /// right) down to 0 (dead center) over scaleIn, where `subjectOffset` locks for good;
+    /// `backgroundOffset` keeps riding the same ramp past that point, going negative - i.e. still
+    /// moving left, off past center - for as long as there's a subject to leave behind. slideDown is
+    /// the same shape rotated onto y: starts at `-slideStartOffset` (off-screen above) and rides up
+    /// to 0, then keeps going positive (down, past center) in separate. Pinned at (0, 0) for forward/
     /// reverseScale, so this is a no-op add in the shader for those styles.
-    private func albumArtOffsets(hasSubjectMask: Bool) -> (subject: Float, background: Float) {
-        guard introStyle == AlbumArtIntroStyle.slideIn else { return (0, 0) }
+    private func albumArtOffsets(hasSubjectMask: Bool) -> (subject: SIMD2<Float>, background: SIMD2<Float>) {
         let t = trackAnimationClock / Self.scaleInDuration
-        let ramp = Self.slideStartOffsetX * (1 - t)
-        let subjectOffset: Float = t < 1 ? ramp : 0
-        let backgroundOffset = hasSubjectMask ? ramp : subjectOffset
-        return (subjectOffset, backgroundOffset)
+        let ramp: Float
+        switch introStyle {
+        case AlbumArtIntroStyle.slideRight:
+            ramp = Self.slideStartOffset * (1 - t)
+        case AlbumArtIntroStyle.slideDown:
+            ramp = Self.slideStartOffset * (t - 1)
+        default:
+            return (SIMD2(0, 0), SIMD2(0, 0))
+        }
+        let subjectRamp: Float = t < 1 ? ramp : 0
+        let backgroundRamp = hasSubjectMask ? ramp : subjectRamp
+        if introStyle == AlbumArtIntroStyle.slideRight {
+            return (SIMD2(subjectRamp, 0), SIMD2(backgroundRamp, 0))
+        } else {
+            return (SIMD2(0, subjectRamp), SIMD2(0, backgroundRamp))
+        }
     }
 
     /// 0...1 fade the reverseScale and slideIn intros use to materialize (the forward intro doesn't
@@ -433,7 +472,10 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
 
     private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
         currentRawImage = rawImage
-        introStyle = AlbumArtIntroStyle.slideIn  // TEMP TESTING: force the slide-in intro every time, was a random pick among all three
+        // TEMP TESTING: step through all four intro styles in a fixed round-robin, one per track,
+        // instead of a random pick, so every style can be previewed in turn.
+        introStyle = AlbumArtIntroStyle.all[introStyleCycleIndex % AlbumArtIntroStyle.all.count]
+        introStyleCycleIndex += 1
 
         // The background layer always shows the *full* cover - color-keyed wherever a clean solid
         // background color was confidently detected (colorKeyedArtwork requires backgroundTone
@@ -447,6 +489,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // just an isolated cutout.
         let backgroundSource = colorKeyedImage ?? rawImage
 
+        currentFullBackgroundTexture = backgroundSource.flatMap {
+            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
+        }
         let backgroundImage = backgroundSource.map { Self.backgroundWithSubjectHole(raw: $0, subjectMask: subjectImage) }
         currentBackgroundTexture = backgroundImage.flatMap {
             Self.uploadTexture(device: device, loader: &textureLoader, image: $0)

@@ -234,7 +234,21 @@ final class NowPlayingManager {
                         self.sourceApp = app.name
                         if key != self.currentTrackKey {
                             self.currentTrackKey = key
-                            self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                            // Same-album track change (e.g. skipping to the next song on the same
+                            // record) — the art itself isn't changing, so leave cachedRawArtwork/
+                            // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
+                            // than clearing and re-fetching them. Since ProjectMCoordinator's own
+                            // scaleIn/separate/outgoingExit choreography (see
+                            // ProjectMCoordinator.advanceAlbumArtAnimation) only triggers when
+                            // rawArtwork hands it a *new* NSImage instance, leaving these untouched
+                            // means the art just stays put on screen instead of tearing itself apart
+                            // and reassembling for art that would look identical anyway. A nil
+                            // albumKey (no artist or album metadata at all) can't be compared this
+                            // way, so it always falls through to a normal fetch.
+                            let newAlbumKey = Self.albumKey(artist: info.artist, album: info.album)
+                            if newAlbumKey == nil || newAlbumKey != self.currentAlbumKey {
+                                self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                            }
                         }
                     }
                     return
