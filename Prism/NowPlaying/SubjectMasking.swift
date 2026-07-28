@@ -9,9 +9,10 @@
 //  subject regardless of what the background looks like — gradient, texture, busy edge-to-edge
 //  art, anything.
 //
-//  NowPlayingManager.keyedArtwork combines both: color-key the background broadly (catches
-//  background-colored pixels wherever they appear, including any stray ones the Vision mask's
-//  edge missed), then draw the Vision-detected subject back on top at full fidelity via
+//  NowPlayingManager.compositeArtwork's `.combined` mode (and, for the Metal album-art path,
+//  ProjectMCoordinator.promoteToCurrentTrack) combines both: color-key the background broadly
+//  (catches background-colored pixels wherever they appear, including any stray ones the Vision
+//  mask's edge missed), then draw the Vision-detected subject back on top at full fidelity via
 //  `overlaying(_:)` below — so if the subject happens to share a color with the background (dark
 //  clothing on a black cover, say), the color key can't accidentally punch a hole through it,
 //  since the subject overlay always wins there.

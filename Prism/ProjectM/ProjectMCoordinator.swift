@@ -70,14 +70,18 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var textureLoader: MTKTextureLoader?
     private var emptyAlbumArtTexture: MTLTexture?
 
-    // "Current" track's two puzzle pieces - the Vision subject cutout, and the raw cover with a
-    // subject-shaped hole punched out of it (see backgroundWithSubjectHole) so the two together
-    // reconstitute the full cover with no pixel double-covered by both layers at once. Without the
-    // hole, the background layer growing past the locked subject during separate would show a
-    // faint enlarging "ghost" of the subject bleeding out from behind it, since the background
-    // would otherwise still be carrying the subject's own pixels underneath. currentBackgroundTexture
-    // is nil-mask-safe: backgroundWithSubjectHole just returns the raw cover untouched when there's
-    // no subject to cut, so this degrades to the original single-layer behavior automatically.
+    // "Current" track's two puzzle pieces - NowPlayingManager.subjectArtwork (Vision's subject
+    // cutout with any OCR'd text drawn back on top - the "end graphic," same as
+    // NowPlayingManager's `.combined` masking mode produces before its own recentering step), and
+    // the color-keyed cover (also `.combined`'s own step - see promoteToCurrentTrack) with an
+    // end-graphic-shaped hole punched out of it (see backgroundWithSubjectHole) so the two together
+    // reconstitute the full color-keyed cover with no pixel double-covered by both layers at once.
+    // Without the hole, the background layer growing past the locked end graphic during separate
+    // would show a faint enlarging "ghost" of it bleeding out from behind, since the background
+    // would otherwise still be carrying those same pixels underneath.
+    // currentBackgroundTexture is nil-mask-safe: backgroundWithSubjectHole just returns its input
+    // untouched when there's no subject to cut, so this degrades to a single-layer background
+    // automatically.
     private var currentBackgroundTexture: MTLTexture?
     private var currentSubjectTexture: MTLTexture?
     private var currentRawImage: NSImage?
@@ -87,6 +91,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // back from becoming "current" until the outgoing subject below has finished dissolving away -
     // so the two tracks' art never overlaps on screen.
     private var pendingRawImage: NSImage?
+    private var pendingColorKeyedImage: NSImage?
     private var pendingSubjectImage: NSImage?
 
     // Previous track's subject (or, if Vision found no subject, its whole raw cover) dissolving
@@ -96,6 +101,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var isOutgoingExitActive = false
 
     private var latestRawImage: NSImage?
+    private var latestColorKeyedImage: NSImage?
     private var latestSubjectImage: NSImage?
     private var albumArtHidden = false
     // "H" hidden-toggle / nothing-loaded-yet mute, eased quickly (not the stage choreography's own
@@ -142,8 +148,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// Called from ProjectMMetalView.updateNSView every SwiftUI update tick (cheap: just stored
     /// properties) - the real work (texture uploads, stage transitions) happens lazily in
     /// draw(in:)'s advanceAlbumArtAnimation, since that's where a live MTLDevice is on hand.
-    func updateAlbumArt(rawImage: NSImage?, subjectImage: NSImage?, hidden: Bool) {
+    func updateAlbumArt(rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?, hidden: Bool) {
         latestRawImage = rawImage
+        latestColorKeyedImage = colorKeyedImage
         latestSubjectImage = subjectImage
         albumArtHidden = hidden
     }
@@ -248,9 +255,13 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         if latestRawImage !== currentRawImage, latestRawImage !== pendingRawImage {
             if currentRawImage == nil {
                 // First track this launch - nothing on screen yet to dissolve away first.
-                promoteToCurrentTrack(device: device, rawImage: latestRawImage, subjectImage: latestSubjectImage)
+                promoteToCurrentTrack(
+                    device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
+                    subjectImage: latestSubjectImage
+                )
             } else {
                 pendingRawImage = latestRawImage
+                pendingColorKeyedImage = latestColorKeyedImage
                 pendingSubjectImage = latestSubjectImage
                 if !isOutgoingExitActive {
                     // Vision may have found no subject for the outgoing track either - erode the
@@ -270,15 +281,19 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             if outgoingExitClock >= Self.subjectExitDuration {
                 isOutgoingExitActive = false
                 outgoingTexture = nil
-                promoteToCurrentTrack(device: device, rawImage: pendingRawImage, subjectImage: pendingSubjectImage)
+                promoteToCurrentTrack(
+                    device: device, rawImage: pendingRawImage, colorKeyedImage: pendingColorKeyedImage,
+                    subjectImage: pendingSubjectImage
+                )
                 pendingRawImage = nil
+                pendingColorKeyedImage = nil
                 pendingSubjectImage = nil
             }
         } else {
             trackAnimationClock += dt
         }
 
-        let hasContent = currentBackgroundTexture != nil || isOutgoingExitActive
+        let hasContent = currentBackgroundTexture != nil || currentSubjectTexture != nil || isOutgoingExitActive
         let target: Float = (hasContent && !albumArtHidden) ? 1 : 0
         globalAlpha += (target - globalAlpha) * min(1, max(0, dt) * Self.globalAlphaEaseSpeed)
     }
@@ -310,9 +325,22 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         return (subjectScale, backgroundScale)
     }
 
-    private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, subjectImage: NSImage?) {
+    private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
         currentRawImage = rawImage
-        let backgroundImage = rawImage.map { Self.backgroundWithSubjectHole(raw: $0, subjectMask: subjectImage) }
+
+        // The background layer always shows the *full* cover - color-keyed wherever a clean solid
+        // background color was confidently detected (colorKeyedArtwork requires backgroundTone
+        // .black/.white - most covers, having some other color or a gradient, don't qualify), and
+        // the plain raw cover otherwise. Unlike compositeArtwork's `.combined` mode (which, with no
+        // clean key to apply, shows *only* the subject on transparent - fine for that mode's
+        // original single-flattened-image use, but here it meant most tracks never showed a
+        // background layer at all, just the bare subject cutout scaling in against nothing), this
+        // always has something to reconstitute the full cover with the subject/text hole punched
+        // out of it below, so "the full album art" is what's actually on screen at scaleIn, not
+        // just an isolated cutout.
+        let backgroundSource = colorKeyedImage ?? rawImage
+
+        let backgroundImage = backgroundSource.map { Self.backgroundWithSubjectHole(raw: $0, subjectMask: subjectImage) }
         currentBackgroundTexture = backgroundImage.flatMap {
             Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
         }

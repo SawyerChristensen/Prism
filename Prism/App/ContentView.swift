@@ -82,7 +82,8 @@ struct ContentView: View {
                 // distorted against the wave throughout) inside the Metal render pass now — see
                 // ProjectMCoordinator — rather than as a separate SwiftUI Image layered on top;
                 // only the track/artist text below is still a plain SwiftUI overlay.
-                albumArtRawImage: nowPlaying.rawArtwork, albumArtSubjectImage: nowPlaying.subjectArtwork,
+                albumArtRawImage: nowPlaying.rawArtwork, albumArtColorKeyedImage: nowPlaying.colorKeyedArtwork,
+                albumArtSubjectImage: nowPlaying.subjectArtwork,
                 isAlbumArtHidden: isAlbumArtHidden,
                 onDropPreset: { url in handlePresetDrop(url) },
                 onDropTargetChanged: { isDropTargeted = $0 }

@@ -17,10 +17,14 @@ struct ProjectMMetalView: NSViewRepresentable {
     var model: ProjectMVisualizerModel
     // Album art now composites (fade in, background/subject erosion, distortion against the wave)
     // inside the Metal render pass itself - see ProjectMCoordinator.updateAlbumArt/draw(in:) -
-    // rather than as a separate SwiftUI layer stacked on top. Both the unmodified cover and
-    // Vision's subject cutout are needed so the coordinator can choreograph the background eroding
-    // away before the subject does - see NowPlayingManager.rawArtwork/subjectArtwork.
+    // rather than as a separate SwiftUI layer stacked on top. The unmodified cover, the color-keyed
+    // variant, and the subject-plus-text "end graphic" are all needed so the coordinator can
+    // reinstate .combined's "color-key the background out, keep the subject (and any OCR'd text)
+    // at full fidelity" default (rather than the bare Vision mask alone) before choreographing the
+    // background eroding away ahead of that end graphic - see
+    // NowPlayingManager.rawArtwork/colorKeyedArtwork/subjectArtwork.
     var albumArtRawImage: NSImage?
+    var albumArtColorKeyedImage: NSImage?
     var albumArtSubjectImage: NSImage?
     var isAlbumArtHidden: Bool
     var onDropPreset: (URL) -> Void
@@ -48,7 +52,8 @@ struct ProjectMMetalView: NSViewRepresentable {
     func updateNSView(_ nsView: PresetDroppableMTKView, context: Context) {
         context.coordinator.updateModelIfNeeded(model)
         context.coordinator.updateAlbumArt(
-            rawImage: albumArtRawImage, subjectImage: albumArtSubjectImage, hidden: isAlbumArtHidden
+            rawImage: albumArtRawImage, colorKeyedImage: albumArtColorKeyedImage,
+            subjectImage: albumArtSubjectImage, hidden: isAlbumArtHidden
         )
         nsView.onDropPreset = onDropPreset
         nsView.onDropTargetChanged = onDropTargetChanged
