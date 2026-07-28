@@ -94,21 +94,42 @@ struct ContentView: View {
             if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                 VStack {
                     Spacer() // Text pinned to the bottom
-                    
+
+                    // Each label is keyed by its own text so a change swaps in a whole new view
+                    // instance (rather than relabeling the same one in place) — that's what makes
+                    // `.push` actually animate. Artist is keyed separately from track so a same-
+                    // artist/new-song update (the common case) only replaces the track's identity;
+                    // the artist Text's identity is untouched and it never moves. `.push(from:
+                    // .trailing)` slides the incoming label in from the right while sliding the
+                    // outgoing one out the left, i.e. new text pushes old text off to the left.
+                    // White text + a `.difference` blend against whatever's rendered underneath
+                    // (the Metal wave/album art) gives a true per-pixel color invert — difference-
+                    // blending white against color C yields 1-C on every channel — rather than a
+                    // fixed color picked once from the album art, so it stays legible as the
+                    // visualizer itself keeps changing underneath.
                     HStack {
                         Text(track)
                             .font(.system(size: 24, weight: .regular))
-                            .foregroundStyle(fgColor)
+                            .foregroundStyle(.white)
+                            .blendMode(.difference)
                             .padding()
-                        
+                            .id(track)
+                            .transition(.push(from: .trailing))
+
                         Spacer()
-                        
+
                         Text(artist)
                             .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(fgColor.opacity(0.8))
+                            .foregroundStyle(.white)
+                            .blendMode(.difference)
                             .padding()
+                            .id(artist)
+                            .transition(.push(from: .trailing))
                     }
+                    .clipped()
                 }
+                .animation(.easeInOut(duration: 0.4), value: track)
+                .animation(.easeInOut(duration: 0.4), value: artist)
             }
         }
         .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)

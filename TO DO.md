@@ -6,9 +6,9 @@
   - [x] Scale down transition
   - [x] Slide in from the right, pushing the other art to the left while it dissolves
   - [x] Slide in from the top, pushing the other art out to the buttom while it dissolves
-- [ ] Transition in the text on the bottom right and left. the text should settle at the same moment the subject becomes settled and the background start fading out. only transition both texts if the song and artist are changing. if just the song is changing but the artist stays the same, only transition the song text away
-- [ ] Make the text the inverse of what is behind it. maybe a text-sized mask/inverse filter on the content? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc. 
-- [ ] Speed up all transitions once fully implemented
+- [x] Transition in the text on the bottom right and left. the text should settle at the same moment the subject becomes settled and the background start fading out. only transition both texts if the song and artist are changing. if just the song is changing but the artist stays the same, only transition the song text away
+- [x] Make the text the inverse of what is behind it. maybe a text-sized mask/inverse filter on the content? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc. 
+- [x] Speed up all transitions once fully implemented
 - [ ] The bar at the top of the window is set to white. is there a way we can extend what the gpu displays into that bar or get rid of the bar altogether? the red yellow and green buttons should still be there but the white bar is just a little annoying
 - [ ] Deprecate the m, t and p keys for changing the art. comment them out for now! maybe revist later. right now they should do nothing. text still shows up on the screen for a deprecated function
 - [ ] Change the projectM starting logo when the app first starts up
