@@ -17,12 +17,11 @@ struct ContentView: View {
     @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
-    @State private var isPresetImporterPresented = false
     @State private var isLibraryFolderPickerPresented = false
-    // Drag-and-drop counterpart to "O"'s file picker — true only while a drag carrying a `.milk`
-    // file is actually hovering the window, driven by `PresetDroppableMTKView.onDropTargetChanged`
-    // via `handlePresetDrop`'s sibling wiring below, for the brief highlight overlay that's the
-    // only feedback a valid drop target exists at all.
+    // Drag-and-drop counterpart to File > "Import Milk Preset…"'s file picker — true only while a drag
+    // carrying a `.milk` file is actually hovering the window, driven by
+    // `PresetDroppableMTKView.onDropTargetChanged` via `handlePresetDrop`'s sibling wiring below,
+    // for the brief highlight overlay that's the only feedback a valid drop target exists at all.
     @State private var isDropTargeted = false
     // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
     // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
@@ -37,7 +36,7 @@ struct ContentView: View {
     @State private var autoCycleTask: Task<Void, Never>?
     private static let autoCycleInterval: Duration = .seconds(20)
     // Preset history (TO DO.md's "other" section) — every successful load (random draw, manual
-    // Cmd-O pick, or the launch-time restore) appends here, so Left/Right can step back/forward
+    // Cmd-I pick, or the launch-time restore) appends here, so Left/Right can step back/forward
     // through what's actually been seen this session rather than each "skip" being a one-way,
     // unrecoverable random draw. Standard browser-history shape: `presetHistoryIndex` is the
     // currently-displayed entry, and loading a genuinely new preset (not a Left/Right navigation)
@@ -55,13 +54,19 @@ struct ContentView: View {
     // dozens of presets in a row needs to trust each keypress actually recorded without checking
     // a log after the fact.
     @State private var ratingFeedback: String?
-    // View menu "Hide Album Art"/"Hide Text" (PrismApp.swift's .commands, "a"/"t" shortcuts) —
+    // View menu "Hide Album Art"/"Hide Text" (PrismApp.swift's .commands, Cmd-A/Cmd-T shortcuts) —
     // independent of "P" (nowPlaying.processingEnabled, which stops the artwork *analysis*
     // pipeline entirely); these just hide whatever's already computed/rendered. Owned by the App
     // scene rather than this view so the menu bar's checkable Toggle items and the keyboard
     // shortcuts share the same source of truth.
     @Binding var isAlbumArtHidden: Bool
     @Binding var isTextHidden: Bool
+    // File > "Import Milk Preset…" (PrismApp.swift's .commands) — same `.fileImporter` this view used
+    // to trigger itself via the (now-disabled) "O" hotkey, just driven from the menu command's
+    // Bool instead of a local one, for the same share-the-source-of-truth reason as the two
+    // bindings above. Ends up loading through `loadPresetAndTrack`, the exact same path drag-and-
+    // drop's `handlePresetDrop` uses, so both routes behave identically once a URL is in hand.
+    @Binding var isPresetImporterPresented: Bool
     @FocusState private var isFocused: Bool
 
     // Temporarily off (TO DO.md Phase 3, 7/26): the true window background (and, via
@@ -71,6 +76,15 @@ struct ContentView: View {
     // one-line flip back on, not a removed feature -- so the piping is ready for whenever this
     // gets picked back up.
     private static let useAlbumArtBackgroundColor = false
+
+    // Window > Zoom (and the title-bar zoom button, though .hiddenTitleBar already keeps it out
+    // of sight) is a no-op here — see `onAppear` below, where this gets installed as the window's
+    // delegate. There's no meaningful "biggest useful size" to toggle between for a full-window
+    // visualizer, so zooming would just be a jarring resize with nothing to show for it.
+    private final class ZoomDisablingWindowDelegate: NSObject, NSWindowDelegate {
+        func windowShouldZoom(_ sender: NSWindow, toFrame newFrame: NSRect) -> Bool { false }
+    }
+    @State private var windowDelegate = ZoomDisablingWindowDelegate()
 
     var body: some View {
         let bgColor = (Self.useAlbumArtBackgroundColor ? nowPlaying.albumBackgroundColor : nil)
@@ -145,8 +159,9 @@ struct ContentView: View {
         // part of this view hierarchy, so they stay on top regardless of what this ignores.
         .ignoresSafeArea()
         // Wave-only .milk preset loading (see ProjectMVisualizerModel):
-        // "O" opens a file picker, and the preset's name shows briefly so there's some feedback
-        // that a load actually happened, since nothing else in the UI names the active preset.
+        // File > "Import Milk Preset…" opens a file picker (drag-and-drop is the other way in — see
+        // handlePresetDrop), and the preset's name shows briefly so there's some feedback that a
+        // load actually happened, since nothing else in the UI names the active preset.
         .overlay(alignment: .topLeading) {
             let presetName = visualizerModel.presetURL?.deletingPathExtension().lastPathComponent
             if let presetName {
@@ -166,44 +181,47 @@ struct ContentView: View {
                 .padding(.top, 20)
             }
         }
-        .overlay(alignment: .topTrailing) {
-            // "M" (below) drives nowPlaying.maskingMode directly — a stand-in for a future
-            // Settings control; only shown off its default so this stays invisible day to day.
-            VStack(alignment: .trailing, spacing: 4) {
-                // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
-                // frame by ProjectMCoordinator.draw(in:) into visualizerModel.displayFPS.
-                Text("\(Int(visualizerModel.displayFPS.rounded())) FPS")
-                    .monospacedDigit()
-                if showSavedConfirmation {
-                    Text("Saved for this album")
-                }
-                if isAutoCycleEnabled {
-                    Text("Auto-Cycle On")
-                }
-                if isAlbumArtHidden {
-                    Text("Album Art Hidden")
-                }
-                if isTextHidden {
-                    Text("Text Hidden")
-                }
-                if presetLibrary.isShowingFavoritesOnly {
-                    Text("Reviewing Favorites List")
-                }
-                if !nowPlaying.processingEnabled {
-                    Text("Processing Off")
-                } else {
-                    if !nowPlaying.includesTextOverlay {
-                        Text("Text Overlay Off")
-                    }
-                    if nowPlaying.maskingMode != .combined {
-                        Text(nowPlaying.maskingMode.label)
-                    }
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(fgColor.opacity(0.6))
-            .padding(8)
-        }
+        // Disabled for now (debug/status text in the top-right corner — FPS counter, auto-cycle/
+        // masking-mode/etc. state flags) — commented out rather than removed so it can come back
+        // for debugging later.
+        // .overlay(alignment: .topTrailing) {
+        //     // "M" (below) drives nowPlaying.maskingMode directly — a stand-in for a future
+        //     // Settings control; only shown off its default so this stays invisible day to day.
+        //     VStack(alignment: .trailing, spacing: 4) {
+        //         // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
+        //         // frame by ProjectMCoordinator.draw(in:) into visualizerModel.displayFPS.
+        //         Text("\(Int(visualizerModel.displayFPS.rounded())) FPS")
+        //             .monospacedDigit()
+        //         if showSavedConfirmation {
+        //             Text("Saved for this album")
+        //         }
+        //         if isAutoCycleEnabled {
+        //             Text("Auto-Cycle On")
+        //         }
+        //         if isAlbumArtHidden {
+        //             Text("Album Art Hidden")
+        //         }
+        //         if isTextHidden {
+        //             Text("Text Hidden")
+        //         }
+        //         if presetLibrary.isShowingFavoritesOnly {
+        //             Text("Reviewing Favorites List")
+        //         }
+        //         if !nowPlaying.processingEnabled {
+        //             Text("Processing Off")
+        //         } else {
+        //             if !nowPlaying.includesTextOverlay {
+        //                 Text("Text Overlay Off")
+        //             }
+        //             if nowPlaying.maskingMode != .combined {
+        //                 Text(nowPlaying.maskingMode.label)
+        //             }
+        //         }
+        //     }
+        //     .font(.caption)
+        //     .foregroundStyle(fgColor.opacity(0.6))
+        //     .padding(8)
+        // }
         // Only visible feedback that a drag is actually hovering a valid drop target — driven by
         // `PresetDroppableMTKView.onDropTargetChanged`, not SwiftUI's own `.onDrop`/`isTargeted`
         // (that modifier showed no drag recognition at all over this view — see
@@ -265,24 +283,22 @@ struct ContentView: View {
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space
         // toggles play/pause on whichever supported player (Spotify or Music) is current — see
         // NowPlayingManager.togglePlayPause — the same effect that key has when one of those apps
-        // is itself frontmost, so it isn't lost just because Prism has focus instead. "N" steps to
-        // the next preset in sequential library order (same action as tapping the visualizer,
-        // which Space did before play/pause took it over). F toggles fullscreen, L (re)picks the
-        // library folder, C toggles idle auto-cycling, Left/Right step back/forward through this
-        // session's preset history. "1"-"5" record a star rating; "w"/"j"/"x" flag the current
-        // preset as all-white, too jittery, or strobing/flashing respectively (for revisiting
-        // later) — "x" rather than "s" for strobing since "s" already saves the current artwork
-        // M/T preference below. All of these advance to the next sequential preset afterward, the
-        // same as "N", so reviewing a library is a single keypress per preset: rate (or flag), see
-        // the next one immediately. "U" (User Profile) picks a NestDrop bundle XML and narrows
-        // sequential discovery to just its favorites list. "A"/"T" (hide album art / hide text)
-        // are handled by the View menu's commands (PrismApp.swift), not here, since a menu key
-        // equivalent always intercepts a bare-letter press before it would reach this view's
-        // onKeyPress.
+        // is itself frontmost, so it isn't lost just because Prism has focus instead. Left/Right
+        // step back/forward through this session's preset history (loadPreviousPreset/
+        // loadNextPreset), same as tapping the visualizer for forward. Cmd-A/Cmd-T (hide album
+        // art / hide text) are handled by the View menu's commands (PrismApp.swift), not here,
+        // since a menu key equivalent always intercepts a press before it would reach this view's
+        // onKeyPress — unaffected by the `keys:` narrowing below.
+        //
+        // Every other hotkey this view used to handle (N/F/O/L/C/M/P/S/W/J/X/U, 1-5) is
+        // temporarily disabled by leaving it out of `keys:` below rather than deleting its case —
+        // none of those characters reach this closure anymore, so the switch's other cases are
+        // dead code for now, kept in place so re-enabling any of them later is just adding the
+        // key back to the array.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "n", "N", "f", "F", "o", "O", "l", "L", "c", "C", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -356,6 +372,11 @@ struct ContentView: View {
             // disallowing it on this window (there's only ever the one) is what actually drops
             // those two items.
             NSApp.windows.first?.tabbingMode = .disallowed
+            // Disables Window > Zoom (see ZoomDisablingWindowDelegate above) and grays out the
+            // title-bar zoom button too, for whenever .hiddenTitleBar's chrome is visible at all
+            // (e.g. hovering the traffic lights).
+            NSApp.windows.first?.delegate = windowDelegate
+            NSApp.windows.first?.standardWindowButton(.zoomButton)?.isEnabled = false
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
@@ -421,7 +442,7 @@ struct ContentView: View {
     /// to being skipped during sequential stepping/auto-cycle for now, rather than ever landing on
     /// screen at a few fps. Bounded to one full pass over the library so a library that's *all*
     /// flagged expensive still terminates instead of spinning forever — falls back to the first
-    /// candidate found in that case rather than showing nothing at all. Explicit loads (Cmd-O,
+    /// candidate found in that case rather than showing nothing at all. Explicit loads (Cmd-I,
     /// drag-and-drop, history Left/Right, launch-time restore) intentionally bypass this — the user
     /// picked that exact file, so it should still load.
     private func nextNonExpensiveSequentialPresetURL(after currentURL: URL?) -> URL? {
@@ -467,7 +488,7 @@ struct ContentView: View {
         }
     }
 
-    /// Drag-and-drop counterpart to "O"'s `.fileImporter`, called by `PresetDroppableMTKView`
+    /// Drag-and-drop counterpart to File > "Import Milk Preset…"'s `.fileImporter`, called by `PresetDroppableMTKView`
     /// once a `.milk` file's actually been dropped — the extension check already happened there
     /// (`milkURL(from:)`), so anything reaching here is already known-good.
     /// AppKit's dragging-destination callbacks always run on the main thread already (unlike this
@@ -486,7 +507,7 @@ struct ContentView: View {
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL
-    /// was obtained (manual Cmd-O pick, random library draw, or restoring the last-loaded preset
+    /// was obtained (manual Cmd-I pick, random library draw, or restoring the last-loaded preset
     /// at launch): remembers it for next launch's restore (MilkdropLastPresetStore) and restarts
     /// the idle auto-cycle countdown so a manual skip doesn't get immediately followed by an
     /// auto-cycle a moment later.
