@@ -133,8 +133,11 @@ final class NowPlayingManager {
 
     /// Whether OCR-detected text gets drawn back on top of the masked artwork at all (see
     /// TextExtraction.swift/`compositeArtwork`). Settable for the same reason as `maskingMode` —
-    /// a future Settings toggle, or ContentView's "T" shortcut in the meantime, can bind to it
-    /// directly, with the same live-preview-only recompose-on-change behavior.
+    /// a future Settings toggle can bind to it directly, with the same live-preview-only
+    /// recompose-on-change behavior. No manual keyboard shortcut currently exposes this ("T" was
+    /// reassigned to ContentView's "Hide Text" toggle, a display-only concern independent of this
+    /// pipeline-level flag) — it's driven automatically today (applyParentalAdvisoryDefaultIfNeeded)
+    /// and via the persisted per-album ArtworkPreferences.
     var includesTextOverlay: Bool = true {
         didSet {
             guard includesTextOverlay != oldValue else { return }

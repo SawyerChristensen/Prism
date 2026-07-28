@@ -28,7 +28,7 @@ struct ContentView: View {
     // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
     // files it names — see MilkdropPresetLibrary.filterToFavorites/MilkdropNestDropFavoritesList.
     @State private var isFavoritesBundlePickerPresented = false
-    // Idle auto-cycling (TO DO.md Phase 3) — "A" toggles it on/off. Backed by a sleeping Task
+    // Idle auto-cycling (TO DO.md Phase 3) — "C" toggles it on/off. Backed by a sleeping Task
     // rather than Foundation's Timer, matching the Task-based delay already used elsewhere in
     // this file (the "S" save confirmation). Any successful preset load, manual or automatic,
     // restarts the sleep window (see restartAutoCycleTimerIfNeeded) so a manual skip right before
@@ -55,10 +55,13 @@ struct ContentView: View {
     // dozens of presets in a row needs to trust each keypress actually recorded without checking
     // a log after the fact.
     @State private var ratingFeedback: String?
-    // "H" toggles the album art (+ track/artist text) overlay off entirely, independent of "P"
-    // (nowPlaying.processingEnabled, which stops the artwork *analysis* pipeline) — this just
-    // hides whatever's already computed, for looking at the wave alone without a track playing.
-    @State private var isAlbumArtHidden = false
+    // View menu "Hide Album Art"/"Hide Text" (PrismApp.swift's .commands, "a"/"t" shortcuts) —
+    // independent of "P" (nowPlaying.processingEnabled, which stops the artwork *analysis*
+    // pipeline entirely); these just hide whatever's already computed/rendered. Owned by the App
+    // scene rather than this view so the menu bar's checkable Toggle items and the keyboard
+    // shortcuts share the same source of truth.
+    @Binding var isAlbumArtHidden: Bool
+    @Binding var isTextHidden: Bool
     @FocusState private var isFocused: Bool
 
     // Temporarily off (TO DO.md Phase 3, 7/26): the true window background (and, via
@@ -91,7 +94,7 @@ struct ContentView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { loadNextSequentialPreset() }
 
-            if !isAlbumArtHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
+            if !isTextHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                 VStack {
                     Spacer() // Text pinned to the bottom
 
@@ -135,6 +138,12 @@ struct ContentView: View {
         .frame(minWidth: 400, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity)
         .background(bgColor)
         .animation(.easeInOut(duration: 0.5), value: bgColor)
+        // .hiddenTitleBar (PrismApp.swift) removes the title bar's title/background, but SwiftUI
+        // still reserves a title-bar-height safe area at the top by default; without opting out of
+        // it here, content gets pushed down and that gap shows through as a plain white strip
+        // (bgColor) instead of the wave. The traffic-light buttons are AppKit window chrome, not
+        // part of this view hierarchy, so they stay on top regardless of what this ignores.
+        .ignoresSafeArea()
         // Wave-only .milk preset loading (see ProjectMVisualizerModel):
         // "O" opens a file picker, and the preset's name shows briefly so there's some feedback
         // that a load actually happened, since nothing else in the UI names the active preset.
@@ -150,12 +159,16 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(fgColor.opacity(0.6))
                 .padding(8)
+                // Clears the traffic-light buttons, which now sit directly over this corner since
+                // the ZStack's .ignoresSafeArea() above lets content run under the (hidden) title
+                // bar. Standard traffic-light vertical center sits ~20pt down from the window's top
+                // edge, so this keeps the text's top clear of them.
+                .padding(.top, 20)
             }
         }
         .overlay(alignment: .topTrailing) {
-            // "T"/"M" (below) drive nowPlaying.includesTextOverlay/maskingMode directly — stand-
-            // ins for future Settings controls; only shown off their defaults so this stays
-            // invisible day to day.
+            // "M" (below) drives nowPlaying.maskingMode directly — a stand-in for a future
+            // Settings control; only shown off its default so this stays invisible day to day.
             VStack(alignment: .trailing, spacing: 4) {
                 // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
                 // frame by ProjectMCoordinator.draw(in:) into visualizerModel.displayFPS.
@@ -169,6 +182,9 @@ struct ContentView: View {
                 }
                 if isAlbumArtHidden {
                     Text("Album Art Hidden")
+                }
+                if isTextHidden {
+                    Text("Text Hidden")
                 }
                 if presetLibrary.isShowingFavoritesOnly {
                     Text("Reviewing Favorites List")
@@ -248,19 +264,21 @@ struct ContentView: View {
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space steps
         // to the next preset in sequential library order (same action as tapping the visualizer),
-        // F toggles fullscreen, L (re)picks the library folder, A toggles idle auto-cycling,
+        // F toggles fullscreen, L (re)picks the library folder, C toggles idle auto-cycling,
         // Left/Right step back/forward through this session's preset history. "1"-"5" record a
         // star rating; "w"/"j"/"x" flag the current preset as all-white, too jittery, or
         // strobing/flashing respectively (for revisiting later) — "x" rather than "s" for
         // strobing since "s" already saves the current artwork M/T preference below. All of these
         // advance to the next sequential preset afterward, the same as Space, so reviewing a
         // library is a single keypress per preset: rate (or flag), see the next one immediately.
-        // "H" toggles the album art overlay on/off. "U" (User Profile) picks a NestDrop bundle
-        // XML and narrows sequential discovery to just its favorites list.
+        // "U" (User Profile) picks a NestDrop bundle XML and narrows sequential discovery to just
+        // its favorites list. "A"/"T" (hide album art / hide text) are handled by the View menu's
+        // commands (PrismApp.swift), not here, since a menu key equivalent always intercepts a
+        // bare-letter press before it would reach this view's onKeyPress.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "a", "A", "t", "T", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "h", "H", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", "f", "F", "o", "O", "l", "L", "c", "C", "m", "M", "p", "P", "s", "S", "w", "W", "j", "J", "x", "X", "u", "U", "1", "2", "3", "4", "5", .leftArrow, .rightArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -287,9 +305,6 @@ struct ContentView: View {
             case "x", "X":
                 flagCurrentPreset(.strobing, label: "Flagged: strobing/flashing")
                 return .handled
-            case "h", "H":
-                isAlbumArtHidden.toggle()
-                return .handled
             case "u", "U":
                 isFavoritesBundlePickerPresented = true
                 return .handled
@@ -302,11 +317,8 @@ struct ContentView: View {
             case "l", "L":
                 isLibraryFolderPickerPresented = true
                 return .handled
-            case "a", "A":
+            case "c", "C":
                 toggleAutoCycle()
-                return .handled
-            case "t", "T":
-                nowPlaying.includesTextOverlay.toggle()
                 return .handled
             case "m", "M":
                 let all = ArtworkMaskingMode.allCases
@@ -330,6 +342,13 @@ struct ContentView: View {
         }
         .onAppear {
             PrismDebug.trace("ContentView.onAppear")
+            // NSWindow.allowsAutomaticWindowTabbing = false (PrismApp.swift's init) only stops new
+            // windows from automatically joining a tab group — it doesn't remove "Show Tab
+            // Bar"/"Show All Tabs" from the View menu, since AppKit adds those based on whether
+            // the *frontmost window itself* supports tabbing, not the app-wide default. Explicitly
+            // disallowing it on this window (there's only ever the one) is what actually drops
+            // those two items.
+            NSApp.windows.first?.tabbingMode = .disallowed
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
