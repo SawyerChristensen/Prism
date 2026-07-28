@@ -1,8 +1,11 @@
 # Prism — To Do
 ---
 - [ ] Change the projectM starting logo when the app first starts up
+- [ ] slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
 - [ ] Is there a way we can combine the album subject with the preset? right now just floats above the preset. we isolate the subject in the album, but other than that we dont blend it with the visualizer at all. what are the options for blending it in?
-  - [ ] When a new song is chosen, lets transition into the album art, display it for a couple seconds and then let it blend with the preset once we decide how ^
+  - [x] When a new song is chosen, lets transition into the album art, display it for a couple seconds and then let it blend with the preset once we decide how ^
+  - [x] scale up transition
+  - [x] scale down transition
   - [ ] transition in the text on the bottom right and left, maybe make it the inverse of whatever is behind it? so that it is always visible? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc.
 - [ ] The bar at the top of the window is set to white. is there a way we can extend what the gpu displays into that bar or get rid of the bar altogether? the red yellow and green buttons should still be there but the white bar is just a little annoying
 - [ ] Bundle the external preset back with the xcode project so the entire app can actually be exported and work

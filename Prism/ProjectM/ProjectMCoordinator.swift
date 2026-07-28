@@ -32,6 +32,10 @@ private struct AlbumArtUniforms {
     // keeps going at that exact same rate.
     var subjectScale: Float
     var backgroundScale: Float
+    // 0...1 fade used only by the reverse (scale-down) intro - see isReverseIntro. The forward
+    // intro's own materialize effect comes entirely from scale (see AlbumArtStage.scaleIn's own
+    // doc comment), so this stays pinned at 1 the whole time for that variant; a no-op multiply.
+    var introAlpha: Float
 }
 
 /// The four stages of the album-art choreography (see ProjectMCompositeShader.metal's own header)
@@ -66,6 +70,10 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private static let subjectExitDuration: Float = 6.0
     private static let albumArtSizePixels: Float = 640
     private static let globalAlphaEaseSpeed: Float = 8
+    // How zoomed-in the reverse intro starts (see isReverseIntro) - the ramp runs
+    // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
+    // separate, same "one continuous ramp" shape as the forward intro's 0 -> 1 -> beyond.
+    private static let reverseIntroStartScale: Float = 2.2
 
     private var textureLoader: MTKTextureLoader?
     private var emptyAlbumArtTexture: MTLTexture?
@@ -86,6 +94,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var currentSubjectTexture: MTLTexture?
     private var currentRawImage: NSImage?
     private var trackAnimationClock: Float = 0
+    // Which of the two intro choreographies this track got, coin-flipped once per track in
+    // promoteToCurrentTrack: forward (scale 0 -> 1, materializes via the shrink-to-a-point UV
+    // trick - see AlbumArtStage.scaleIn) or reverse (starts at reverseIntroStartScale, zoomed in
+    // and transparent, shrinks to 1 while fading in - see albumArtScales/introAlpha). Only affects
+    // how scaleIn plays out; separate/steady/outgoingExit are identical either way.
+    private var isReverseIntro = false
 
     // Next track's assets, queued the moment NowPlayingManager hands over new artwork but held
     // back from becoming "current" until the outgoing subject below has finished dissolving away -
@@ -226,7 +240,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             globalAlpha: globalAlpha,
             distortionStrength: 0.06,
             subjectScale: subjectScale,
-            backgroundScale: backgroundScale
+            backgroundScale: backgroundScale,
+            introAlpha: introAlpha()
         )
 
         let backgroundTex = currentBackgroundTexture ?? emptyAlbumArtTexture
@@ -312,21 +327,47 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         return (AlbumArtStage.steady, 1)
     }
 
-    /// One constant-velocity ramp (rate = 1 full size per scaleInDuration seconds) spanning
-    /// scaleIn and separate both, so there's no perceptible speed change at the boundary between
-    /// them - only what stops moving there changes. `subjectScale` follows that ramp until it
-    /// hits 1 (i.e. for the whole of scaleIn) then holds there for good; `backgroundScale` keeps
-    /// following the exact same ramp past that point for as long as there's a subject to leave
-    /// behind, or holds at 1 too if there's no subject to separate from (see AlbumArtStage.separate
-    /// in ProjectMCompositeShader.metal's header for why that case skips growing at all).
+    /// One constant-velocity ramp spanning scaleIn and separate both, so there's no perceptible
+    /// speed change at the boundary between them - only what stops moving there changes.
+    /// `subjectScale` follows that ramp until it reaches 1 (i.e. for the whole of scaleIn) then
+    /// holds there for good; `backgroundScale` keeps following the exact same ramp past that point
+    /// for as long as there's a subject to leave behind, or holds at 1 too if there's no subject to
+    /// separate from (see AlbumArtStage.separate in ProjectMCompositeShader.metal's header for why
+    /// that case skips moving at all).
+    ///
+    /// `isReverseIntro` flips which direction that ramp runs: forward goes 0 -> 1 (rate 1 full size
+    /// per scaleInDuration) then keeps growing past 1 through separate; reverse starts at
+    /// `reverseIntroStartScale` and shrinks down to 1 at the same rate, then keeps shrinking past 1
+    /// (towards, and eventually past, 0 - see the shader's own `max(scale, 0.02)` floor) through
+    /// separate. Either way `subjectScale` locks at exactly 1 the instant the ramp crosses it.
     private func albumArtScales(hasSubjectMask: Bool) -> (subject: Float, background: Float) {
-        let subjectScale = min(trackAnimationClock / Self.scaleInDuration, 1)
-        let backgroundScale = hasSubjectMask ? (trackAnimationClock / Self.scaleInDuration) : subjectScale
+        let t = trackAnimationClock / Self.scaleInDuration
+        let ramp: Float
+        let subjectScale: Float
+        if isReverseIntro {
+            ramp = Self.reverseIntroStartScale - t * (Self.reverseIntroStartScale - 1)
+            subjectScale = t < 1 ? ramp : 1
+        } else {
+            ramp = t
+            subjectScale = min(ramp, 1)
+        }
+        let backgroundScale = hasSubjectMask ? ramp : subjectScale
         return (subjectScale, backgroundScale)
+    }
+
+    /// 0...1 fade the reverse intro uses to materialize (the forward intro doesn't need this - see
+    /// AlbumArtUniforms.introAlpha). Driven by the same `t` as albumArtScales, so the fade and the
+    /// shrink-to-1 both land at the same instant; freezes wherever it was (rather than snapping)
+    /// if a track change interrupts scaleIn, since trackAnimationClock itself stops advancing once
+    /// isOutgoingExitActive - see advanceAlbumArtAnimation.
+    private func introAlpha() -> Float {
+        guard isReverseIntro else { return 1 }
+        return min(trackAnimationClock / Self.scaleInDuration, 1)
     }
 
     private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
         currentRawImage = rawImage
+        isReverseIntro = Bool.random()
 
         // The background layer always shows the *full* cover - color-keyed wherever a clean solid
         // background color was confidently detected (colorKeyedArtwork requires backgroundTone

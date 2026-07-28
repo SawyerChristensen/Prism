@@ -9,10 +9,14 @@
 //  same pass through a choreographed four-stage sequence (see ProjectMCoordinator's
 //  advanceAlbumArtAnimation, which drives `stage`/`stageProgress` below):
 //
-//    0 scaleIn        - the new track's full cover (background and subject together) grows from
-//                       nothing to its full size, centered on the art square's own center - no
-//                       separate opacity fade, the zero-to-full scale itself reads as it
-//                       materializing.
+//    0 scaleIn        - the new track's full cover (background and subject together) animates to
+//                       its full size, centered on the art square's own center. Coin-flipped once
+//                       per track (ProjectMCoordinator.isReverseIntro):
+//                         forward - grows from nothing to full size; no separate opacity fade, the
+//                           zero-to-full scale itself reads as it materializing.
+//                         reverse - starts zoomed in (scale > 1) and fully transparent, shrinks
+//                           down to full size while fading in (`introAlpha` below) in lockstep, so
+//                           it reads as condensing into place rather than growing into it.
 //    1 separate        - the subject's own scale locks at full size right where scaleIn left it,
 //                       while the *background* - the raw cover with a subject-shaped hole already
 //                       punched out of it, see ProjectMCoordinator.backgroundWithSubjectHole, so
@@ -87,6 +91,9 @@ struct AlbumArtUniforms {
     // locks at 1 the moment it gets there; backgroundScale just keeps going at that exact same rate.
     float subjectScale;
     float backgroundScale;
+    // 0...1 fade the reverse intro uses to materialize while it shrinks in (see the header above
+    // and ProjectMCoordinator.introAlpha) - pinned at 1 for the forward intro, a no-op multiply.
+    float introAlpha;
 };
 
 fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[stage_in]],
@@ -102,8 +109,17 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
 
     int stage = int(u.stage + 0.5);
     // Dismissal's torn-away content and separate's still-growing background both need to visibly
-    // leave the art's own square - every other stage stays clipped tight to the square as before.
-    float bound = (stage == 1 || stage == 3) ? 1.0 : 0.0;
+    // leave the art's own square. scaleIn normally stays clipped tight to the square too - the
+    // forward intro never exceeds scale 1, so it never needs the room - but the reverse intro
+    // starts *larger* than the square (scale > 1, see AlbumArtUniforms.introAlpha/
+    // ProjectMCoordinator.reverseIntroStartScale): without matching overhang here, that oversized
+    // start gets clipped down to whatever already overlapped the square before the scale-based UV
+    // math below even runs, instead of the true oversized object shrinking smoothly into view.
+    // subjectScale/backgroundScale are identical throughout scaleIn (see albumArtScales), so either
+    // one gives the object's current apparent size; forward's own scale never exceeds 1, so this
+    // comes out to 0 for it - the same tight clip as before.
+    float scaleInOverhang = max(0.0, (max(u.subjectScale, u.backgroundScale) - 1.0) * 0.5);
+    float bound = (stage == 1 || stage == 3) ? 1.0 : (stage == 0 ? scaleInOverhang : 0.0);
     float2 artUV = (in.texCoord - u.artCenter) / (u.artHalfSize * 2.0) + 0.5;
     if (artUV.x < -bound || artUV.x > 1.0 + bound || artUV.y < -bound || artUV.y > 1.0 + bound
         || u.globalAlpha <= 0.0) {
@@ -159,14 +175,18 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     } else {
         // scaleIn/separate/steady all work the same way: the subject cutout and the hole-punched
         // background are two puzzle-piece layers - together, at the same scale, they reconstitute
-        // the original cover exactly - each sampled through its own scale (inverse-mapped, same
-        // trick as the dismissal stage's forward warp: dividing by a scale under 1 spreads source
-        // content out from the center, so at scale ~0 almost every screen position maps outside
-        // the source's own [0,1] square and comes back transparent, which is exactly "shrunk to
-        // nothing"), then composited subject-over-background-over-wave. subjectScale/backgroundScale
+        // the original cover exactly - each sampled through its own scale (inverse-mapped: dividing
+        // by a scale under 1 spreads source content out from the center, so at scale ~0 almost
+        // every screen position maps outside the source's own [0,1] square and comes back
+        // transparent - exactly "shrunk to nothing," the forward intro's own materialize trick;
+        // dividing by a scale *over* 1 instead pulls every screen position in towards the center,
+        // reading as a zoomed-in crop - the reverse intro's starting point, `introAlpha` below is
+        // what actually fades that one in, since being zoomed in doesn't go transparent on its
+        // own), then composited subject-over-background-over-wave. subjectScale/backgroundScale
         // arrive already computed (see AlbumArtUniforms above) as one continuous, constant-velocity
-        // ramp from ProjectMCoordinator - clamped away from exactly 0 here only to keep the division
-        // below finite; the ramp itself never lingers there.
+        // ramp from ProjectMCoordinator, in whichever direction this track's intro is going -
+        // clamped away from exactly 0 here only to keep the division below finite; the ramp itself
+        // never lingers there.
         float subjectScale = max(u.subjectScale, 0.02);
         float bgScale = max(u.backgroundScale, 0.02);
 
@@ -206,6 +226,7 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         art = float4(overColor, 1.0);
     }
 
+    alpha *= saturate(u.introAlpha);
     alpha *= saturate(u.globalAlpha);
     return float4(mix(wave.rgb, art.rgb, saturate(alpha)), 1.0);
 }
