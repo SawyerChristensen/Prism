@@ -67,6 +67,18 @@ struct ContentView: View {
     // bindings above. Ends up loading through `loadPresetAndTrack`, the exact same path drag-and-
     // drop's `handlePresetDrop` uses, so both routes behave identically once a URL is in hand.
     @Binding var isPresetImporterPresented: Bool
+    // History menu bar item (PrismApp.swift's .commands) — `sessionHistoryStore` is a plain
+    // reference (not @Binding: it's a class, and PrismApp never reassigns it, just calls methods
+    // on the same instance) that persists every load past this run for next launch's "Last
+    // Session" rotation. `sessionPresetLog` is the in-memory log the History menu actually
+    // renders; loadPresetAndTrack below appends to both, unconditionally, on every successful
+    // load — including replays and History-menu-triggered loads — so a preset played twice shows
+    // twice, in order. `presetToLoadFromMenu` is the reverse direction: PrismApp sets it when a
+    // History/Last Session item is clicked, and this view's onChange (below) does the actual
+    // security-scoped load.
+    let sessionHistoryStore: MilkdropSessionHistoryStore
+    @Binding var sessionPresetLog: [URL]
+    @Binding var presetToLoadFromMenu: URL?
     @FocusState private var isFocused: Bool
 
     // Temporarily off (TO DO.md Phase 3, 7/26): the true window background (and, via
@@ -267,6 +279,19 @@ struct ContentView: View {
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             presetLibrary.filterToFavorites(from: url)
             loadNextSequentialPreset()
+        }
+        // History/Last Session menu clicks (PrismApp.swift's .commands) land here rather than
+        // calling loadPresetAndTrack directly from the App scene, since only this view actually
+        // holds security-scoped access to arbitrary preset URLs (mirrors the .fileImporter
+        // closures above: start, act, stop). Resets the trigger to nil immediately so clicking
+        // the same entry again later still fires (SwiftUI's onChange only fires on an actual
+        // value change, so a value that stayed non-nil couldn't be re-clicked).
+        .onChange(of: presetToLoadFromMenu) { _, newValue in
+            guard let url = newValue else { return }
+            presetToLoadFromMenu = nil
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            loadPresetAndTrack(from: url)
         }
         .alert(
             "Couldn't Load Preset",
@@ -567,6 +592,12 @@ struct ContentView: View {
         // projectm_load_preset_file's own "keep showing the current preset" behavior on a bad file.
         visualizerModel.requestPreset(at: url)
         lastPresetStore.rememberLoaded(url)
+        // History menu bar item — every successful load counts as a "play" for its purposes,
+        // unconditionally (unlike presetHistory below, which skips Left/Right navigation itself
+        // via recordInHistory): replaying an already-seen preset, whether via Left/Right or a
+        // History/Last Session menu click, should still add another entry reflecting that replay.
+        sessionPresetLog.append(url)
+        sessionHistoryStore.appendToCurrentSession(url)
         if recordInHistory {
             if presetHistoryIndex < presetHistory.count - 1 {
                 presetHistory.removeSubrange((presetHistoryIndex + 1)...)

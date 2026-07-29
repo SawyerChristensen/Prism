@@ -15,16 +15,16 @@
 - [x] Allow importing of milk files in the file menu. when a milk file is imported, it should display that milk file until the user starts cycling through again or until the application closes. Next time its opened, it should start cycling through again as default behavior
 - [x] Space should pause whatever music is playing
 - [x] Change the projectM starting logo when the app first starts up
-- [ ] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
-- [ ] Slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
-  - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
+- [x] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
+- [ ] Verify the "Import milk presets" actually does something?
 - [ ] Bundle the external preset back with the xcode project so the entire app can actually be exported and work
-- [ ] Expensive presets (flagged by MilkdropPresetComplexityAnalyzer — heavy tex3D/GetPixel-neighbor-sample warp/comp shaders, the kind that render at ~3fps) are currently just skipped outright during sequential stepping/auto-cycle. Instead, render them at a reduced internal resolution and upscale to the display size, so they're still shown (just cheaper) rather than never appearing at all.
-  - [ ] Set them to render, just at a lower resolution so that they still render at a higher frame rate. Requries fine tuning
 - [ ] Find a good collection of presets to ship, and make sure they are all sufficiently "chilled out"
 
 
 ## Post Launch
 ---
+- [ ] Expensive presets (flagged by MilkdropPresetComplexityAnalyzer — heavy tex3D/GetPixel-neighbor-sample warp/comp shaders, the kind that render at ~3fps) are currently just skipped outright during sequential stepping/auto-cycle. Instead, render them at a reduced internal resolution and upscale to the display size, so they're still shown (just cheaper) rather than never appearing at all.
+- [ ] Slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
+  - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add mutliple album art transition outs when the song ends
 - [ ] Figure out a solution to centering the subject of the album
