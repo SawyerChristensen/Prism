@@ -9,6 +9,18 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// Which of this view's three file/folder pickers is currently up. Stacking several independent
+// `.fileImporter(isPresented:)` modifiers on the same view (as this used to do — one Bool per
+// picker) is a known SwiftUI/macOS foot-gun: only one of the stacked presentation coordinators on
+// a given view identity reliably shows its panel, so the others silently no-op (the trigger flips
+// true, nothing appears, the Bool never even gets reset). Routing all three through one
+// `.fileImporter` keyed on this enum keeps exactly one coordinator on the view.
+private enum ActiveFilePicker {
+    case milkPreset
+    case libraryFolder
+    case favoritesBundle
+}
+
 struct ContentView: View {
     @State private var audioEngine = CoreAudioTapEngine()
     @State private var nowPlaying = NowPlayingManager()
@@ -17,7 +29,6 @@ struct ContentView: View {
     @State private var presetLibrary = MilkdropPresetLibrary()
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
-    @State private var isLibraryFolderPickerPresented = false
     // Drag-and-drop counterpart to File > "Import Milk Preset…"'s file picker — true only while a drag
     // carrying a `.milk` file is actually hovering the window, driven by
     // `PresetDroppableMTKView.onDropTargetChanged` via `handlePresetDrop`'s sibling wiring below,
@@ -26,7 +37,10 @@ struct ContentView: View {
     // "U" (User Profile) picks a NestDrop bundle XML (e.g. a preset pack's own
     // `User Profile/*.xml` favorites export) and narrows sequential discovery down to just the
     // files it names — see MilkdropPresetLibrary.filterToFavorites/MilkdropNestDropFavoritesList.
-    @State private var isFavoritesBundlePickerPresented = false
+    // Library-folder and favorites-bundle picks (both above) and the milk-preset import below
+    // (@Binding, since the App scene's menu command is what triggers it) all funnel through this
+    // one enum-keyed `.fileImporter` — see ActiveFilePicker's doc comment for why.
+    @State private var activeFilePicker: ActiveFilePicker?
     // Idle auto-cycling (TO DO.md Phase 3) — "C" toggles it on/off. Backed by a sleeping Task
     // rather than Foundation's Timer, matching the Task-based delay already used elsewhere in
     // this file (the "S" save confirmation). Any successful preset load, manual or automatic,
@@ -247,38 +261,62 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
         }
-        .fileImporter(
-            isPresented: $isPresetImporterPresented,
-            allowedContentTypes: [UTType(filenameExtension: "milk") ?? .plainText]
-        ) { result in
-            guard case .success(let url) = result else { return }
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            loadPresetAndTrack(from: url)
+        // Menu-driven trigger for the milk-preset import (@Binding, owned by the App scene — see
+        // isPresetImporterPresented's doc comment) funnels into `activeFilePicker` just like the
+        // other two pickers' direct assignments do, so there's a single `.fileImporter` below
+        // rather than three stacked on this view (see ActiveFilePicker's doc comment for why that
+        // matters). Reset back to false immediately since it's a one-shot trigger, not the thing
+        // that actually tracks presentation state anymore.
+        .onChange(of: isPresetImporterPresented) { _, isPresented in
+            guard isPresented else { return }
+            activeFilePicker = .milkPreset
+            isPresetImporterPresented = false
         }
-        // Folder (not single-file) picker for the preset library random-cycling draws from — see
-        // MilkdropPresetLibrary.swift. Triggered explicitly (L) or implicitly the first time Space/
-        // tap is used before any library folder has been picked yet.
+        // Single `.fileImporter` for all three pickers — milk-preset import (File > "Import Milk
+        // Preset…"), the preset-library folder (triggered explicitly by "L" or implicitly the
+        // first time Space/tap is used before any library folder has been picked yet — see
+        // MilkdropPresetLibrary.swift), and "U"'s NestDrop bundle favorites XML (narrows sequential
+        // discovery to just the files it names — see MilkdropPresetLibrary.filterToFavorites; re-
+        // picking the library folder clears this back to the full scan). Consolidated onto one
+        // `.fileImporter`/one `activeFilePicker` enum rather than one Bool + one `.fileImporter`
+        // each — see ActiveFilePicker's doc comment.
         .fileImporter(
-            isPresented: $isLibraryFolderPickerPresented,
-            allowedContentTypes: [.folder]
-        ) { result in
+            isPresented: Binding(
+                get: { activeFilePicker != nil },
+                set: { if !$0 { activeFilePicker = nil } }
+            ),
+            allowedContentTypes: {
+                switch activeFilePicker {
+                case .milkPreset: return [UTType(filenameExtension: "milk") ?? .plainText]
+                case .libraryFolder: return [.folder]
+                case .favoritesBundle: return [.xml]
+                case nil: return [.item]
+                }
+            }()
+        ) { [capturedFilePicker = activeFilePicker] result in
+            // Captures `activeFilePicker`'s value as of *this* body evaluation (the one that
+            // presented the panel) rather than reading the live @State property when the
+            // completion runs: SwiftUI's `isPresented` binding above sets `activeFilePicker` back
+            // to nil as part of dismissing the panel, and if that happens before this completion
+            // closure is invoked (observed in practice — the panel closes but nothing loads), a
+            // live read here would always see nil and every case below would silently no-op.
             guard case .success(let url) = result else { return }
-            presetLibrary.setLibraryRoot(url)
-            loadNextSequentialPreset()
-        }
-        // "U": narrow sequential discovery to a NestDrop bundle's favorites list instead of the
-        // whole library — see MilkdropPresetLibrary.filterToFavorites. Re-picking the library
-        // folder (L) clears this back to the full scan.
-        .fileImporter(
-            isPresented: $isFavoritesBundlePickerPresented,
-            allowedContentTypes: [.xml]
-        ) { result in
-            guard case .success(let url) = result else { return }
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            presetLibrary.filterToFavorites(from: url)
-            loadNextSequentialPreset()
+            switch capturedFilePicker {
+            case .milkPreset:
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                loadPresetAndTrack(from: url)
+            case .libraryFolder:
+                presetLibrary.setLibraryRoot(url)
+                loadNextSequentialPreset()
+            case .favoritesBundle:
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                presetLibrary.filterToFavorites(from: url)
+                loadNextSequentialPreset()
+            case nil:
+                break
+            }
         }
         // History/Last Session menu clicks (PrismApp.swift's .commands) land here rather than
         // calling loadPresetAndTrack directly from the App scene, since only this view actually
@@ -354,16 +392,16 @@ struct ContentView: View {
                 flagCurrentPreset(.strobing, label: "Flagged: strobing/flashing")
                 return .handled
             case "u", "U":
-                isFavoritesBundlePickerPresented = true
+                activeFilePicker = .favoritesBundle
                 return .handled
             case "f", "F":
                 NSApp.keyWindow?.toggleFullScreen(nil)
                 return .handled
             case "o", "O":
-                isPresetImporterPresented = true
+                activeFilePicker = .milkPreset
                 return .handled
             case "l", "L":
-                isLibraryFolderPickerPresented = true
+                activeFilePicker = .libraryFolder
                 return .handled
             case "c", "C":
                 toggleAutoCycle()
@@ -442,7 +480,7 @@ struct ContentView: View {
             // ever flips true via a real successful pick (see MilkdropPresetLibrary.setLibraryRoot),
             // so this never re-prompts someone who's already set one up.
             if !presetLibrary.isConfigured {
-                isLibraryFolderPickerPresented = true
+                activeFilePicker = .libraryFolder
             }
             PrismDebug.trace("ContentView.onAppear returned (both calls are async/backgrounded)")
         }
@@ -465,7 +503,7 @@ struct ContentView: View {
     /// would just replace the in-flight sleeping Task with an equivalent new one for no reason.
     private func loadNextSequentialPreset(resetAutoCycle: Bool = true) {
         guard presetLibrary.isConfigured else {
-            isLibraryFolderPickerPresented = true
+            activeFilePicker = .libraryFolder
             return
         }
         guard let url = nextNonExpensiveSequentialPresetURL(after: visualizerModel.presetURL) else { return }

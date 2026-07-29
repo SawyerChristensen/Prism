@@ -16,7 +16,7 @@
 - [x] Space should pause whatever music is playing
 - [x] Change the projectM starting logo when the app first starts up
 - [x] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
-- [ ] Verify the "Import milk presets" actually does something?
+- [x] Verify the "Import milk presets" actually does something?
 - [ ] Bundle the external preset back with the xcode project so the entire app can actually be exported and work
 - [ ] Find a good collection of presets to ship, and make sure they are all sufficiently "chilled out"
 

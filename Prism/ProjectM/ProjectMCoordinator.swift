@@ -95,7 +95,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private static let scaleInDuration: Float = 1.5
     private static let separateDuration: Float = 1.5
     private static let subjectExitDuration: Float = 1.5
-    private static let albumArtSizePixels: Float = 640
+    private static let albumArtSizePixels: Float = 480
     private static let globalAlphaEaseSpeed: Float = 8
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
     // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
@@ -272,7 +272,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             return
         }
 
-        // Art square is a fixed 640x640 device pixels (Spotify's own artwork resolution),
+        // Art square is a fixed 480x480 device pixels (Spotify's own artwork resolution),
         // centered - the same spot SwiftUI's ZStack centered it by default before this moved
         // into the shader.
         let (stage, stageProgress) = albumArtStageAndProgress()
