@@ -372,11 +372,11 @@ struct ContentView: View {
             // disallowing it on this window (there's only ever the one) is what actually drops
             // those two items.
             NSApp.windows.first?.tabbingMode = .disallowed
-            // Disables Window > Zoom (see ZoomDisablingWindowDelegate above) and grays out the
-            // title-bar zoom button too, for whenever .hiddenTitleBar's chrome is visible at all
-            // (e.g. hovering the traffic lights).
+            // Disables Window > Zoom / double-click-to-zoom (see ZoomDisablingWindowDelegate
+            // above) without touching the zoom button's enabled state — the button is also how a
+            // plain click enters full screen (zoom itself is Option-click or the Window menu), so
+            // disabling the button outright would take full screen out with it.
             NSApp.windows.first?.delegate = windowDelegate
-            NSApp.windows.first?.standardWindowButton(.zoomButton)?.isEnabled = false
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
@@ -388,15 +388,26 @@ struct ContentView: View {
             // preset to restore - useful for quick manual testing without a security-scoped
             // bookmark on hand.
             if visualizerModel.presetURL == nil {
-                var restoredFromLastLaunch = false
-                lastPresetStore.withLastPreset { url in
-                    restoredFromLastLaunch = true
-                    loadPresetAndTrack(from: url)
-                }
-                if !restoredFromLastLaunch,
-                   let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
-                    let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
-                    visualizerModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
+                // Wait for real audio before leaving projectM's built-in starting animation — see
+                // waitForMusicSignal. Backgrounded (not awaited inline) so it doesn't hold up the
+                // rest of onAppear (permissions, polling, the library-folder prompt below).
+                Task {
+                    await waitForMusicSignal()
+                    // A manual import/drop (handlePresetDrop or the fileImporter) while we were
+                    // waiting already set presetURL directly and is the one thing meant to jump
+                    // straight to the preset view without music — don't stomp it with whatever
+                    // was on screen last launch.
+                    guard visualizerModel.presetURL == nil else { return }
+                    var restoredFromLastLaunch = false
+                    lastPresetStore.withLastPreset { url in
+                        restoredFromLastLaunch = true
+                        loadPresetAndTrack(from: url)
+                    }
+                    if !restoredFromLastLaunch,
+                       let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
+                        let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
+                        visualizerModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
+                    }
                 }
             }
             // First-launch (or any launch before one's ever been picked) auto-prompt for the
@@ -504,6 +515,34 @@ struct ContentView: View {
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
         PrismDebug.trace("handlePresetDrop: loading \(url.lastPathComponent)")
         loadPresetAndTrack(from: url)
+    }
+
+    /// Polls `audioEngine.levels` (the 40-band spectrum SpectrumAnalyzer produces every audio
+    /// buffer — see CoreAudioTapEngine/SpectrumAnalyzer) until real audio shows up, so onAppear's
+    /// launch-time preset restore can wait for it: silence keeps every band pinned to
+    /// SpectrumAnalyzer's 0.02 floor, so a few consecutive samples clearly above that floor is
+    /// enough to tell music apart from noise-floor jitter without a real detector. Until this
+    /// returns, `visualizerModel.presetURL` stays nil, which is what keeps projectM on its own
+    /// built-in starting animation instead of jumping straight to a preset.
+    ///
+    /// Also bails out the moment `presetURL` gets set out from under it — a manual drag-and-drop
+    /// or File > "Import Milk Preset…" is the one thing meant to jump straight to the preset view
+    /// without waiting on music at all (see the onAppear call site's guard right after this).
+    private func waitForMusicSignal() async {
+        let signalThreshold: CGFloat = 0.08
+        let requiredConsecutiveHits = 3
+        var consecutiveHits = 0
+        while visualizerModel.presetURL == nil {
+            let levels = audioEngine.levels
+            let average = levels.reduce(0, +) / CGFloat(levels.count)
+            if average > signalThreshold {
+                consecutiveHits += 1
+                if consecutiveHits >= requiredConsecutiveHits { return }
+            } else {
+                consecutiveHits = 0
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL

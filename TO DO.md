@@ -14,7 +14,8 @@
 - [x] Add options in the view settings for hiding the album art and hiding the text
 - [x] Allow importing of milk files in the file menu. when a milk file is imported, it should display that milk file until the user starts cycling through again or until the application closes. Next time its opened, it should start cycling through again as default behavior
 - [x] Space should pause whatever music is playing
-- [ ] Change the projectM starting logo when the app first starts up
+- [x] Change the projectM starting logo when the app first starts up
+- [ ] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
 - [ ] Slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
   - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Bundle the external preset back with the xcode project so the entire app can actually be exported and work
