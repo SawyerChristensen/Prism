@@ -43,7 +43,10 @@ struct ProjectMMetalView: NSViewRepresentable {
         view.clearColor = MTLClearColorMake(0, 0, 0, 1)
         view.enableSetNeedsDisplay = false
         view.isPaused = false
-        view.preferredFramesPerSecond = 120
+        // Real value gets set in updateNSView once the view has a window (and thus a real
+        // screen) - view.window is always nil this early, so this is just a same-tick-safe
+        // placeholder that updateNSView immediately corrects.
+        view.preferredFramesPerSecond = Self.refreshMatchedFramesPerSecond(for: view)
         view.onDropPreset = onDropPreset
         view.onDropTargetChanged = onDropTargetChanged
         return view
@@ -57,5 +60,22 @@ struct ProjectMMetalView: NSViewRepresentable {
         )
         nsView.onDropPreset = onDropPreset
         nsView.onDropTargetChanged = onDropTargetChanged
+        // Re-read every update tick (cheap - just an Int) rather than only on window/screen
+        // notifications, so dragging the window to a monitor with a different refresh rate picks
+        // up the new rate without needing a dedicated NSWindow.didChangeScreenNotification
+        // listener. MTKView clamps preferredFramesPerSecond to the display's real vsync rate
+        // anyway, so this can never draw faster than the screen actually supports - it just stops
+        // us from leaving a higher-refresh screen's extra smoothness on the table (see
+        // ProjectMCoordinator.updateDisplayFPS/setTargetFPS for why raising the real draw rate
+        // doesn't also speed up presets that correctly normalize against the `fps` builtin).
+        nsView.preferredFramesPerSecond = Self.refreshMatchedFramesPerSecond(for: nsView)
+    }
+
+    /// The real screen's max refresh rate, so ProMotion/high-refresh displays get fully smooth
+    /// output instead of being capped at some arbitrary constant. Falls back to
+    /// NSScreen.main (view has no window yet, e.g. during makeNSView) or 60 (no screens at all,
+    /// e.g. an early SwiftUI preview render) since MTKView requires a positive value.
+    private static func refreshMatchedFramesPerSecond(for view: NSView) -> Int {
+        (view.window?.screen ?? NSScreen.main)?.maximumFramesPerSecond ?? 60
     }
 }

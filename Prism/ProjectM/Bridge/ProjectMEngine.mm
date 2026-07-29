@@ -112,4 +112,9 @@ void PresetSwitchFailedTrampoline(const char* presetFilename, const char* messag
     return _eglContext.currentIOSurface;
 }
 
+- (void)setTargetFPS:(int32_t)fps
+{
+    projectm_set_fps(_instance, fps);
+}
+
 @end

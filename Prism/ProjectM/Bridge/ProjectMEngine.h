@@ -41,6 +41,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// Returns NULL on failure (e.g. width/height is 0).
 - (nullable IOSurfaceRef)renderFrameWithWidth:(size_t)width height:(size_t)height CF_RETURNS_NOT_RETAINED NS_SWIFT_NAME(renderFrame(width:height:));
 
+/// Tells projectM the real current output frame rate, so presets whose per-frame code
+/// normalizes against the `fps` builtin (e.g. `x = x + rate/fps`) animate at their
+/// authored speed instead of speeding up on high-refresh displays. Safe to call every
+/// frame; projectM just stores the value. See MilkdropPreset per-frame `fps`/`frame`
+/// builtins (PerFrameContext.cpp) - this only corrects presets that use `fps`, not ones
+/// that key off the raw `frame` counter.
+- (void)setTargetFPS:(int32_t)fps NS_SWIFT_NAME(setTargetFPS(_:));
+
 @end
 
 NS_ASSUME_NONNULL_END

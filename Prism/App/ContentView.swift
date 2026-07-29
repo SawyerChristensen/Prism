@@ -473,12 +473,13 @@ struct ContentView: View {
                     }
                 }
             }
-            // First-launch (or any launch before one's ever been picked) auto-prompt for the
-            // preset library folder — previously only surfaced lazily, the first time Space/tap/`L`
-            // was pressed, leaving Space a silent no-op until a user stumbled onto that. Harmless to
-            // re-prompt on every launch until a folder is actually configured: `isConfigured` only
-            // ever flips true via a real successful pick (see MilkdropPresetLibrary.setLibraryRoot),
-            // so this never re-prompts someone who's already set one up.
+            // First-launch (or any launch before a library's ever been available) auto-prompt for
+            // the preset library folder — previously only surfaced lazily, the first time
+            // Space/tap/`L` was pressed, leaving Space a silent no-op until a user stumbled onto
+            // that. `isConfigured` is now true on essentially every launch (MilkdropPresetLibrary's
+            // init falls back to the app's own bundled preset pack when no external folder has been
+            // picked — see its own header comment), so in practice this only fires for a dev build
+            // made on a machine without the source pack, or a build where bundling was skipped.
             if !presetLibrary.isConfigured {
                 activeFilePicker = .libraryFolder
             }

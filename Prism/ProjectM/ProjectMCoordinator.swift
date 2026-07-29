@@ -92,9 +92,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // advanceAlbumArtAnimation below for the state machine that drives them. emptyAlbumArtTexture
     // stands in for any texture slot with nothing real to show, so the shader always runs the same
     // code path rather than branching per-frame on "has art or not."
-    private static let scaleInDuration: Float = 1.5
-    private static let separateDuration: Float = 1.5
-    private static let subjectExitDuration: Float = 1.5
+    private static let scaleInDuration: Float = 2.0
+    private static let separateDuration: Float = 2.0
+    private static let subjectExitDuration: Float = 2.0
     private static let albumArtSizePixels: Float = 480
     private static let globalAlphaEaseSpeed: Float = 8
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
@@ -566,6 +566,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let instantaneousFPS = 1.0 / dt
         smoothedFPS = smoothedFPS * 0.9 + instantaneousFPS * 0.1
         model?.displayFPS = smoothedFPS
+        // Presets whose per-frame code normalizes against the `fps` builtin (rate/fps) need this
+        // to match reality - projectM's own default (35) is otherwise never updated, so those
+        // presets would still animate ~3x too fast on a 120Hz display. See PerFrameContext.cpp's
+        // `fps`/`frame` builtins for why this only fixes presets that actually use `fps`.
+        engine?.setTargetFPS(Int32(max(1, min(1000, smoothedFPS.rounded()))))
     }
 
     private static func buildPipelineState(device: MTLDevice, pixelFormat: MTLPixelFormat) -> MTLRenderPipelineState? {

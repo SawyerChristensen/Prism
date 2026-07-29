@@ -17,14 +17,16 @@
 - [x] Change the projectM starting logo when the app first starts up
 - [x] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
 - [x] Verify the "Import milk presets" actually does something?
-- [ ] Bundle the external preset back with the xcode project so the entire app can actually be exported and work
+- [x] Bundle the external preset back with the xcode project so the entire app can actually be exported and work — a Run Script build phase (`Prism/Scripts/copy_bundled_presets.sh`) stages `.milk` files only (no `.jpg` thumbnails) from the source pack into `Resources/Presets` at build time; `MilkdropPresetLibrary` falls back to it when no external folder is configured.
+- [ ] Slow down all visuals
+  - [ ] Most presets take the previous frame and do some math to it so a higher frame rate (such as 120) actually speeds up all animations buy 2x. Going to 60fps does not reduce the reactivity of the audio, but it DOES decrease the speed at which the preset animates.
+  - [ ] Set preferred fps to whatever the device's max refresh rate is
+  - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Find a good collection of presets to ship, and make sure they are all sufficiently "chilled out"
-
 
 ## Post Launch
 ---
 - [ ] Expensive presets (flagged by MilkdropPresetComplexityAnalyzer — heavy tex3D/GetPixel-neighbor-sample warp/comp shaders, the kind that render at ~3fps) are currently just skipped outright during sequential stepping/auto-cycle. Instead, render them at a reduced internal resolution and upscale to the display size, so they're still shown (just cheaper) rather than never appearing at all.
-- [ ] Slow down all animations. keep the framerate high, and the app just as responsive to audio as it was before, but right now its just way too fast and spazzy. mellow everything out. is there an intensity/reactivity slider? if a bass hits there graphic should still change, the change just shouldnt be as crazy wild as it is now. things should gradually change but still sync to the music.
   - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add mutliple album art transition outs when the song ends
 - [ ] Figure out a solution to centering the subject of the album

@@ -2,13 +2,16 @@
 //  MilkdropPresetLibrary.swift
 //  Prism
 //
-//  The "point at an external folder" preset library decided in TO DO.md's testing-policy notes:
-//  Prism never bundles/copies a preset pack (unclear redistribution rights, 259MB+ of content),
-//  so this just remembers which folder the user picked and lists the `.milk` files under it.
-//  Persisted via a security-scoped bookmark (Prism is sandboxed — see Prism.entitlements'
-//  com.apple.security.files.user-selected.read-write) so access survives across app launches
-//  without re-prompting the user every single time, the same mechanism System Settings-style
-//  "remembered folder" pickers use.
+//  Defaults to the preset pack bundled into the app's own Resources/Presets (staged at build time
+//  by Scripts/copy_bundled_presets.sh, `.milk` files only — the pack's per-preset `.jpg` NestDrop
+//  preview thumbnails are excluded, since Prism never renders them and they're ~90% of the pack's
+//  raw size) so a freshly downloaded/exported build has a working library with no setup. A user
+//  can still override this by picking their own folder (the "L" key / library-folder picker);
+//  that pick is remembered via a security-scoped bookmark (Prism is sandboxed — see
+//  Prism.entitlements' com.apple.security.files.user-selected.read-write) so access survives
+//  across app launches without re-prompting every time, the same mechanism System Settings-style
+//  "remembered folder" pickers use. The bundled fallback needs no such bookmark — it's inside the
+//  app's own bundle, always readable regardless of sandboxing.
 //
 
 import Foundation
@@ -40,6 +43,9 @@ final class MilkdropPresetLibrary {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         restoreFromSavedBookmark()
+        if rootURL == nil {
+            useBundledPresetsIfAvailable()
+        }
     }
 
     deinit {
@@ -117,6 +123,17 @@ final class MilkdropPresetLibrary {
         if isStale, let refreshed = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
             defaults.set(refreshed, forKey: Self.bookmarkDefaultsKey)
         }
+    }
+
+    /// Points `rootURL` at the app's own bundled preset pack (no security scope needed — it's
+    /// inside the app's own bundle, not a user-selected external location) when no external
+    /// library has ever been configured. A no-op if the bundle has no `Presets` folder (e.g. a
+    /// dev build made on a machine without the source pack — see copy_bundled_presets.sh).
+    private func useBundledPresetsIfAvailable() {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("Presets", isDirectory: true),
+              FileManager.default.fileExists(atPath: bundled.path) else { return }
+        rootURL = bundled
+        rescan()
     }
 
     private func stopAccessingIfNeeded() {
