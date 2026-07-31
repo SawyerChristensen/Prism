@@ -12,11 +12,22 @@
 		62F28C248C9EDB552DB5DFA6 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		6FCA5057353640E09DDB1BB5 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
+		962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */; };
+		A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */; };
+		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
 		BE0D51E03013C06900F41558 /* TO DO.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0D51DF3013C06900F41558 /* TO DO.md */; };
 		D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		333C798D0C77B427E12D7112 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEAB8FD53012B50A005F68B6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DC96B834FF4D53DE75CA32AC;
+			remoteInfo = MilkQuickLook;
+		};
 		BEAB8FED3012B50C005F68B6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = BEAB8FD53012B50A005F68B6 /* Project object */;
@@ -47,11 +58,28 @@
 			name = "Embed Vendor Libraries";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		71B11F482C7CC62FBEACC13C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		16EE0B28541A385507882EDB /* MilkQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MilkQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		3454D9F9C1E7A67D6E72B2C8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MilkThumbnailProvider.swift; sourceTree = "<group>"; };
 		66DECD745A5A6D582CF50763 /* libEGL.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libEGL.dylib; path = Vendor/angle/lib/libEGL.dylib; sourceTree = SOURCE_ROOT; };
+		68CBBCF102DF19A60175B98F /* MilkQuickLook.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = MilkQuickLook.entitlements; sourceTree = "<group>"; };
+		7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */ = {isa = PBXFileReference; includeInIndex = 1; name = MilkDocumentIcon.icns; path = ../MilkDocumentIcon.icns; sourceTree = "<group>"; };
 		7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = "libprojectM-4.dylib"; path = "Vendor/projectm-build/lib/libprojectM-4.dylib"; sourceTree = SOURCE_ROOT; };
+		88B6666289C463A73A719C34 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		BE0D51DF3013C06900F41558 /* TO DO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TO DO.md"; sourceTree = "<group>"; };
 		BEAB8FDD3012B50A005F68B6 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -95,6 +123,14 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		837B03BDEBED71C27F0B55FC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BEAB8FDA3012B50A005F68B6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -122,6 +158,34 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		3C1AB62A39F5C2E0B9079290 /* MilkQuickLook */ = {
+			isa = PBXGroup;
+			children = (
+				51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */,
+				3454D9F9C1E7A67D6E72B2C8 /* Info.plist */,
+				68CBBCF102DF19A60175B98F /* MilkQuickLook.entitlements */,
+				7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */,
+			);
+			name = MilkQuickLook;
+			path = Prism/MilkQuickLook;
+			sourceTree = "<group>";
+		};
+		452E147554C6330651F653F8 /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				88B6666289C463A73A719C34 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		8F631662F44AB053F8B8219F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				452E147554C6330651F653F8 /* OS X */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		BCAF24C0B213990958B26549 /* Vendor Libraries */ = {
 			isa = PBXGroup;
 			children = (
@@ -141,6 +205,8 @@
 				BEAB8FF93012B50C005F68B6 /* PrismUITests */,
 				BEAB8FDE3012B50A005F68B6 /* Products */,
 				BCAF24C0B213990958B26549 /* Vendor Libraries */,
+				8F631662F44AB053F8B8219F /* Frameworks */,
+				3C1AB62A39F5C2E0B9079290 /* MilkQuickLook */,
 			);
 			sourceTree = "<group>";
 		};
@@ -150,6 +216,7 @@
 				BEAB8FDD3012B50A005F68B6 /* Prism.app */,
 				BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */,
 				BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */,
+				16EE0B28541A385507882EDB /* MilkQuickLook.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -166,10 +233,12 @@
 				BEAB8FDB3012B50A005F68B6 /* Resources */,
 				141407BA5A3D6307EECBC83A /* Embed Vendor Libraries */,
 				211CCFF14AFAFEF7D67740C5 /* Bundle Milkdrop Presets (.milk only) */,
+				71B11F482C7CC62FBEACC13C /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E8C7323349BB80543FF04B4E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				BEAB8FDF3012B50A005F68B6 /* Prism */,
@@ -221,6 +290,23 @@
 			productReference = BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		DC96B834FF4D53DE75CA32AC /* MilkQuickLook */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 150F8FD6D8381136D7E0949E /* Build configuration list for PBXNativeTarget "MilkQuickLook" */;
+			buildPhases = (
+				C0322475AFBFE70EE9545362 /* Sources */,
+				837B03BDEBED71C27F0B55FC /* Frameworks */,
+				809E32A81176AD6D3E25C17E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MilkQuickLook;
+			productName = MilkQuickLook;
+			productReference = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -261,11 +347,20 @@
 				BEAB8FDC3012B50A005F68B6 /* Prism */,
 				BEAB8FEB3012B50C005F68B6 /* PrismTests */,
 				BEAB8FF53012B50C005F68B6 /* PrismUITests */,
+				DC96B834FF4D53DE75CA32AC /* MilkQuickLook */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		809E32A81176AD6D3E25C17E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BEAB8FDB3012B50A005F68B6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -335,6 +430,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C0322475AFBFE70EE9545362 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -348,9 +451,40 @@
 			target = BEAB8FDC3012B50A005F68B6 /* Prism */;
 			targetProxy = BEAB8FF73012B50C005F68B6 /* PBXContainerItemProxy */;
 		};
+		E8C7323349BB80543FF04B4E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = MilkQuickLook;
+			target = DC96B834FF4D53DE75CA32AC /* MilkQuickLook */;
+			targetProxy = 333C798D0C77B427E12D7112 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		88CF2825AED02DD5EA9EE2AD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Prism/MilkQuickLook/MilkQuickLook.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Prism/MilkQuickLook/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.MilkQuickLook;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		BEAB8FFE3012B50C005F68B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -673,9 +807,43 @@
 			};
 			name = Release;
 		};
+		E0F59D7CA621F0DCE6F8A59F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Prism/MilkQuickLook/MilkQuickLook.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Prism/MilkQuickLook/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.MilkQuickLook;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		150F8FD6D8381136D7E0949E /* Build configuration list for PBXNativeTarget "MilkQuickLook" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				88CF2825AED02DD5EA9EE2AD /* Release */,
+				E0F59D7CA621F0DCE6F8A59F /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		BEAB8FD83012B50A005F68B6 /* Build configuration list for PBXProject "Prism" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

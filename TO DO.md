@@ -1,23 +1,13 @@
 # Prism — To Do
 ---
-- [x] Album art transitions
-  - [x] When a new song is chosen, lets transition into the album art, display it for a couple seconds and then let it blend with the preset once we decide how ^
-  - [x] Scale up transition
-  - [x] Scale down transition
-  - [x] Slide in from the right, pushing the other art to the left while it dissolves
-  - [x] Slide in from the top, pushing the other art out to the buttom while it dissolves
-- [x] Transition in the text on the bottom right and left. the text should settle at the same moment the subject becomes settled and the background start fading out. only transition both texts if the song and artist are changing. if just the song is changing but the artist stays the same, only transition the song text away
-- [x] Make the text the inverse of what is behind it. maybe a text-sized mask/inverse filter on the content? if the preset is black, the text should be white. if the preset is white, it should be black, if the preset is red, it should be the opposite of red etc. 
-- [x] Speed up all transitions once fully implemented
-- [x] The bar at the top of the window is set to white. is there a way we can extend what the gpu displays into that bar or get rid of the bar altogether? the red yellow and green buttons should still be there but the white bar is just a little annoying
-- [x] Deprecate the m, t and p keys for changing the art. comment them out for now! maybe revist later. right now they should do nothing. text still shows up on the screen for a deprecated function
-- [x] Add options in the view settings for hiding the album art and hiding the text
-- [x] Allow importing of milk files in the file menu. when a milk file is imported, it should display that milk file until the user starts cycling through again or until the application closes. Next time its opened, it should start cycling through again as default behavior
-- [x] Space should pause whatever music is playing
-- [x] Change the projectM starting logo when the app first starts up
-- [x] Add a "History" Menu bar tab where past presets in this session show up, above a "Last Session >" tab that shows the presets used last session
-- [x] Verify the "Import milk presets" actually does something?
-- [x] Bundle the external preset back with the xcode project so the entire app can actually be exported and work — a Run Script build phase (`Prism/Scripts/copy_bundled_presets.sh`) stages `.milk` files only (no `.jpg` thumbnails) from the source pack into `Resources/Presets` at build time; `MilkdropPresetLibrary` falls back to it when no external folder is configured.
+- [x] Tell the system that this application can open milk files if milk files are double clicked on
+- [x] Milk file icons
+- [ ] Tell Apple Music this app is a visualizer extension under Window > Visualizer/Visualizer Settings
+- [ ] Wait for the user to press enter/return to go past the starting screen
+- [ ] Better album overlays
+  - [ ] Different layers of the album should be on different layers of the visualizer
+  - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
+- [ ] Make own presets?
 - [ ] Slow down all visuals
   - [ ] Most presets take the previous frame and do some math to it so a higher frame rate (such as 120) actually speeds up all animations buy 2x. Going to 60fps does not reduce the reactivity of the audio, but it DOES decrease the speed at which the preset animates.
   - [ ] Set preferred fps to whatever the device's max refresh rate is

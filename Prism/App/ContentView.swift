@@ -152,7 +152,7 @@ struct ContentView: View {
                     // visualizer itself keeps changing underneath.
                     HStack {
                         Text(track)
-                            .font(.system(size: 24, weight: .regular))
+                            .font(.system(size: 24, weight: .semibold))
                             .foregroundStyle(.white)
                             .blendMode(.difference)
                             .padding()
@@ -162,7 +162,7 @@ struct ContentView: View {
                         Spacer()
 
                         Text(artist)
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(.system(size: 24, weight: .bold))
                             .foregroundStyle(.white)
                             .blendMode(.difference)
                             .padding()

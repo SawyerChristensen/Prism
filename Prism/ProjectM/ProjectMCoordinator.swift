@@ -275,11 +275,22 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // Art square is a fixed 480x480 device pixels (Spotify's own artwork resolution),
         // centered - the same spot SwiftUI's ZStack centered it by default before this moved
         // into the shader.
-        let (stage, stageProgress) = albumArtStageAndProgress()
-        let (outgoingActive, outgoingProgress) = outgoingActiveAndProgress()
+        // --- Album transition code temporarily disabled: force steady-state (fully in, no
+        // scale/slide/dissolve, no outgoing layer) instead of running the choreography below. ---
+        // let (stage, stageProgress) = albumArtStageAndProgress()
+        // let (outgoingActive, outgoingProgress) = outgoingActiveAndProgress()
+        let stage = AlbumArtStage.steady
+        let stageProgress: Float = 1
+        let outgoingActive: Float = 0
+        let outgoingProgress: Float = 0
         let hasSubjectMask = currentSubjectTexture != nil
-        let (subjectScale, backgroundScale) = albumArtScales(hasSubjectMask: hasSubjectMask)
-        let (subjectOffset, backgroundOffset) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
+        // let (subjectScale, backgroundScale) = albumArtScales(hasSubjectMask: hasSubjectMask)
+        // let (subjectOffset, backgroundOffset) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
+        let subjectScale: Float = 1
+        let backgroundScale: Float = 1
+        let subjectOffset = SIMD2<Float>(0, 0)
+        let backgroundOffset = SIMD2<Float>(0, 0)
+        // --- end disabled ---
         var uniforms = AlbumArtUniforms(
             waveTexelSize: SIMD2(1.0 / Float(width), 1.0 / Float(height)),
             artCenter: SIMD2(0.5, 0.5),
@@ -293,7 +304,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             distortionStrength: 0.06,
             subjectScale: subjectScale,
             backgroundScale: backgroundScale,
-            introAlpha: introAlpha(),
+            introAlpha: 1, // introAlpha(), -- disabled, see above
             subjectOffset: subjectOffset,
             backgroundOffset: backgroundOffset,
             outgoingActive: outgoingActive,
@@ -342,14 +353,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
                     subjectImage: latestSubjectImage
                 )
             } else {
-                // Whatever's currently on screen - however far along its own entrance happens to be
-                // - becomes the outgoing layer, replacing any still-dissolving previous outgoing
-                // layer if tracks are changing faster than subjectExitDuration (e.g. rapid skips).
-                // Vision may have found no subject for it either - erode the whole cover in that
-                // case rather than nothing at all.
-                outgoingTexture = currentSubjectTexture ?? currentBackgroundTexture
-                isOutgoingExitActive = true
-                outgoingExitClock = 0
+                // --- Album transition code temporarily disabled: no outgoing dissolve layer, just
+                // promote straight to the new track. ---
+                // outgoingTexture = currentSubjectTexture ?? currentBackgroundTexture
+                // isOutgoingExitActive = true
+                // outgoingExitClock = 0
+                // --- end disabled ---
                 promoteToCurrentTrack(
                     device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
                     subjectImage: latestSubjectImage
@@ -360,20 +369,24 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         defer { lastAlbumArtTimestamp = now }
         let dt = lastAlbumArtTimestamp.map { Float(now - $0) } ?? 0
 
-        if isOutgoingExitActive {
-            outgoingExitClock += dt
-            if outgoingExitClock >= Self.subjectExitDuration {
-                isOutgoingExitActive = false
-                outgoingTexture = nil
-            }
-        }
-        trackAnimationClock += dt
+        // --- Album transition code temporarily disabled ---
+        // if isOutgoingExitActive {
+        //     outgoingExitClock += dt
+        //     if outgoingExitClock >= Self.subjectExitDuration {
+        //         isOutgoingExitActive = false
+        //         outgoingTexture = nil
+        //     }
+        // }
+        // trackAnimationClock += dt
+        // --- end disabled ---
 
         let hasContent = currentBackgroundTexture != nil || currentSubjectTexture != nil || isOutgoingExitActive
         let target: Float = (hasContent && !albumArtHidden) ? 1 : 0
         globalAlpha += (target - globalAlpha) * min(1, max(0, dt) * Self.globalAlphaEaseSpeed)
     }
 
+    // --- Album transition code temporarily disabled ---
+    /*
     private func outgoingActiveAndProgress() -> (active: Float, progress: Float) {
         guard isOutgoingExitActive else { return (0, 0) }
         return (1, min(1, outgoingExitClock / Self.subjectExitDuration))
@@ -480,6 +493,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let inv = 1 - clamped
         return 1 - inv * inv * inv
     }
+    */
+    // --- end disabled ---
 
     private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
         currentRawImage = rawImage
