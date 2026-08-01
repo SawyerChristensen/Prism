@@ -1,0 +1,141 @@
+diff --git a/src/api/include/projectM-4/parameters.h b/src/api/include/projectM-4/parameters.h
+index 72058fb97..616dfca2b 100644
+--- a/src/api/include/projectM-4/parameters.h
++++ b/src/api/include/projectM-4/parameters.h
+@@ -279,6 +279,26 @@ PROJECTM_EXPORT void projectm_set_fps(projectm_handle instance, int32_t fps);
+  */
+ PROJECTM_EXPORT int32_t projectm_get_fps(projectm_handle instance);
+ 
++/**
++ * @brief PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): sets an app-controlled
++ * multiplier on the built-in warp-noise animation's time source, applied on top of whatever
++ * fWarpAnimSpeed the currently loaded preset itself sets. Lets the host slow presets down
++ * uniformly without per-preset authoring changes. Does not affect preset per_frame/per_pixel
++ * code, only the built-in warp mesh noise driven by fWarpAnimSpeed.
++ *
++ * @param instance The projectM instance handle.
++ * @param multiplier The multiplier to apply. 1.0 = unmodified.
++ */
++PROJECTM_EXPORT void projectm_set_warp_anim_speed_multiplier(projectm_handle instance, float multiplier);
++
++/**
++ * @brief PRISM_LOCAL_PATCH: returns the current warp anim speed multiplier. Default: 1.0
++ *
++ * @param instance The projectM instance handle.
++ * @return The current warp anim speed multiplier.
++ */
++PROJECTM_EXPORT float projectm_get_warp_anim_speed_multiplier(projectm_handle instance);
++
+ /**
+  * @brief Enabled or disables aspect ratio correction in presets that support it.
+  *
+diff --git a/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp b/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
+index 0c4a7b9a1..05c09f4da 100644
+--- a/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
++++ b/src/libprojectM/MilkdropPreset/PerPixelMesh.cpp
+@@ -284,7 +284,11 @@ void PerPixelMesh::WarpedBlit(const PresetState& presetState,
+                               const PerFrameContext& perFrameContext)
+ {
+     // Warp stuff
+-    float const warpTime = presetState.renderContext.time * presetState.warpAnimSpeed;
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): scaled by an app-controlled
++    // multiplier on top of the preset's own warpAnimSpeed, so the host can slow presets down
++    // without needing per-preset authoring changes.
++    float const warpTime = presetState.renderContext.time * presetState.warpAnimSpeed
++        * presetState.renderContext.warpAnimSpeedMultiplier;
+     float const warpScaleInverse = 1.0f / presetState.warpScale;
+     glm::vec4 const warpFactors{
+         11.68f + 4.0f * cosf(warpTime * 1.413f + 10),
+diff --git a/src/libprojectM/ProjectM.cpp b/src/libprojectM/ProjectM.cpp
+index a042f244c..8431fa0a3 100644
+--- a/src/libprojectM/ProjectM.cpp
++++ b/src/libprojectM/ProjectM.cpp
+@@ -488,6 +488,17 @@ void ProjectM::SetTargetFramesPerSecond(int32_t fps)
+     m_targetFps = fps;
+ }
+ 
++// PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md)
++auto ProjectM::WarpAnimSpeedMultiplier() const -> float
++{
++    return m_warpAnimSpeedMultiplier;
++}
++
++void ProjectM::SetWarpAnimSpeedMultiplier(float multiplier)
++{
++    m_warpAnimSpeedMultiplier = multiplier;
++}
++
+ auto ProjectM::AspectCorrection() const -> bool
+ {
+     return m_aspectCorrection;
+@@ -582,6 +593,7 @@ auto ProjectM::GetRenderContext() -> Renderer::RenderContext
+     ctx.progress = static_cast<float>(m_timeKeeper->PresetProgressA());
+     ctx.fps = static_cast<float>(m_targetFps);
+     ctx.frame = m_frameCount;
++    ctx.warpAnimSpeedMultiplier = m_warpAnimSpeedMultiplier; // PRISM_LOCAL_PATCH
+     ctx.aspectX = (m_windowHeight > m_windowWidth) ? static_cast<float>(m_windowWidth) / static_cast<float>(m_windowHeight) : 1.0f;
+     ctx.aspectY = (m_windowWidth > m_windowHeight) ? static_cast<float>(m_windowHeight) / static_cast<float>(m_windowWidth) : 1.0f;
+     ctx.invAspectX = 1.0f / ctx.aspectX;
+diff --git a/src/libprojectM/ProjectM.hpp b/src/libprojectM/ProjectM.hpp
+index 9879e77f0..1d7f92683 100644
+--- a/src/libprojectM/ProjectM.hpp
++++ b/src/libprojectM/ProjectM.hpp
+@@ -178,6 +178,14 @@ public:
+      */
+     void SetTargetFramesPerSecond(int32_t fps);
+ 
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): app-controlled multiplier on the
++    // built-in warp-noise animation's time source, on top of whichever fWarpAnimSpeed the preset
++    // itself sets. Lets the host slow down presets that otherwise always animate at the preset
++    // author's fixed rate. 1.0 = unmodified.
++    auto WarpAnimSpeedMultiplier() const -> float;
++
++    void SetWarpAnimSpeedMultiplier(float multiplier);
++
+     auto AspectCorrection() const -> bool;
+ 
+     void SetAspectCorrection(bool enabled);
+@@ -295,6 +303,7 @@ private:
+     uint32_t m_meshX{32};            //!< Per-point mesh horizontal resolution.
+     uint32_t m_meshY{24};            //!< Per-point mesh vertical resolution.
+     uint32_t m_targetFps{35};        //!< Target frames per second.
++    float m_warpAnimSpeedMultiplier{1.0f}; //!< PRISM_LOCAL_PATCH: app-controlled warp anim speed multiplier.
+     uint32_t m_windowWidth{0};       //!< EvaluateFrameData window width. If 0, nothing is rendered.
+     uint32_t m_windowHeight{0};      //!< EvaluateFrameData window height. If 0, nothing is rendered.
+     double m_presetDuration{30.0};   //!< Preset duration in seconds.
+diff --git a/src/libprojectM/ProjectMCWrapper.cpp b/src/libprojectM/ProjectMCWrapper.cpp
+index cd2bca2f2..09e1e75a8 100644
+--- a/src/libprojectM/ProjectMCWrapper.cpp
++++ b/src/libprojectM/ProjectMCWrapper.cpp
+@@ -366,6 +366,19 @@ void projectm_set_fps(projectm_handle instance, int32_t fps)
+     projectMInstance->SetTargetFramesPerSecond(fps);
+ }
+ 
++// PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md)
++float projectm_get_warp_anim_speed_multiplier(projectm_handle instance)
++{
++    auto projectMInstance = handle_to_instance(instance);
++    return projectMInstance->WarpAnimSpeedMultiplier();
++}
++
++void projectm_set_warp_anim_speed_multiplier(projectm_handle instance, float multiplier)
++{
++    auto projectMInstance = handle_to_instance(instance);
++    projectMInstance->SetWarpAnimSpeedMultiplier(multiplier);
++}
++
+ void projectm_set_aspect_correction(projectm_handle instance, bool enabled)
+ {
+     auto projectMInstance = handle_to_instance(instance);
+diff --git a/src/libprojectM/Renderer/RenderContext.hpp b/src/libprojectM/Renderer/RenderContext.hpp
+index 9fec280dc..5a3b1143e 100644
+--- a/src/libprojectM/Renderer/RenderContext.hpp
++++ b/src/libprojectM/Renderer/RenderContext.hpp
+@@ -21,6 +21,7 @@ public:
+     float time{0.0f};          //!< Time since the preset started, in seconds.
+     int frame{0};              //!< Frames rendered so far.
+     float fps{0.0f};           //!< Frames per second.
++    float warpAnimSpeedMultiplier{1.0f}; //!< PRISM_LOCAL_PATCH: app-controlled warp anim speed multiplier.
+     float progress{0.0f};      //!< Preset progress.
+     float blendProgress{0.0f}; //!< Preset transition/blending progress.
+     int viewportSizeX{0};      //!< Horizontal viewport size in pixels

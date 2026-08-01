@@ -21,6 +21,12 @@ final class ProjectMVisualizerModel {
     /// ProjectMCoordinator once per frame — read by ContentView's on-screen performance counter.
     var displayFPS: Double = 60
 
+    /// Multiplier on top of each preset's own `fWarpAnimSpeed`, adjusted via ContentView's
+    /// up/down arrow handling and applied every frame by ProjectMCoordinator
+    /// (engine.setWarpAnimSpeedMultiplier) — see PRISM_LOCAL_PATCH in
+    /// Vendor/projectm-local-patches/0004-warp-anim-speed-multiplier.patch. 1.0 = unmodified.
+    var warpAnimSpeedMultiplier: Double = 1.0
+
     func requestPreset(at url: URL) {
         presetURL = url
         presetLoadError = nil

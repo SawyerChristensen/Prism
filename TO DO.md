@@ -8,7 +8,9 @@
   - [x] Change a preset every song — wired `kVisualPluginChangeTrackMessage` to pick a new random preset (smooth crossfade)
   - [ ] The extension should skip the starting screen — cause not confirmed yet (likely projectM's own built-in default/idle state showing for a moment before the first `loadPresetAtURL` call takes effect); untested in a real running Music.app
 - [ ] Better album overlays
-  - [ ] Different layers of the album should be on different layers of the visualizer
+  - [x] Different layers of the album should be on different layers of the visualizer
+  - [ ] comment out chromatic aberation
+  - [ ] Better base reacivity
   - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
 - [ ] Make own presets?
 - [ ] Slow down all visuals

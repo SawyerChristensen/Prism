@@ -117,4 +117,9 @@ void PresetSwitchFailedTrampoline(const char* presetFilename, const char* messag
     projectm_set_fps(_instance, fps);
 }
 
+- (void)setWarpAnimSpeedMultiplier:(float)multiplier
+{
+    projectm_set_warp_anim_speed_multiplier(_instance, multiplier);
+}
+
 @end

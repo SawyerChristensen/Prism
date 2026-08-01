@@ -363,7 +363,11 @@ struct ContentView: View {
         // NowPlayingManager.togglePlayPause — the same effect that key has when one of those apps
         // is itself frontmost, so it isn't lost just because Prism has focus instead. Left/Right
         // step back/forward through this session's preset history (loadPreviousPreset/
-        // loadNextPreset), same as tapping the visualizer for forward. Cmd-A/Cmd-T (hide album
+        // loadNextPreset), same as tapping the visualizer for forward. Up/Down adjust
+        // warpAnimSpeedMultiplier (adjustWarpAnimSpeed) — many presets animate at a fixed per-frame
+        // rate baked in by the author (see Vendor/projectm-VERSION.md's warp-anim-speed-multiplier
+        // local patch), so this is a manual damper for ones that read too fast, independent of the
+        // automatic projectm_set_fps correction ProjectMCoordinator already applies. Cmd-A/Cmd-T (hide album
         // art / hide text) are handled by the View menu's commands (PrismApp.swift), not here,
         // since a menu key equivalent always intercepts a press before it would reach this view's
         // onKeyPress — unaffected by the `keys:` narrowing below.
@@ -376,13 +380,21 @@ struct ContentView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, "m", "M"]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, .upArrow, .downArrow, "m", "M"]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
             }
             if press.key == .rightArrow {
                 loadNextPreset()
+                return .handled
+            }
+            if press.key == .upArrow {
+                adjustWarpAnimSpeed(by: 0.1)
+                return .handled
+            }
+            if press.key == .downArrow {
+                adjustWarpAnimSpeed(by: -0.1)
                 return .handled
             }
             switch press.characters {
@@ -595,6 +607,17 @@ struct ContentView: View {
         ratingStore.flag(issue, for: url)
         showRatingFeedback(label)
         loadNextSequentialPreset()
+    }
+
+    /// Up/Down arrow: nudges warpAnimSpeedMultiplier (ProjectMVisualizerModel), clamped so Down
+    /// can't zero out the animation entirely and Up can't run it faster than presets already do
+    /// unmodified. Applied every frame by ProjectMCoordinator.draw via
+    /// engine.setWarpAnimSpeedMultiplier — see the PRISM_LOCAL_PATCH doc in
+    /// Vendor/projectm-VERSION.md for what this does and doesn't affect.
+    private func adjustWarpAnimSpeed(by delta: Double) {
+        let stepped = ((visualizerModel.warpAnimSpeedMultiplier + delta) * 10).rounded() / 10
+        visualizerModel.warpAnimSpeedMultiplier = min(2.0, max(0.1, stepped))
+        showRatingFeedback(String(format: "Warp Speed: %.1fx", visualizerModel.warpAnimSpeedMultiplier))
     }
 
     /// Shared one-shot, auto-clearing confirmation for rateCurrentPreset/flagCurrentPresetWhite —

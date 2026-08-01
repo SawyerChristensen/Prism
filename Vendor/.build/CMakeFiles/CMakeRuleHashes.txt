@@ -1,6 +1,0 @@
-# Hashes of file build rules.
-f6e0779f90e321cdfc64f1e46999b224 /Users/sawyerchristensen/Documents/Prism/Vendor/projectm/vendor/projectm-eval/projectm-eval/Scanner.c
-aa63e44716b62a0732d6c04c646395a8 src/libprojectM/MilkdropPreset/MilkdropStaticShaders.cpp
-e65456ba3e1d9dd22300f69c343c761c src/libprojectM/Renderer/BuiltInTransitionsResources.hpp
-2ddb8021c93a7297368cf316cb3bdc29 src/libprojectM/UserSprites/SpriteShaders.hpp
-daadf3483b2d938bbc78bf2546c9061d vendor/projectm-eval/projectm-eval/CMakeFiles/GenerateScanner

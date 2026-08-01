@@ -49,6 +49,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// that key off the raw `frame` counter.
 - (void)setTargetFPS:(int32_t)fps NS_SWIFT_NAME(setTargetFPS(_:));
 
+/// Multiplies the built-in warp-noise animation's time source (on top of whatever the
+/// preset's own `fWarpAnimSpeed` already is) - see PRISM_LOCAL_PATCH in
+/// PerPixelMesh.cpp. 1.0 = unmodified. Safe to call every frame.
+- (void)setWarpAnimSpeedMultiplier:(float)multiplier NS_SWIFT_NAME(setWarpAnimSpeedMultiplier(_:));
+
 @end
 
 NS_ASSUME_NONNULL_END

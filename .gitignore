@@ -20,3 +20,6 @@ xcuserdata/
 # macOS
 .DS_Store
 .claude/worktrees/
+
+# CMake build output
+Vendor/.build/

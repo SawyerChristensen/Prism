@@ -325,6 +325,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         ProjectMAudioBridge.feed(engine, from: audioEngine)
         let now = CACurrentMediaTime()
         updateDisplayFPS(now: now)
+        engine.setWarpAnimSpeedMultiplier(Float(model?.warpAnimSpeedMultiplier ?? 1.0))
         advanceAlbumArtAnimation(device: device, now: now)
 
         let width = Int(view.drawableSize.width)

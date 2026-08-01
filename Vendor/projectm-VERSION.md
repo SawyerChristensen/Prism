@@ -45,3 +45,28 @@ The patch is marked `PRISM_LOCAL_PATCH` in the source for easy grepping and must
 after any `git submodule update --remote` bump (search for that marker after upgrading), unless a
 future ANGLE build negotiates GLES 3.2 on Metal, at which point this patch should be dropped and
 the gate reverted to upstream's `WithMinimumVersion(3, 2)` / `WithMinimumShaderLanguageVersion(3, 20)`.
+
+## Local patch: app-controlled warp animation speed multiplier
+
+The patch is checked in at
+`Prism/Vendor/projectm-local-patches/0004-warp-anim-speed-multiplier.patch` (same not-part-of-the-
+submodule's-tracked-commit caveat as above — re-applied by `Prism/Vendor/build-projectm.sh`).
+
+Adds a new public C API pair, `projectm_set_warp_anim_speed_multiplier(instance, float)` /
+`projectm_get_warp_anim_speed_multiplier(instance)`, mirroring the shape of the existing
+`projectm_set_fps`/`projectm_get_fps`. It threads a new `ProjectM::m_warpAnimSpeedMultiplier`
+member through `RenderContext::warpAnimSpeedMultiplier` (set once per frame in
+`ProjectM::GetRenderContext`, next to where `ctx.fps` is set) down to
+`PerPixelMesh::WarpedBlit`'s `warpTime` calculation
+(`src/libprojectM/MilkdropPreset/PerPixelMesh.cpp`), where it multiplies on top of whatever
+`fWarpAnimSpeed` the loaded preset itself specifies. Default 1.0 (no change from upstream
+behavior).
+
+Motivation: presets step their `per_frame`/`per_pixel` code once per rendered frame with no
+built-in time-scaling (see `frame`/`fps` builtins in `PerFrameContext.cpp` — `frame` is a raw
+per-call counter, and `fps` only helps presets that explicitly normalize against it), so output
+frame rate directly changes how fast a preset's *content* animates, not just how smoothly it's
+drawn. This multiplier only affects the engine's own built-in warp-noise animation
+(`fWarpAnimSpeed`), not arbitrary preset `per_frame` code — see Prism's `projectm_set_fps` call
+site (`ProjectMCoordinator.swift`) for the complementary fix that helps `fps`-normalized presets.
+Exposed to the user via up/down arrow keys in `ContentView.swift`.
