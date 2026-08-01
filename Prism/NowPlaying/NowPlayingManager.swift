@@ -71,6 +71,76 @@ final class NowPlayingManager {
     private(set) var artistName: String?
     private(set) var albumName: String?
     private(set) var artwork: NSImage?
+    /// Public window onto `cachedRawArtwork` (the unmodified fetched cover, before any masking/
+    /// color-keying) — exposed for ContentView's Metal album-art compositing, which needs the full
+    /// cover separately from `subjectArtwork` to choreograph a fade-in-then-background-erodes-away
+    /// sequence rather than just showing whatever `maskingMode` already flattened.
+    var rawArtwork: NSImage? { cachedRawArtwork }
+    /// Vision's subject cutout with OCR-detected text drawn back on top at full fidelity — the
+    /// same "subject + text" merge `compositeArtwork`'s `.combined` mode produces as its `final`
+    /// image (see below), just *without* that function's own last step
+    /// (`recenteredOnOpaqueContent()`): the Metal compositing needs this pixel-registered with
+    /// `rawArtwork`/`colorKeyedArtwork` — same dimensions, same subject position — so it can be
+    /// punched as one hole out of the background layer and sampled at the same scale; recentering
+    /// would crop/reposition it out of alignment with the other two. This *is* "the end graphic"
+    /// as far as the Metal pass is concerned — what gets treated as the locked-in-place subject
+    /// that the background separates away from, text included, not the bare Vision mask alone.
+    ///
+    /// A plain window onto `cachedSubjectArtwork` — recomputed once per track (or once whenever
+    /// `includesTextOverlay` toggles), *not* on every access, by `recomputeDerivedAlbumArtLayers()`.
+    /// ProjectMMetalView reads this every SwiftUI update tick (once per rendered frame, since
+    /// ContentView's on-screen FPS counter forces a re-render every frame — see
+    /// visualizerModel.displayFPS), so doing the actual Otsu-thresholding/CGContext-compositing
+    /// work live in here, as an earlier version of this property did, meant redoing that full-image
+    /// processing ~120 times a second on the main thread for a cover that never changes between
+    /// frames — measured tanking an otherwise-120fps preset down to ~14fps.
+    var subjectArtwork: NSImage? { cachedSubjectArtwork }
+    /// Vision's subject cutout alone, with no OCR text drawn back on top — the "only the subject"
+    /// step of ContentView's four-style album-art cycle (see AlbumArtDisplayStyle), distinct from
+    /// `subjectArtwork` above which always includes text when `includesTextOverlay` is on. A plain
+    /// window onto `cachedSubjectMask`, cached per track exactly like `subjectArtwork` — same
+    /// "don't recompute per access" reasoning applies (ProjectMMetalView reads this every frame).
+    var subjectOnlyArtwork: NSImage? { cachedSubjectMask }
+    /// OCR-detected text alone, masked out the same way `subjectOnlyArtwork` masks out the subject
+    /// — the "subject with text" style's text half, kept as its own layer (rather than pre-merged
+    /// into `subjectArtwork`) so the Metal compositing can hold text static while the subject layer
+    /// beat-zooms independently on top of it (see ProjectMCoordinator.texturesForCurrentStyle) —
+    /// zooming the merged subject+text image together would drag the text along with the subject's
+    /// pulse. A plain window onto `cachedTextOnlyArtwork`, cached per track/`includesTextOverlay`
+    /// toggle exactly like `subjectArtwork`.
+    var textOnlyArtwork: NSImage? { cachedTextOnlyArtwork }
+    /// The same color-keying step `.combined` mode uses (see `compositeArtwork`) — nil when the
+    /// measured background color isn't a clean solid (`backgroundTone == .other`), same as
+    /// `compositeArtwork`'s own `colorKeyed` local. A plain window onto `cachedColorKeyedArtwork` —
+    /// cached, not recomputed per access, for the same reason as `subjectArtwork` above (this one
+    /// specifically measured ~20-30ms/frame of `keyingOutBackground`'s per-pixel scan, on top of
+    /// `subjectArtwork`'s own cost, before caching). Exposed so the Metal compositing (see
+    /// `rawArtwork`/`subjectArtwork`) can reinstate `.combined`'s "color-key the background out,
+    /// then keep Vision's subject at full fidelity" default instead of relying on the subject mask
+    /// alone, which was punching a subject-shaped hole out of the *unkeyed* raw cover for the
+    /// background layer.
+    var colorKeyedArtwork: NSImage? { cachedColorKeyedArtwork }
+    /// The cover keyed out against its own measured background color, subject and OCR text *also*
+    /// punched out (see NSImage.punchingHole(using:)) - the fully-separated "background minus
+    /// color" layer of ContentView's four-layer stack (see ProjectMCoordinator.AlbumArtLayerCount),
+    /// distinct from `colorKeyedArtwork` itself, which still carries the subject/text pixels
+    /// (colorKeyingOut a solid background color doesn't know anything about where the subject is).
+    /// Unlike `colorKeyedArtwork`, this keys out regardless of `backgroundTone` - `colorKeyedArtwork`
+    /// stays gated to near-black/near-white covers because a bad key there would flip `.combined`
+    /// mode's *default* look worse for ordinary photo covers, but this layer only shows up when the
+    /// user has already revealed it via "M", so a less-precise cutout on a busy cover just means
+    /// "some real detail" instead of "always a flat swatch" for the vast majority of covers, which
+    /// aren't near-black/near-white. Nil only when there's no measured background color at all (or
+    /// no raw artwork loaded yet). Cached alongside the other derived layers by
+    /// `recomputeDerivedAlbumArtLayers()` for the same "don't redo this ~120 times a second"
+    /// reason as `subjectArtwork`.
+    var backgroundDetailArtwork: NSImage? { cachedBackgroundDetailArtwork }
+    /// A flat, fully-opaque fill of the measured background color (see NSImage.filled(with:size:))
+    /// - the "background color" layer of ContentView's four-layer stack, the bottom of the stack.
+    /// Nil only when there's no measured background color at all - not gated on `backgroundTone`
+    /// (see `recomputeDerivedAlbumArtLayers`'s own comment on why a flat fill has no precision
+    /// requirement the way a color key does).
+    var backgroundColorArtwork: NSImage? { cachedBackgroundColorArtwork }
     /// Text Vision found on the current artwork (see TextExtraction.swift), most-confident
     /// reading per line, in whatever order Vision returned them — not guaranteed to be reading
     /// order. Empty (not nil) when there's no text, which is the common case for most covers.
@@ -98,12 +168,16 @@ final class NowPlayingManager {
 
     /// Whether OCR-detected text gets drawn back on top of the masked artwork at all (see
     /// TextExtraction.swift/`compositeArtwork`). Settable for the same reason as `maskingMode` —
-    /// a future Settings toggle, or ContentView's "T" shortcut in the meantime, can bind to it
-    /// directly, with the same live-preview-only recompose-on-change behavior.
+    /// a future Settings toggle can bind to it directly, with the same live-preview-only
+    /// recompose-on-change behavior. No manual keyboard shortcut currently exposes this ("T" was
+    /// reassigned to ContentView's "Hide Text" toggle, a display-only concern independent of this
+    /// pipeline-level flag) — it's driven automatically today (applyParentalAdvisoryDefaultIfNeeded)
+    /// and via the persisted per-album ArtworkPreferences.
     var includesTextOverlay: Bool = true {
         didSet {
             guard includesTextOverlay != oldValue else { return }
             recomposite()
+            recomputeDerivedAlbumArtLayers()
         }
     }
 
@@ -126,6 +200,14 @@ final class NowPlayingManager {
     private var cachedRawArtwork: NSImage?
     private var cachedColors: (background: NSColor, foreground: NSColor)?
     private var cachedSubjectMask: NSImage?
+    // Backing storage for `colorKeyedArtwork`/`subjectArtwork`/`textOnlyArtwork` (see their doc
+    // comments) — recomputed by `recomputeDerivedAlbumArtLayers()`, never live in the property
+    // getter, since ProjectMMetalView reads these every rendered frame.
+    private var cachedColorKeyedArtwork: NSImage?
+    private var cachedSubjectArtwork: NSImage?
+    private var cachedTextOnlyArtwork: NSImage?
+    private var cachedBackgroundDetailArtwork: NSImage?
+    private var cachedBackgroundColorArtwork: NSImage?
 
     // Remembers maskingMode/includesTextOverlay per album (see `Self.albumKey`, `loadArtwork`,
     // `saveCurrentArtworkPreference`). Loaded at launch from the bundled Resources/
@@ -181,7 +263,6 @@ final class NowPlayingManager {
     /// thread — `refresh()` is called from a `Timer` on the main run loop every 2 seconds, and a
     /// single slow round-trip there would freeze the UI for that long, repeatedly.
     private func refresh() {
-        PrismDebug.trace("refresh() dispatched")
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             for app in Self.supportedApps {
@@ -194,7 +275,21 @@ final class NowPlayingManager {
                         self.sourceApp = app.name
                         if key != self.currentTrackKey {
                             self.currentTrackKey = key
-                            self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                            // Same-album track change (e.g. skipping to the next song on the same
+                            // record) — the art itself isn't changing, so leave cachedRawArtwork/
+                            // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
+                            // than clearing and re-fetching them. Since ProjectMCoordinator's own
+                            // scaleIn/separate/outgoingExit choreography (see
+                            // ProjectMCoordinator.advanceAlbumArtAnimation) only triggers when
+                            // rawArtwork hands it a *new* NSImage instance, leaving these untouched
+                            // means the art just stays put on screen instead of tearing itself apart
+                            // and reassembling for art that would look identical anyway. A nil
+                            // albumKey (no artist or album metadata at all) can't be compared this
+                            // way, so it always falls through to a normal fetch.
+                            let newAlbumKey = Self.albumKey(artist: info.artist, album: info.album)
+                            if newAlbumKey == nil || newAlbumKey != self.currentAlbumKey {
+                                self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                            }
                         }
                     }
                     return
@@ -211,6 +306,29 @@ final class NowPlayingManager {
                 self.albumForegroundColor = nil
                 self.currentTrackKey = nil
             }*/
+        }
+    }
+
+    /// "Space" (ContentView's onKeyPress): toggles play/pause on whichever supported player
+    /// (Spotify or Music) is actually current, mirroring the same key's effect when one of those
+    /// apps is itself frontmost. Prefers `sourceApp` (the last app `refresh()` saw actively
+    /// playing — still meaningful once paused, since `refresh()` leaves it untouched rather than
+    /// clearing it when nothing's playing, see `refresh()`'s trailing no-op branch) as long as
+    /// that app is still running; falls back to the first of `supportedApps` that's running
+    /// (Spotify checked before Music, same order `queryNowPlaying` already uses) for the
+    /// nothing's-played-yet-this-launch case. A no-op if neither supported app is running.
+    /// Dispatched off the main thread for the same reason `queryNowPlaying`/`runScript` are: a
+    /// blocking, synchronous Apple Events round-trip.
+    func togglePlayPause() {
+        let preferredBundleID = Self.supportedApps.first(where: { $0.name == sourceApp })?.bundleID
+        Task.detached(priority: .userInitiated) {
+            let running = NSWorkspace.shared.runningApplications
+            func isRunning(_ bundleID: String) -> Bool {
+                running.contains { $0.bundleIdentifier == bundleID }
+            }
+            guard let target = Self.supportedApps.first(where: { $0.bundleID == preferredBundleID && isRunning($0.bundleID) })
+                ?? Self.supportedApps.first(where: { isRunning($0.bundleID) }) else { return }
+            _ = Self.runScript("tell application id \"\(target.bundleID)\" to playpause", appName: target.name)
         }
     }
 
@@ -233,12 +351,9 @@ final class NowPlayingManager {
         end tell
         return ""
         """
-        PrismDebug.trace("queryNowPlaying(\(app.name)) start")
         guard let result = runScript(script, appName: app.name) else {
-            PrismDebug.trace("queryNowPlaying(\(app.name)) -> nil")
             return nil
         }
-        PrismDebug.trace("queryNowPlaying(\(app.name)) done")
 
         let value = result.stringValue ?? ""
         if PrismDebug.verboseLogging {
@@ -260,6 +375,11 @@ final class NowPlayingManager {
         cachedRawArtwork = nil
         cachedColors = nil
         cachedSubjectMask = nil
+        cachedColorKeyedArtwork = nil
+        cachedSubjectArtwork = nil
+        cachedTextOnlyArtwork = nil
+        cachedBackgroundDetailArtwork = nil
+        cachedBackgroundColorArtwork = nil
         genre = nil // Reset genre here too
 
         // Apply a saved preference for this album (if any) *before* kicking off the artwork
@@ -333,6 +453,7 @@ final class NowPlayingManager {
                 self.cachedRawArtwork = image
                 self.cachedColors = colors
                 self.cachedSubjectMask = subjectMasked
+                self.recomputeDerivedAlbumArtLayers()
             }
         }
     }
@@ -405,6 +526,7 @@ final class NowPlayingManager {
                 self?.cachedRawArtwork = image
                 self?.cachedColors = colors
                 self?.cachedSubjectMask = subjectMasked
+                self?.recomputeDerivedAlbumArtLayers()
             }
         }
     }
@@ -419,6 +541,70 @@ final class NowPlayingManager {
         guard currentAlbumKey.map({ artworkPreferences[$0] == nil }) ?? true else { return }
         guard lines.isOnlyParentalAdvisoryLabel else { return }
         includesTextOverlay = false
+    }
+
+    /// Rebuilds `cachedColorKeyedArtwork`/`cachedSubjectArtwork` (the backing storage behind the
+    /// public `colorKeyedArtwork`/`subjectArtwork` properties) from this track's already-cached
+    /// ingredients — called once per track (end of loadSpotifyArtwork/loadArtworkFromiTunes) and
+    /// once whenever `includesTextOverlay` toggles, never from the property getters themselves.
+    /// Those getters are read by ProjectMMetalView on every SwiftUI update tick, which in practice
+    /// is every rendered frame (ContentView's on-screen FPS counter reads `visualizerModel.
+    /// displayFPS`, which `ProjectMCoordinator.draw(in:)` updates every frame, forcing a re-render
+    /// each time) — doing the real per-pixel color-keying/Otsu-thresholding/CGContext work live in
+    /// the getters, as an earlier version did, meant redoing it ~120 times a second for a cover
+    /// that never changes between frames, measured tanking an otherwise-120fps preset to ~14fps.
+    /// No-op (leaves both caches as they are) if nothing's loaded yet.
+    private func recomputeDerivedAlbumArtLayers() {
+        guard let cachedRawArtwork else { return }
+
+        if let background = cachedColors?.background, background.backgroundTone != .other {
+            cachedColorKeyedArtwork = cachedRawArtwork.keyingOutBackground(background)
+        } else {
+            cachedColorKeyedArtwork = nil
+        }
+
+        let textOverlay = includesTextOverlay ? cachedRawArtwork.maskingOutBackgroundByText(albumArtText) : nil
+        cachedTextOnlyArtwork = textOverlay
+        switch (cachedSubjectMask, textOverlay) {
+        case let (.some(subject), .some(text)):
+            cachedSubjectArtwork = subject.overlaying(text) ?? subject
+        case let (.some(subject), nil):
+            cachedSubjectArtwork = subject
+        case let (nil, .some(text)):
+            cachedSubjectArtwork = text
+        case (nil, nil):
+            cachedSubjectArtwork = nil
+        }
+
+        // The four-layer stack's own two "background" layers (see ContentView's "M" cycle /
+        // ProjectMCoordinator.AlbumArtLayerCount) - genuinely non-overlapping with the subject/
+        // text layers above, unlike colorKeyedArtwork itself (color-keying a solid background
+        // color out doesn't know anything about where the subject or text actually are, so it
+        // still carries their pixels). Reuses `cachedColorKeyedArtwork` when the background already
+        // qualified as clean (avoids keying the same image twice); otherwise keys out the same way
+        // regardless of `backgroundTone` - see `backgroundDetailArtwork`'s own doc comment for why
+        // that's safe here even though `colorKeyedArtwork` itself stays gated. Nil (leaving this
+        // layer empty/transparent, letting backgroundColor show through) only when there's no
+        // measured background color to key against at all.
+        let backgroundDetailKeyedArtwork = cachedColorKeyedArtwork
+            ?? cachedColors.flatMap { cachedRawArtwork.keyingOutBackground($0.background) }
+        cachedBackgroundDetailArtwork = backgroundDetailKeyedArtwork?
+            .punchingHole(using: cachedSubjectMask)
+            .punchingHole(using: textOverlay)
+        // Unlike colorKeyedArtwork, deliberately *not* gated on backgroundTone != .other: that
+        // check exists because keying only works well against a genuinely solid/near-solid
+        // background (a bad key color punches holes randomly through the rest of the photo), but a
+        // flat fill has no such precision requirement - it's just a solid rectangle of whatever
+        // color was actually measured, valid to show for any cover extractColors managed to read
+        // *a* dominant background color from at all. Gating this the
+        // same way `colorKeyedArtwork` is would leave the backgroundColor layer permanently nil
+        // (and this layer of the four-layer stack invisible) for every cover whose background
+        // isn't near-black/near-white, which is most of them.
+        if let background = cachedColors?.background {
+            cachedBackgroundColorArtwork = .filled(with: background, size: cachedRawArtwork.size)
+        } else {
+            cachedBackgroundColorArtwork = nil
+        }
     }
 
     /// Re-composites `artwork` from this track's already-cached ingredients (raw image, colors,

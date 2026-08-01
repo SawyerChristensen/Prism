@@ -144,6 +144,11 @@
     "maskingMode" : "visionAloneElseColorKey",
     "processingEnabled" : true
   },
+  "klaus doldinger|the never ending story" : {
+    "includesTextOverlay" : false,
+    "maskingMode" : "combined",
+    "processingEnabled" : true
+  },
   "kylie minogue|fever" : {
     "includesTextOverlay" : true,
     "maskingMode" : "visionAloneElseColorKey",

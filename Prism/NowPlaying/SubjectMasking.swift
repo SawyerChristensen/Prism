@@ -9,9 +9,10 @@
 //  subject regardless of what the background looks like — gradient, texture, busy edge-to-edge
 //  art, anything.
 //
-//  NowPlayingManager.keyedArtwork combines both: color-key the background broadly (catches
-//  background-colored pixels wherever they appear, including any stray ones the Vision mask's
-//  edge missed), then draw the Vision-detected subject back on top at full fidelity via
+//  NowPlayingManager.compositeArtwork's `.combined` mode (and, for the Metal album-art path,
+//  ProjectMCoordinator.promoteToCurrentTrack) combines both: color-key the background broadly
+//  (catches background-colored pixels wherever they appear, including any stray ones the Vision
+//  mask's edge missed), then draw the Vision-detected subject back on top at full fidelity via
 //  `overlaying(_:)` below — so if the subject happens to share a color with the background (dark
 //  clothing on a black cover, say), the color key can't accidentally punch a hole through it,
 //  since the subject overlay always wins there.
@@ -73,6 +74,38 @@ extension NSImage {
         context.draw(subjectCGImage, in: rect)
 
         guard let outCGImage = context.makeImage() else { return nil }
+        return outCGImage.asPixelExactNSImage()
+    }
+
+    /// The inverse of `overlaying(_:)` above: erases this image wherever `mask` is opaque
+    /// (`.destinationOut` - draw self, then erase using mask's own alpha as the stencil), so the
+    /// two fit together like puzzle pieces that reconstitute the original exactly. Returns `self`
+    /// completely untouched when `mask` is nil, matching the "nothing to cut, show the whole
+    /// thing" fallback used elsewhere for the same operation (see
+    /// ProjectMCoordinator.backgroundWithSubjectHole, which this mirrors for a Metal-side
+    /// hole-punch specifically - this is the general-purpose version, used by
+    /// NowPlayingManager.backgroundDetailArtwork to punch the subject *and* text out of the
+    /// color-keyed background so the four-layer stack's layers never overlap).
+    nonisolated func punchingHole(using mask: NSImage?) -> NSImage {
+        guard let mask,
+              let baseCGImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let maskCGImage = mask.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return self }
+        let width = baseCGImage.width, height = baseCGImage.height
+        guard width > 0, height > 0 else { return self }
+
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return self }
+
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.draw(baseCGImage, in: rect)
+        context.setBlendMode(.destinationOut)
+        context.draw(maskCGImage, in: rect)
+
+        guard let outCGImage = context.makeImage() else { return self }
         return outCGImage.asPixelExactNSImage()
     }
 }

@@ -1,0 +1,26 @@
+diff --git a/src/libprojectM/Renderer/Platform/GladLoader.cpp b/src/libprojectM/Renderer/Platform/GladLoader.cpp
+index 0cb30ae46..576046d53 100644
+--- a/src/libprojectM/Renderer/Platform/GladLoader.cpp
++++ b/src/libprojectM/Renderer/Platform/GladLoader.cpp
+@@ -45,10 +45,19 @@ auto GladLoader::CheckGLRequirements() -> bool
+ 
+ #ifdef USE_GLES
+ 
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): upstream requires GLES 3.2 /
++    // GLSL ES 3.20 here, but Apple's ANGLE Metal backend (the macOS GL implementation Prism
++    // vendors) currently only negotiates GLES 3.0 contexts on this hardware/OS combination.
++    // Lowered to 3.0/3.00 to match what ANGLE-Metal actually provides. Verified this codebase
++    // uses no ES 3.1/3.2-exclusive features (no compute/geometry/tessellation shaders, no SSBOs,
++    // no required extensions are actually enabled below) before making this change - grep the
++    // Renderer/ and MilkdropPreset/ trees for GL_COMPUTE_SHADER/GL_GEOMETRY_SHADER/
++    // GL_TESS_CONTROL/GL_TESS_EVALUATION/glDispatchCompute/GL_SHADER_STORAGE_BUFFER to
++    // re-verify if this ever needs revisiting (e.g. once ANGLE's Metal backend gains ES 3.2).
+     glCheck
+         .WithApi(GLApi::OpenGLES)
+-        .WithMinimumVersion(3, 2)
+-        .WithMinimumShaderLanguageVersion(3, 20)
++        .WithMinimumVersion(3, 0)
++        .WithMinimumShaderLanguageVersion(3, 0)
+         //        .WithRequiredExtension("GL_OES_texture_float")
+         //        .WithRequiredExtension("GL_OES_standard_derivatives")
+         .WithRequireCoreProfile(false);

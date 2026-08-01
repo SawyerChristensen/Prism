@@ -1,5 +1,67 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeIconFiles</key>
+			<array>
+				<string>MilkDocumentIcon</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Milkdrop Preset</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.nullsoft.milkdrop.preset</string>
+				<string>com.vidvox.projectmilksyphon.preset</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Milkdrop Preset</string>
+			<key>UTTypeIconFile</key>
+			<string>MilkDocumentIcon</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.nullsoft.milkdrop.preset</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>milk</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Milkdrop Preset</string>
+			<key>UTTypeIconFile</key>
+			<string>MilkDocumentIcon</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.vidvox.projectmilksyphon.preset</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>milk</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
 </plist>

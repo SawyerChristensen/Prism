@@ -17,6 +17,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "BEAB8FDC3012B50A005F68B6"
                BuildableName = "Prism.app"
+               BlueprintName = "Prism"
                ReferencedContainer = "container:Prism.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -68,6 +69,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "BEAB8FDC3012B50A005F68B6"
             BuildableName = "Prism.app"
+            BlueprintName = "Prism"
             ReferencedContainer = "container:Prism.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -84,6 +86,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "BEAB8FDC3012B50A005F68B6"
             BuildableName = "Prism.app"
+            BlueprintName = "Prism"
             ReferencedContainer = "container:Prism.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
