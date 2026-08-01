@@ -95,6 +95,20 @@ final class NowPlayingManager {
     /// processing ~120 times a second on the main thread for a cover that never changes between
     /// frames — measured tanking an otherwise-120fps preset down to ~14fps.
     var subjectArtwork: NSImage? { cachedSubjectArtwork }
+    /// Vision's subject cutout alone, with no OCR text drawn back on top — the "only the subject"
+    /// step of ContentView's four-style album-art cycle (see AlbumArtDisplayStyle), distinct from
+    /// `subjectArtwork` above which always includes text when `includesTextOverlay` is on. A plain
+    /// window onto `cachedSubjectMask`, cached per track exactly like `subjectArtwork` — same
+    /// "don't recompute per access" reasoning applies (ProjectMMetalView reads this every frame).
+    var subjectOnlyArtwork: NSImage? { cachedSubjectMask }
+    /// OCR-detected text alone, masked out the same way `subjectOnlyArtwork` masks out the subject
+    /// — the "subject with text" style's text half, kept as its own layer (rather than pre-merged
+    /// into `subjectArtwork`) so the Metal compositing can hold text static while the subject layer
+    /// beat-zooms independently on top of it (see ProjectMCoordinator.texturesForCurrentStyle) —
+    /// zooming the merged subject+text image together would drag the text along with the subject's
+    /// pulse. A plain window onto `cachedTextOnlyArtwork`, cached per track/`includesTextOverlay`
+    /// toggle exactly like `subjectArtwork`.
+    var textOnlyArtwork: NSImage? { cachedTextOnlyArtwork }
     /// The same color-keying step `.combined` mode uses (see `compositeArtwork`) — nil when the
     /// measured background color isn't a clean solid (`backgroundTone == .other`), same as
     /// `compositeArtwork`'s own `colorKeyed` local. A plain window onto `cachedColorKeyedArtwork` —
@@ -106,6 +120,27 @@ final class NowPlayingManager {
     /// alone, which was punching a subject-shaped hole out of the *unkeyed* raw cover for the
     /// background layer.
     var colorKeyedArtwork: NSImage? { cachedColorKeyedArtwork }
+    /// The cover keyed out against its own measured background color, subject and OCR text *also*
+    /// punched out (see NSImage.punchingHole(using:)) - the fully-separated "background minus
+    /// color" layer of ContentView's four-layer stack (see ProjectMCoordinator.AlbumArtLayerCount),
+    /// distinct from `colorKeyedArtwork` itself, which still carries the subject/text pixels
+    /// (colorKeyingOut a solid background color doesn't know anything about where the subject is).
+    /// Unlike `colorKeyedArtwork`, this keys out regardless of `backgroundTone` - `colorKeyedArtwork`
+    /// stays gated to near-black/near-white covers because a bad key there would flip `.combined`
+    /// mode's *default* look worse for ordinary photo covers, but this layer only shows up when the
+    /// user has already revealed it via "M", so a less-precise cutout on a busy cover just means
+    /// "some real detail" instead of "always a flat swatch" for the vast majority of covers, which
+    /// aren't near-black/near-white. Nil only when there's no measured background color at all (or
+    /// no raw artwork loaded yet). Cached alongside the other derived layers by
+    /// `recomputeDerivedAlbumArtLayers()` for the same "don't redo this ~120 times a second"
+    /// reason as `subjectArtwork`.
+    var backgroundDetailArtwork: NSImage? { cachedBackgroundDetailArtwork }
+    /// A flat, fully-opaque fill of the measured background color (see NSImage.filled(with:size:))
+    /// - the "background color" layer of ContentView's four-layer stack, the bottom of the stack.
+    /// Nil only when there's no measured background color at all - not gated on `backgroundTone`
+    /// (see `recomputeDerivedAlbumArtLayers`'s own comment on why a flat fill has no precision
+    /// requirement the way a color key does).
+    var backgroundColorArtwork: NSImage? { cachedBackgroundColorArtwork }
     /// Text Vision found on the current artwork (see TextExtraction.swift), most-confident
     /// reading per line, in whatever order Vision returned them — not guaranteed to be reading
     /// order. Empty (not nil) when there's no text, which is the common case for most covers.
@@ -165,11 +200,14 @@ final class NowPlayingManager {
     private var cachedRawArtwork: NSImage?
     private var cachedColors: (background: NSColor, foreground: NSColor)?
     private var cachedSubjectMask: NSImage?
-    // Backing storage for `colorKeyedArtwork`/`subjectArtwork` (see their doc comments) —
-    // recomputed by `recomputeDerivedAlbumArtLayers()`, never live in the property getter, since
-    // ProjectMMetalView reads those two every rendered frame.
+    // Backing storage for `colorKeyedArtwork`/`subjectArtwork`/`textOnlyArtwork` (see their doc
+    // comments) — recomputed by `recomputeDerivedAlbumArtLayers()`, never live in the property
+    // getter, since ProjectMMetalView reads these every rendered frame.
     private var cachedColorKeyedArtwork: NSImage?
     private var cachedSubjectArtwork: NSImage?
+    private var cachedTextOnlyArtwork: NSImage?
+    private var cachedBackgroundDetailArtwork: NSImage?
+    private var cachedBackgroundColorArtwork: NSImage?
 
     // Remembers maskingMode/includesTextOverlay per album (see `Self.albumKey`, `loadArtwork`,
     // `saveCurrentArtworkPreference`). Loaded at launch from the bundled Resources/
@@ -339,6 +377,9 @@ final class NowPlayingManager {
         cachedSubjectMask = nil
         cachedColorKeyedArtwork = nil
         cachedSubjectArtwork = nil
+        cachedTextOnlyArtwork = nil
+        cachedBackgroundDetailArtwork = nil
+        cachedBackgroundColorArtwork = nil
         genre = nil // Reset genre here too
 
         // Apply a saved preference for this album (if any) *before* kicking off the artwork
@@ -523,6 +564,7 @@ final class NowPlayingManager {
         }
 
         let textOverlay = includesTextOverlay ? cachedRawArtwork.maskingOutBackgroundByText(albumArtText) : nil
+        cachedTextOnlyArtwork = textOverlay
         switch (cachedSubjectMask, textOverlay) {
         case let (.some(subject), .some(text)):
             cachedSubjectArtwork = subject.overlaying(text) ?? subject
@@ -532,6 +574,36 @@ final class NowPlayingManager {
             cachedSubjectArtwork = text
         case (nil, nil):
             cachedSubjectArtwork = nil
+        }
+
+        // The four-layer stack's own two "background" layers (see ContentView's "M" cycle /
+        // ProjectMCoordinator.AlbumArtLayerCount) - genuinely non-overlapping with the subject/
+        // text layers above, unlike colorKeyedArtwork itself (color-keying a solid background
+        // color out doesn't know anything about where the subject or text actually are, so it
+        // still carries their pixels). Reuses `cachedColorKeyedArtwork` when the background already
+        // qualified as clean (avoids keying the same image twice); otherwise keys out the same way
+        // regardless of `backgroundTone` - see `backgroundDetailArtwork`'s own doc comment for why
+        // that's safe here even though `colorKeyedArtwork` itself stays gated. Nil (leaving this
+        // layer empty/transparent, letting backgroundColor show through) only when there's no
+        // measured background color to key against at all.
+        let backgroundDetailKeyedArtwork = cachedColorKeyedArtwork
+            ?? cachedColors.flatMap { cachedRawArtwork.keyingOutBackground($0.background) }
+        cachedBackgroundDetailArtwork = backgroundDetailKeyedArtwork?
+            .punchingHole(using: cachedSubjectMask)
+            .punchingHole(using: textOverlay)
+        // Unlike colorKeyedArtwork, deliberately *not* gated on backgroundTone != .other: that
+        // check exists because keying only works well against a genuinely solid/near-solid
+        // background (a bad key color punches holes randomly through the rest of the photo), but a
+        // flat fill has no such precision requirement - it's just a solid rectangle of whatever
+        // color was actually measured, valid to show for any cover extractColors managed to read
+        // *a* dominant background color from at all. Gating this the
+        // same way `colorKeyedArtwork` is would leave the backgroundColor layer permanently nil
+        // (and this layer of the four-layer stack invisible) for every cover whose background
+        // isn't near-black/near-white, which is most of them.
+        if let background = cachedColors?.background {
+            cachedBackgroundColorArtwork = .filled(with: background, size: cachedRawArtwork.size)
+        } else {
+            cachedBackgroundColorArtwork = nil
         }
     }
 

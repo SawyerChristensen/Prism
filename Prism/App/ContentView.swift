@@ -58,6 +58,16 @@ struct ContentView: View {
     // a stale forward branch. There's still no *saved* playlist concept — this is session-only.
     @State private var presetHistory: [URL] = []
     @State private var presetHistoryIndex = -1
+    // Album art layer reveal — "M" peels the four stacked layers (subject on top, then text, then
+    // background-color-removed, then the full cover at the bottom - see
+    // ProjectMCoordinator.AlbumArtLayerCount) off from the bottom one press at a time: 4 visible ->
+    // 3 -> 2 -> 1 (just the subject) -> 0 -> wraps back to 4, skipping any step whose layer this
+    // cover doesn't actually have (see nextAlbumArtVisibleLayerCount below) - most covers have no
+    // OCR text and plenty have no clean dominant background color, so a blind 4-step cycle made
+    // the user peel off "layers" that changed nothing on screen. Session-scoped, like
+    // isAlbumArtHidden/isTextHidden below, rather than a per-album saved preference: it's a manual
+    // preview toggle, not something "S" persists.
+    @State private var albumArtVisibleLayerCount = AlbumArtLayerCount.all
     // Transient confirmation after "S" saves the current M/T settings for this album (see
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
@@ -127,6 +137,11 @@ struct ContentView: View {
                 // only the track/artist text below is still a plain SwiftUI overlay.
                 albumArtRawImage: nowPlaying.rawArtwork, albumArtColorKeyedImage: nowPlaying.colorKeyedArtwork,
                 albumArtSubjectImage: nowPlaying.subjectArtwork,
+                albumArtSubjectOnlyImage: nowPlaying.subjectOnlyArtwork,
+                albumArtTextOnlyImage: nowPlaying.textOnlyArtwork,
+                albumArtBackgroundDetailImage: nowPlaying.backgroundDetailArtwork,
+                albumArtBackgroundColorImage: nowPlaying.backgroundColorArtwork,
+                albumArtVisibleLayerCount: albumArtVisibleLayerCount,
                 isAlbumArtHidden: isAlbumArtHidden,
                 onDropPreset: { url in handlePresetDrop(url) },
                 onDropTargetChanged: { isDropTargeted = $0 }
@@ -361,7 +376,7 @@ struct ContentView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, "m", "M"]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -407,9 +422,10 @@ struct ContentView: View {
                 toggleAutoCycle()
                 return .handled
             case "m", "M":
-                let all = ArtworkMaskingMode.allCases
-                let idx = all.firstIndex(of: nowPlaying.maskingMode) ?? 0
-                nowPlaying.maskingMode = all[(idx + 1) % all.count]
+                // Peels one *actually visible* layer off the bottom of the stack per press,
+                // wrapping back to the full stack once nothing's left - see
+                // nextAlbumArtVisibleLayerCount.
+                albumArtVisibleLayerCount = nextAlbumArtVisibleLayerCount(from: albumArtVisibleLayerCount, in: meaningfulAlbumArtLayerCounts())
                 return .handled
             case "p", "P":
                 nowPlaying.processingEnabled.toggle()
@@ -531,6 +547,34 @@ struct ContentView: View {
             candidate = next
         }
         return firstCandidate
+    }
+
+    /// The ordered, deduplicated set of `albumArtVisibleLayerCount` values that actually change
+    /// what's on screen for the *current* track — see ProjectMCoordinator.AlbumArtLayerCount's
+    /// threshold scheme (backgroundColor only shows at count 4, backgroundDetail at >=3, text at
+    /// >=2, subject at >=1). NowPlayingManager already returns nil for any layer this cover
+    /// doesn't have (no clean dominant background color, no OCR text, no Vision subject cutout —
+    /// see backgroundColorArtwork/backgroundDetailArtwork/textOnlyArtwork/subjectOnlyArtwork's own
+    /// doc comments), so the count value that would "turn off" a nil layer renders identically to
+    /// the count before it and is left out of this list entirely — built by walking the four
+    /// thresholds top-to-bottom-of-stack (4, 3, 2, 1) and only appending `threshold - 1` when that
+    /// layer's artwork actually exists, which keeps the result in descending order for free.
+    private func meaningfulAlbumArtLayerCounts() -> [Int] {
+        var counts = [AlbumArtLayerCount.all]
+        if nowPlaying.backgroundColorArtwork != nil { counts.append(3) }
+        if nowPlaying.backgroundDetailArtwork != nil { counts.append(2) }
+        if nowPlaying.textOnlyArtwork != nil { counts.append(1) }
+        if nowPlaying.subjectOnlyArtwork != nil { counts.append(0) }
+        return counts
+    }
+
+    /// "M"'s next stop: the closest value below `current` in `counts` (see
+    /// `meaningfulAlbumArtLayerCounts()`), wrapping back to the full stack (list's first entry,
+    /// always `AlbumArtLayerCount.all`) past the bottom — same 4 -> 3 -> 2 -> 1 -> 0 -> 4 shape as
+    /// before when every layer exists, but skipping straight past any step that wouldn't change
+    /// anything visible.
+    private func nextAlbumArtVisibleLayerCount(from current: Int, in counts: [Int]) -> Int {
+        counts.first(where: { $0 < current }) ?? counts.first ?? AlbumArtLayerCount.all
     }
 
     /// "1"-"5": records a star rating for whichever preset is on screen right now, then advances

@@ -76,4 +76,36 @@ extension NSImage {
         guard let outCGImage = context.makeImage() else { return nil }
         return outCGImage.asPixelExactNSImage()
     }
+
+    /// The inverse of `overlaying(_:)` above: erases this image wherever `mask` is opaque
+    /// (`.destinationOut` - draw self, then erase using mask's own alpha as the stencil), so the
+    /// two fit together like puzzle pieces that reconstitute the original exactly. Returns `self`
+    /// completely untouched when `mask` is nil, matching the "nothing to cut, show the whole
+    /// thing" fallback used elsewhere for the same operation (see
+    /// ProjectMCoordinator.backgroundWithSubjectHole, which this mirrors for a Metal-side
+    /// hole-punch specifically - this is the general-purpose version, used by
+    /// NowPlayingManager.backgroundDetailArtwork to punch the subject *and* text out of the
+    /// color-keyed background so the four-layer stack's layers never overlap).
+    nonisolated func punchingHole(using mask: NSImage?) -> NSImage {
+        guard let mask,
+              let baseCGImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let maskCGImage = mask.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return self }
+        let width = baseCGImage.width, height = baseCGImage.height
+        guard width > 0, height > 0 else { return self }
+
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return self }
+
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        context.draw(baseCGImage, in: rect)
+        context.setBlendMode(.destinationOut)
+        context.draw(maskCGImage, in: rect)
+
+        guard let outCGImage = context.makeImage() else { return self }
+        return outCGImage.asPixelExactNSImage()
+    }
 }

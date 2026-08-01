@@ -1,10 +1,12 @@
 # Prism — Project Documentation
 
-A native macOS Milkdrop/projectM-style audio visualizer. Captures system audio, analyzes it in
-real time (FFT, beat/band-energy detection matching MilkDrop3's own signal processing), and
-renders `.milk` preset files — waveforms, custom shapes, per-pixel warp meshes, and preset-authored
-HLSL shaders translated to Metal — through a GPU feedback-texture pipeline. Also polls Spotify/Music
-for now-playing metadata and derives a background/foreground color scheme from the album art.
+A native macOS Milkdrop/projectM-style audio visualizer. Captures system audio via Core Audio
+Process Taps and renders `.milk` preset files through the real vendored libprojectM 4.x C++ engine
+(`Vendor/projectm`, via an EGL/ANGLE-backed bridge — see `Prism/ProjectM/`) — Prism's own earlier
+hand-rolled Metal renderer/NS-EEL interpreter was fully replaced by this. Also polls Spotify/Music
+for now-playing metadata and derives a background/foreground color scheme from the album art. Also
+ships as a Music.app visualizer plug-in (`Prism/PrismVisualizerPlugin/`), reusing the same
+projectM engine but driven by Music.app's own pushed audio instead of Prism's own capture.
 
 This file is a map of the codebase (what each file is responsible for) plus a development history
 (what's been built and why, session by session). For open work, see `TO DO.md`.
@@ -38,43 +40,11 @@ This file is a map of the codebase (what each file is responsible for) plus a de
 - **`SpectrumAnalyzer.swift`** — shared FFT/banding pipeline both capture engines feed into, so
   comparing the two only varies the capture mechanism, not the analysis.
 
-### `Prism/Milkdrop/` — the visualizer itself
-- **`MilkdropVisualizerView.swift`** — public-facing wrapper: owns the mode/params model
-  (`MilkdropVisualizerModel`, defined in this file), forwards tap gestures, hosts the GPU renderer.
-- **`MilkdropMetalView.swift`** — bridges `MTKView` (AppKit) into SwiftUI; drives continuous
-  redraw off the display's real refresh rate (including ProMotion 120Hz).
-- **`MilkdropMetalCoordinator.swift`** — the actual `MTKViewDelegate`. Holds one or two live
-  `MilkdropMetalRenderer` instances (`activeRenderer` + `outgoingRenderer` during a crossfade) and
-  blends their output — real dual-live-render preset transitions, not a freeze-frame dissolve.
-- **`MilkdropMetalRenderer.swift`** — the actual GPU pipeline for one preset: ping-ponged feedback
-  textures, the warp transform, shapes/waveforms/border/darken-center draw calls, dynamically
-  compiled `warp_N=`/`comp_N=` shaders (via `MilkdropShaderTranslator`), the old-style
-  (pre-`comp_N=`) composite fallback, blur-texture cascade, motion vectors. Also defines
-  `MilkdropSharedRenderResources` — everything preset-*independent* (static pipelines, samplers,
-  the noise catalog) shared across both renderer instances during a transition.
-- **`MilkdropShaderTranslator.swift`** — translates a preset's `warp_N=`/`comp_N=` HLSL source into
-  an MSL function body via targeted text substitution (not a full HLSL parser — MSL and HLSL are
-  close enough that most of the work is mechanical: texture-call rewriting, intrinsic renaming,
-  vector-width reconciliation, helper-function hoisting). See its own header comment for the full
-  rationale; see `TO DO.md` for what HLSL constructs it still can't handle.
-- **`MilkdropShapeState.swift`** — runtime for custom shapes (`shapecode_N_*`): per-frame NS-EEL
-  script evaluation across up to `num_inst` instances, textured and untextured fill.
-- **`MilkdropWaveform.swift`** / **`MilkdropWaveMode.swift`** — the built-in oscilloscope: point
-  generation (ported from MilkDrop3's `DrawWave`/`SmoothWave`) and the mode/config model.
-- **`MilkdropWaveformAligner.swift`** — mip-based cross-correlation alignment so the built-in scope
-  holds still frame-to-frame instead of crawling under raw PCM jitter.
-- **`MilkdropCustomWaveform.swift`** — runtime for `wavecode_N_*` (up to 4 independently-scripted
-  per-point waveforms, separate from the built-in oscilloscope).
-- **`MilkdropAudioSignals.swift`** — port of MilkDrop3's `ProcessData`: turns raw PCM into the
-  `bass`/`mid`/`treb`/`*_att` values every preset equation reads, plus beat-punch detection.
-- **`MilkdropNoiseTextures.swift`** — generates the standard `sampler_noise_lq`/`noisevol_hq`/etc.
-  value-noise textures real preset shaders reference (63% of shader-using presets, per corpus
-  survey).
-- **`MilkdropCustomTextureManager.swift`** — resolves a shader's custom sampler names
-  (`sampler_worms`, `sampler_rand00`, etc.) against a preset pack's own `Textures/` folder.
-- **`MilkdropPerPixelMesh.swift`** — runtime for `per_pixel_N=` (the per-vertex-scripted warp mesh),
-  both the CPU tree-interpreter path and the safety analysis gating the GPU-transpiled path (see
-  `Presets/MilkdropExpressionParallelSafetyAnalyzer.swift`).
+### `Prism/Milkdrop/` — preset library bookkeeping (no longer rendering)
+Everything that used to render presets here (hand-rolled Metal renderer, `MilkdropShaderTranslator`,
+the NS-EEL parser/evaluator under `Presets/`) was removed wholesale when Prism switched to the real
+vendored libprojectM engine — see `Prism/ProjectM/` below. What's left in this folder is just
+library/state bookkeeping that has nothing to do with *how* a preset renders:
 - **`MilkdropPresetLibrary.swift`** — the "point at an external folder" preset library: scans a
   user-picked folder for `.milk` files, persisted via a security-scoped bookmark.
 - **`MilkdropLastPresetStore.swift`** — persists a bookmark for the single most-recently-loaded
@@ -83,24 +53,75 @@ This file is a map of the codebase (what each file is responsible for) plus a de
   `comp_N=` shader lines (tex3D noise-volume lookups, multi-tap GetPixel/GetBlur neighbor sampling)
   to flag presets expensive enough to render at only a few fps. `ContentView`'s sequential
   stepping/auto-cycle skip anything flagged, by default, before ever handing the URL to the engine.
-- **`Shaders.metal`** — the static (not dynamically-compiled) Metal shaders: the feedback
-  warp/mesh vertex+fragment pairs, shape/waveform fill and border pipelines, blur downsample, old-
-  style composite, crossfade blend.
+- **`MilkdropPresetRatingStore.swift`** — persists per-preset star ratings and debug issue flags,
+  recorded while sequentially reviewing a library (`ContentView`'s `1`-`5`/`w`/`j`/`x` keybinds).
+  Keyed by absolute file path rather than a security-scoped bookmark, since it's only ever
+  consulted while the library folder is already open.
+- **`MilkdropSessionHistoryStore.swift`** — backs the History menu bar item: an append-only,
+  order-preserving log of every preset actually played this session, plus an immutable snapshot of
+  the previous session's log for the "Last Session" submenu.
+- **`MilkdropNestDropFavoritesList.swift`** — parses a NestDrop "bundle" XML export's
+  `<FavoriteList>` into the set of preset filenames it names, for preset packs that ship NestDrop
+  favorites metadata alongside their `.milk` files.
 
-### `Prism/Milkdrop/Presets/` — preset parsing and the NS-EEL expression engine
-- **`MilkdropPresetFile.swift`** — parses the `.milk` INI-ish format: top-level constants, numbered
-  `per_frame_N=`/`per_pixel_N=` lines, shape/waveform blocks, `warp_N=`/`comp_N=` shader source.
-- **`MilkdropExpressionLexer.swift`** / **`MilkdropExpressionParser.swift`** — tokenizer and
-  recursive-descent parser for NS-EEL (Milkdrop's per-frame expression language), producing a
-  `Node` AST.
-- **`MilkdropExpressionEvaluator.swift`** — the CPU tree-walking interpreter, plus the slot-based
-  (`MilkdropVariableSlots`/`MilkdropResolvedProgram`) fast path that resolves variable names to
-  integer slots once instead of hashing a dictionary key on every read/write.
-- **`MilkdropExpressionParallelSafetyAnalyzer.swift`** — determines whether a script is safe to
-  evaluate on the GPU (one independent invocation per mesh vertex, no defined order) by checking
-  it never reads a custom variable whose only prior write came from a *different* iteration.
-- **`MilkdropExpressionMSLTranspiler.swift`** — compiles an already-parsed `Node` AST directly into
-  MSL, for scripts the safety analyzer clears — replaces up to 825 CPU evaluations/frame with one
+### `Prism/ProjectM/` — the visualizer itself (real libprojectM engine)
+Renders `.milk` presets via the actual vendored libprojectM 4.x C++ library (`Vendor/projectm`,
+built to `Vendor/projectm-build/`) rather than a hand-rolled interpreter — full HLSL/NS-EEL preset
+compatibility for free, at the cost of needing an EGL/ANGLE context bridge since libprojectM
+targets OpenGL/GLES, not Metal.
+- **`Bridge/ProjectMEngine.h`/`.mm`** — Objective-C wrapper: one persistent `projectm_handle` for
+  the app's lifetime (preset transitions are a call on the same instance, not a
+  renderer-reconstruction like the old Metal engine did). Public surface is small and
+  host-agnostic: `addInterleavedStereoPCM(_:frameCount:)`, `renderFrame(width:height:)` (returns an
+  `IOSurfaceRef`), `loadPreset(at:smoothTransition:)`, `setTargetFPS(_:)`. This same class is
+  reused as-is by `Prism/PrismVisualizerPlugin/` (see below) — it has no dependency on Prism.app's
+  own audio capture or window management.
+- **`Bridge/ProjectMEGLContext.h`/`.mm`** — the actual EGL/ANGLE context + IOSurface-backed render
+  target `ProjectMEngine` renders into (`kIOSurfacePixelFormat = 'BGRA'`, i.e. `MTLPixelFormat
+  .bgra8Unorm` on the consuming side — no format conversion needed to wrap it as a Metal texture).
+- **`ProjectMAudioBridge.swift`** — pulls the latest raw waveform snapshot from
+  `CoreAudioTapEngine`, interleaves it, feeds `ProjectMEngine.addInterleavedStereoPCM` once per
+  rendered frame. Kept separate from `ProjectMCoordinator` so render-loop orchestration doesn't
+  tangle with audio-format/interleaving concerns.
+- **`ProjectMCoordinator.swift`** — the `MTKViewDelegate`: drives the render loop, wraps the
+  engine's `IOSurface` as an `MTLTexture` (`device.makeTexture(descriptor:iosurface:plane:)`,
+  cached and only rebuilt when size/surface identity changes), and composites the album-art
+  overlay/transitions on top via `ProjectMCompositeShader.metal`.
+- **`ProjectMMetalView.swift`** — bridges `MTKView` (AppKit) into SwiftUI.
+- **`ProjectMVisualizerModel.swift`** — the mode/params model `ContentView` and
+  `ProjectMCoordinator` share.
+- **`PresetDroppableMTKView.swift`** — the concrete `MTKView` subclass, handling preset
+  drag-and-drop directly on the render surface.
+- **`ProjectMCompositeShader.metal`** — the album-art overlay/transition shaders composited over
+  projectM's raw output; `AlbumArtUniforms` here must mirror `ProjectMCoordinator.swift`'s Swift
+  struct of the same shape field-for-field.
+
+### `Prism/PrismVisualizerPlugin/` — Music.app visualizer plug-in target
+A separate build target (product type "Bundle", not embedded in `Prism.app`) that makes Prism
+selectable under Music.app's Window > Visualizer Settings. Implements the legacy-but-still-loaded
+iTunes/Music "Visual Plug-in" protocol — an old undocumented Apple SDK, not a modern
+ExtensionKit/App Extension mechanism; ships and installs as a standalone `.bundle` copied into
+`~/Library/iTunes/iTunes Plug-ins/`, not through the App Store or any embed-and-launch flow. See
+`TO DO.md` for what's still untested/unfinished (real-Music.app verification, shipping presets).
+- **`iTunesSDK/`** — Apple's own iTunes Visual SDK headers (`iTunesAPI.h`, `iTunesVisualAPI.h`,
+  `iTunesAPI.cpp`), vendored verbatim per their redistribution license — defines the wire protocol
+  (message types, `RenderVisualData`, etc.) Music.app itself speaks to any loaded visual plugin.
+- **`PrismVisualizerPlugin.mm`** — the actual protocol glue: exports `iTunesPluginMainMachO`
+  (Music.app locates this exact symbol name by convention, no CFPlugIn factory involved),
+  registers as a visual plugin on init, and on each pulse (`Vpls`) message converts Music.app's
+  pushed 8-bit waveform samples (`RenderVisualData.waveformData`, 0-255 centered on 128) to
+  interleaved float PCM and feeds them straight to a `ProjectMEngine` instance — deliberately does
+  *not* use `AudioCaptureEngine`/`CoreAudioTapEngine`: Music.app already owns the audio it's
+  playing and pushes it to the plugin directly, so this plugin needs no Screen Recording or audio
+  capture permission of its own.
+- **`PrismVisualizerView.h`/`.mm`** — a `CAMetalLayer`-backed `NSView` added as a subview of
+  whatever view Music.app hands the plugin on activate (the host's own view isn't guaranteed
+  drawable into directly — the reference iTunes/Music projectM plugin uses the same
+  add-a-subview technique). Blits `ProjectMEngine`'s `IOSurface`-backed texture straight to the
+  layer's drawable via `MTLBlitCommandEncoder` — no custom shader needed since both sides are
+  `bgra8Unorm`.
+- **`Presets/`** — currently empty; drop `.milk` files here directly (see its own `README.md`) to
+  give the plugin something to render. Without any, projectM renders its blank/default state.
   GPU-parallel dispatch.
 
 ### `Prism/NowPlaying/` — album art and metadata
@@ -137,6 +158,12 @@ instead of `xcodebuild test`).
   `corpus-shader-scan-2026-07-26/`), kept for reproducibility rather than pasted inline into
   `TO DO.md`.
 - **`Prism.xcodeproj`** — Xcode project file.
+- **`Vendor/`** — `projectm` (git submodule, upstream libprojectM source), `projectm-build/` (its
+  built `.dylib`+headers, via `Vendor/build-projectm.sh`), `angle/` (prebuilt ANGLE `libEGL.dylib`/
+  `libGLESv2.dylib`). Both the `Prism` app target and `PrismVisualizerPlugin` target link and embed
+  the same three `.dylib`s independently (the plugin ships its own copies in its own bundle's
+  `Contents/Frameworks/` — it can't rely on `Prism.app` being installed, since Music.app loads it
+  standalone).
 
 ---
 
@@ -488,3 +515,47 @@ a library that's entirely flagged still terminates rather than spinning forever.
 (Cmd-O, drag-and-drop, history Left/Right, launch-time restore) intentionally bypass this — the
 user picked that exact file, so it still loads. See `TO DO.md` for the follow-up idea (render
 flagged presets at reduced resolution and upscale, instead of skipping them outright).
+
+### 2026-07-31 — Music.app visualizer plug-in target, and this doc's stale rendering-architecture writeup
+This file's `Prism/Milkdrop/` and `Prism/Milkdrop/Presets/` sections still described the original
+hand-rolled Metal renderer/NS-EEL interpreter, which by this point had already been fully replaced
+by the real vendored libprojectM engine (`Prism/ProjectM/`) — rewritten to match current source.
+
+Added `PrismVisualizerPlugin`, a new Xcode target that makes Prism selectable under Music.app's
+Window > Visualizer Settings. This uses the old (Apple-abandoned, undocumented, but still actually
+loaded by current Music.app) iTunes/Music "Visual Plug-in" bundle protocol — confirmed still
+functional by the actively-maintained open-source `projectM-visualizer/frontend-music-plug-in`
+plugin, which this target's structure is modeled on: a `CFBundlePackageType=hvpl`/
+`CFBundleSignature=hook`-style bundle (ours uses `prsm` as its own creator/signature) installed to
+`~/Library/iTunes/iTunes Plug-ins/`, exporting a well-known `iTunesPluginMainMachO` symbol Music.app
+locates by name (no CFPlugIn factory involved — this predates that convention).
+
+Deliberately reuses `ProjectMEngine` as-is (it was already host-agnostic) but bypasses
+`AudioCaptureEngine`/`CoreAudioTapEngine` entirely inside the plugin: Music.app pushes waveform
+data to any active visual plugin via the pulse (`Vpls`) message at its own audio's rate, so the
+plugin just forwards that straight to `addInterleavedStereoPCM` — meaning the plugin needs zero
+Screen Recording or audio-capture permission of its own. This mattered because a plugin `.bundle`
+loaded into Music.app's process runs under *Music.app's* sandbox/TCC identity, not Prism's; had the
+plugin tried to run its own `AudioCaptureEngine`, the permission prompt would have been confusing
+("Music wants to record your screen") and not something the user could grant on Prism's behalf.
+
+Two real Xcode-project pitfalls hit while wiring the new target in by hand (`Prism.xcodeproj` uses
+Xcode 16's file-system-synchronized groups for the main `Prism` target, which auto-discovers every
+file under `Prism/` unless explicitly excepted):
+1. `GENERATE_INFOPLIST_FILE = YES` silently overrides an explicit `CFBundlePackageType` in a
+   checked-in `Info.plist` with the generic `BNDL` default — fatal here, since Music.app identifies
+   plugin bundles by that exact four-char code. Fixed by setting it to `NO` for this target and
+   relying solely on the static `Info.plist` (variable substitution like `$(PRODUCT_BUNDLE_IDENTIFIER)`
+   still works without generation).
+2. Excluding the new target's folder from the main `Prism` app target's synchronized-group
+   membership needed per-file entries in `membershipExceptions` (mirroring the pre-existing
+   single-file `Info.plist` exception) — a folder-level exception name alone was silently ignored,
+   which surfaced as a "Multiple commands produce .../Contents/Resources/Info.plist" build failure
+   (the same latent, previously-harmless issue exists for `Prism/MilkQuickLook/Info.plist`, which
+   was never excluded and had just never collided with anything else before now).
+
+Verified via `xcodebuild build -target PrismVisualizerPlugin` and `-target Prism` (both succeed;
+per this project's testing policy, `xcodebuild test`/launching the real Music.app was not run from
+here — see `TO DO.md` for what's still needed: installing the built bundle and confirming it
+actually renders inside a live Music.app, plus shipping real presets into the plugin's empty
+`Presets/` folder).

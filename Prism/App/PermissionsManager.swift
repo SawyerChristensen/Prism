@@ -7,43 +7,24 @@
 
 import Foundation
 import ApplicationServices
-import ScreenCaptureKit
 
 @Observable
 class PermissionsManager {
-    var hasAudioPermission = false
     var hasAutomationPermission = false
 
-    /// Both underlying calls are synchronous, and either can block for a long time waiting on a
-    /// TCC permission dialog (screen recording) or an Apple Events round-trip that may need to
-    /// launch the target app first (automation probe). Neither is safe to run on the main thread —
-    /// doing so freezes the whole UI, indistinguishable from a real hang, until the dialog is
-    /// answered. Run them on a background task instead.
+    /// The underlying call is synchronous and can block for a long time waiting on an Apple
+    /// Events round-trip that may need to launch the target app first (automation probe). Not
+    /// safe to run on the main thread — doing so freezes the whole UI, indistinguishable from a
+    /// real hang, until the dialog is answered. Run it on a background task instead.
     func checkAndRequestPermissions() {
         PrismDebug.trace("PermissionsManager.checkAndRequestPermissions() dispatched")
         Task.detached(priority: .userInitiated) {
-            let hasAudio = Self.requestScreenCapturePermission()
             let hasAutomation = Self.requestAutomationPermission(for: "Spotify")
             // Self.requestAutomationPermission(for: "Music") // Apple Music
             await MainActor.run {
-                self.hasAudioPermission = hasAudio
                 self.hasAutomationPermission = hasAutomation
             }
         }
-    }
-
-    private nonisolated static func requestScreenCapturePermission() -> Bool {
-        // CGRequestScreenCaptureAccess triggers the prompt on macOS 10.15+
-        // Required to use ScreenCaptureKit for system audio
-        PrismDebug.trace("CGPreflightScreenCaptureAccess() start")
-        var granted = CGPreflightScreenCaptureAccess()
-        PrismDebug.trace("CGPreflightScreenCaptureAccess() -> \(granted)")
-        if !granted {
-            PrismDebug.trace("CGRequestScreenCaptureAccess() start (may block on system dialog)")
-            granted = CGRequestScreenCaptureAccess()
-            PrismDebug.trace("CGRequestScreenCaptureAccess() -> \(granted)")
-        }
-        return granted
     }
 
     private nonisolated static func requestAutomationPermission(for appName: String) -> Bool {

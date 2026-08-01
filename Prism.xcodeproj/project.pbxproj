@@ -7,17 +7,33 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		070D225266B646B00099D9AA /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
+		0CA3166A5B4FE7D54556817E /* ProjectMEGLContext.mm in Sources */ = {isa = PBXBuildFile; fileRef = ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */; };
 		3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		3825490B1DEE668ADCD42AE3 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
+		4006B4EBE01A1EA73FF2BFB9 /* PrismVisualizerPlugin.mm in Sources */ = {isa = PBXBuildFile; fileRef = 26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */; };
+		54E6E9D3DEF29FB951CEA585 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */; };
+		589124ADE8E728D124B03C91 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
 		62F28C248C9EDB552DB5DFA6 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
+		66BC70B57978750B8BC585AE /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		6ABE56BD81B4897FBE8B5A1F /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		6FCA5057353640E09DDB1BB5 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
+		8869823D97EF537A43DF7581 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
 		962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */; };
+		9A772EE971EE68F26A25766F /* iTunesAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */; };
 		A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */; };
 		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
 		BE0D51E03013C06900F41558 /* TO DO.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0D51DF3013C06900F41558 /* TO DO.md */; };
+		C11A6D2720BC2714F7BCDF40 /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
 		D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		D7B97A958DF952647C0F710F /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
+		E07F78A5C684AAC09A11EB73 /* Presets in Resources */ = {isa = PBXBuildFile; fileRef = 16138E62CBECE155E2886C7B /* Presets */; };
+		EB6A4113E5D80C6295263942 /* ProjectMEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = 49AF7952B8A7DA5D1E6967E0 /* ProjectMEngine.mm */; };
+		F3F4447B3645E2C8194F5607 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 802566EE0A89521879877FAC /* QuartzCore.framework */; };
+		FC5D65803B2FE1E851BA881F /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,22 +85,51 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA3C2D70E3F2382E4373A324 /* Embed Vendor Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				66BC70B57978750B8BC585AE /* libprojectM-4.dylib in Embed Vendor Libraries */,
+				6ABE56BD81B4897FBE8B5A1F /* libEGL.dylib in Embed Vendor Libraries */,
+				FC5D65803B2FE1E851BA881F /* libGLESv2.dylib in Embed Vendor Libraries */,
+			);
+			name = "Embed Vendor Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		022413514596D26960B14693 /* iTunesVisualAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iTunesVisualAPI.h; sourceTree = "<group>"; };
+		16138E62CBECE155E2886C7B /* Presets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Presets; sourceTree = "<group>"; };
 		16EE0B28541A385507882EDB /* MilkQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MilkQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEngine.h; path = Prism/ProjectM/Bridge/ProjectMEngine.h; sourceTree = SOURCE_ROOT; };
+		26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerPlugin.mm; sourceTree = "<group>"; };
 		3454D9F9C1E7A67D6E72B2C8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = iTunesAPI.cpp; sourceTree = "<group>"; };
+		49AF7952B8A7DA5D1E6967E0 /* ProjectMEngine.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = ProjectMEngine.mm; path = Prism/ProjectM/Bridge/ProjectMEngine.mm; sourceTree = SOURCE_ROOT; };
 		51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MilkThumbnailProvider.swift; sourceTree = "<group>"; };
+		65A6E945465D90D9D9D7B767 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		66DECD745A5A6D582CF50763 /* libEGL.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libEGL.dylib; path = Vendor/angle/lib/libEGL.dylib; sourceTree = SOURCE_ROOT; };
 		68CBBCF102DF19A60175B98F /* MilkQuickLook.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = MilkQuickLook.entitlements; sourceTree = "<group>"; };
-		7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */ = {isa = PBXFileReference; includeInIndex = 1; name = MilkDocumentIcon.icns; path = ../MilkDocumentIcon.icns; sourceTree = "<group>"; };
+		70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerView.mm; sourceTree = "<group>"; };
+		7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = image.icns; name = MilkDocumentIcon.icns; path = ../MilkDocumentIcon.icns; sourceTree = "<group>"; };
 		7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = "libprojectM-4.dylib"; path = "Vendor/projectm-build/lib/libprojectM-4.dylib"; sourceTree = SOURCE_ROOT; };
+		802566EE0A89521879877FAC /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/QuartzCore.framework; sourceTree = DEVELOPER_DIR; };
 		88B6666289C463A73A719C34 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = ProjectMEGLContext.mm; path = Prism/ProjectM/Bridge/ProjectMEGLContext.mm; sourceTree = SOURCE_ROOT; };
+		AD4811541FD25BCDA0AD02D1 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Metal.framework; sourceTree = DEVELOPER_DIR; };
 		BE0D51DF3013C06900F41558 /* TO DO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TO DO.md"; sourceTree = "<group>"; };
 		BEAB8FDD3012B50A005F68B6 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CB63489DA355B802D3656A96 /* libGLESv2.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libGLESv2.dylib; path = Vendor/angle/lib/libGLESv2.dylib; sourceTree = SOURCE_ROOT; };
+		CEF603000C93038CE77196F6 /* iTunesAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iTunesAPI.h; sourceTree = "<group>"; };
+		D0EADEB2D32B6E8674831D5A /* PrismVisualizerView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PrismVisualizerView.h; sourceTree = "<group>"; };
+		D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismVisualizerPlugin.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1593A710327DE5E8B021E3C /* ProjectMEGLContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEGLContext.h; path = Prism/ProjectM/Bridge/ProjectMEGLContext.h; sourceTree = SOURCE_ROOT; };
+		E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/IOSurface.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -92,6 +137,11 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				PrismVisualizerPlugin/Info.plist,
+				PrismVisualizerPlugin/iTunesSDK/iTunesAPI.cpp,
+				PrismVisualizerPlugin/Presets/README.md,
+				PrismVisualizerPlugin/PrismVisualizerPlugin.mm,
+				PrismVisualizerPlugin/PrismVisualizerView.mm,
 			);
 			target = BEAB8FDC3012B50A005F68B6 /* Prism */;
 		};
@@ -108,15 +158,11 @@
 		};
 		BEAB8FEF3012B50C005F68B6 /* PrismTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismTests;
 			sourceTree = "<group>";
 		};
 		BEAB8FF93012B50C005F68B6 /* PrismUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismUITests;
 			sourceTree = "<group>";
 		};
@@ -128,6 +174,20 @@
 			buildActionMask = 2147483647;
 			files = (
 				BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACB7F39D157A3EDEFB63E4CB /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				070D225266B646B00099D9AA /* libprojectM-4.dylib in Frameworks */,
+				BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */,
+				D7B97A958DF952647C0F710F /* libGLESv2.dylib in Frameworks */,
+				589124ADE8E728D124B03C91 /* Cocoa.framework in Frameworks */,
+				8869823D97EF537A43DF7581 /* Metal.framework in Frameworks */,
+				F3F4447B3645E2C8194F5607 /* QuartzCore.framework in Frameworks */,
+				54E6E9D3DEF29FB951CEA585 /* IOSurface.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,6 +218,24 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1AD4912198480A0651ABB5F5 /* PrismVisualizerPlugin */ = {
+			isa = PBXGroup;
+			children = (
+				26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */,
+				D0EADEB2D32B6E8674831D5A /* PrismVisualizerView.h */,
+				70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */,
+				65A6E945465D90D9D9D7B767 /* Info.plist */,
+				16138E62CBECE155E2886C7B /* Presets */,
+				AD39990CF9DE091735A2B6DF /* iTunesSDK */,
+				2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */,
+				49AF7952B8A7DA5D1E6967E0 /* ProjectMEngine.mm */,
+				E1593A710327DE5E8B021E3C /* ProjectMEGLContext.h */,
+				ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */,
+			);
+			name = PrismVisualizerPlugin;
+			path = Prism/PrismVisualizerPlugin;
+			sourceTree = "<group>";
+		};
 		3C1AB62A39F5C2E0B9079290 /* MilkQuickLook */ = {
 			isa = PBXGroup;
 			children = (
@@ -174,6 +252,9 @@
 			isa = PBXGroup;
 			children = (
 				88B6666289C463A73A719C34 /* Cocoa.framework */,
+				AD4811541FD25BCDA0AD02D1 /* Metal.framework */,
+				802566EE0A89521879877FAC /* QuartzCore.framework */,
+				E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */,
 			);
 			name = "OS X";
 			sourceTree = "<group>";
@@ -184,6 +265,16 @@
 				452E147554C6330651F653F8 /* OS X */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		AD39990CF9DE091735A2B6DF /* iTunesSDK */ = {
+			isa = PBXGroup;
+			children = (
+				CEF603000C93038CE77196F6 /* iTunesAPI.h */,
+				022413514596D26960B14693 /* iTunesVisualAPI.h */,
+				442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */,
+			);
+			path = iTunesSDK;
 			sourceTree = "<group>";
 		};
 		BCAF24C0B213990958B26549 /* Vendor Libraries */ = {
@@ -207,6 +298,7 @@
 				BCAF24C0B213990958B26549 /* Vendor Libraries */,
 				8F631662F44AB053F8B8219F /* Frameworks */,
 				3C1AB62A39F5C2E0B9079290 /* MilkQuickLook */,
+				1AD4912198480A0651ABB5F5 /* PrismVisualizerPlugin */,
 			);
 			sourceTree = "<group>";
 		};
@@ -217,6 +309,7 @@
 				BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */,
 				BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */,
 				16EE0B28541A385507882EDB /* MilkQuickLook.appex */,
+				D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -224,6 +317,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 267DD69EF9C7114584812E11 /* Build configuration list for PBXNativeTarget "PrismVisualizerPlugin" */;
+			buildPhases = (
+				AB2B972B5C64DB7B1DA89AB1 /* Sources */,
+				ACB7F39D157A3EDEFB63E4CB /* Frameworks */,
+				F983CF737A000C7357602B57 /* Resources */,
+				AA3C2D70E3F2382E4373A324 /* Embed Vendor Libraries */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PrismVisualizerPlugin;
+			productName = PrismVisualizerPlugin;
+			productReference = D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */;
+			productType = "com.apple.product-type.bundle";
+		};
 		BEAB8FDC3012B50A005F68B6 /* Prism */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = BEAB90003012B50C005F68B6 /* Build configuration list for PBXNativeTarget "Prism" */;
@@ -317,6 +428,9 @@
 				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					730C7A56EA5C52EAA85CF01A = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					BEAB8FDC3012B50A005F68B6 = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -348,6 +462,7 @@
 				BEAB8FEB3012B50C005F68B6 /* PrismTests */,
 				BEAB8FF53012B50C005F68B6 /* PrismUITests */,
 				DC96B834FF4D53DE75CA32AC /* MilkQuickLook */,
+				730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */,
 			);
 		};
 /* End PBXProject section */
@@ -383,6 +498,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F983CF737A000C7357602B57 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E07F78A5C684AAC09A11EB73 /* Presets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
@@ -409,6 +532,18 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AB2B972B5C64DB7B1DA89AB1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4006B4EBE01A1EA73FF2BFB9 /* PrismVisualizerPlugin.mm in Sources */,
+				C11A6D2720BC2714F7BCDF40 /* PrismVisualizerView.mm in Sources */,
+				9A772EE971EE68F26A25766F /* iTunesAPI.cpp in Sources */,
+				EB6A4113E5D80C6295263942 /* ProjectMEngine.mm in Sources */,
+				0CA3166A5B4FE7D54556817E /* ProjectMEGLContext.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BEAB8FD93012B50A005F68B6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -484,6 +619,39 @@
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;
+		};
+		AEAAFAEF5B42D6B342FF5BB9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
+				INFOPLIST_FILE = Prism/PrismVisualizerPlugin/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.VisualizerPlugin;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				WRAPPER_EXTENSION = bundle;
+			};
+			name = Debug;
 		};
 		BEAB8FFE3012B50C005F68B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -832,6 +1000,39 @@
 			};
 			name = Debug;
 		};
+		F32D6E3636BE379C560D7912 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
+				INFOPLIST_FILE = Prism/PrismVisualizerPlugin/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.VisualizerPlugin;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				WRAPPER_EXTENSION = bundle;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -840,6 +1041,15 @@
 			buildConfigurations = (
 				88CF2825AED02DD5EA9EE2AD /* Release */,
 				E0F59D7CA621F0DCE6F8A59F /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		267DD69EF9C7114584812E11 /* Build configuration list for PBXNativeTarget "PrismVisualizerPlugin" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AEAAFAEF5B42D6B342FF5BB9 /* Debug */,
+				F32D6E3636BE379C560D7912 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

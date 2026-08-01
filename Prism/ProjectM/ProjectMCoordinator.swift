@@ -16,36 +16,43 @@ import MetalKit
 import IOSurface
 import QuartzCore
 
-/// Mirrors ProjectMCompositeShader.metal's AlbumArtUniforms struct field-for-field.
+/// Mirrors ProjectMCompositeShader.metal's AlbumArtUniforms struct field-for-field. The four-style
+/// cycle's own four layers (backgroundColor/backgroundDetail/subject/text - see
+/// AlbumArtLayerCount) are always sampled, always with the same fixed per-layer effect(s); only the
+/// four `*Visible` flags below change with the current reveal count.
 private struct AlbumArtUniforms {
     var waveTexelSize: SIMD2<Float>
     var artCenter: SIMD2<Float>
     var artHalfSize: SIMD2<Float>
-    var stage: Float
-    var stageProgress: Float
-    var hasSubjectMask: Float
     var globalAlpha: Float
+    var backgroundColorVisible: Float
+    var backgroundDetailVisible: Float
+    var subjectVisible: Float
+    var textVisible: Float
+    // Fixed effect strengths (ProjectMCoordinator.backgroundColorChromaticAberrationStrength/
+    // backgroundDetailDistortionStrength - both named for historical reasons, not where they're
+    // actually applied) - the R/B channel split (normalized wave-gradient direction) and the
+    // wave-gradient UV nudge, both applied to backgroundDetail only. backgroundColor carries
+    // neither: it's a flat fill with no internal color variation for either to act on (see the
+    // shader's own backgroundColor sampling comment). Subject and text carry neither either - but
+    // every layer carries its own beat-zoom strength below.
+    var chromaticAberrationStrength: Float
     var distortionStrength: Float
-    // Precomputed here (not derived from stage/stageProgress in the shader) so the growth rate is
-    // one continuous, constant-velocity ramp straight through the scaleIn -> separate boundary -
-    // see albumArtScales(). subjectScale locks at 1 the moment it gets there; backgroundScale just
-    // keeps going at that exact same rate.
-    var subjectScale: Float
-    var backgroundScale: Float
-    // 0...1 fade every introStyle uses to materialize, shared identically across all four - see
-    // introAlpha().
-    var introAlpha: Float
-    // Screen-space translation (same [0,1] space as artCenter/texCoord) applied to each layer's own
-    // effective art center - (0, 0) for forward/reverseScale (no movement at all); for slideRight,
-    // x runs slideStartOffset -> 0 -> negative (y stays 0); for slideDown, y runs -slideStartOffset
-    // -> 0 -> positive (x stays 0) - see albumArtOffsets().
-    var subjectOffset: SIMD2<Float>
-    var backgroundOffset: SIMD2<Float>
-    // Whether the previous track's art is concurrently dissolving away underneath this one - see
-    // outgoingActiveAndProgress. Rendered as a fully independent layer in the shader (its own
-    // wave-dissolve tear-apart, composited under whatever this struct's stage/stageProgress etc.
-    // describe for the *incoming* track) rather than a fourth value of `stage`, since both now run
-    // at the same time instead of one waiting for the other to finish - see advanceAlbumArtAnimation.
+    // Audio-driven "punch" envelope (see beatPulse's own doc comment) and every layer's own fixed
+    // zoom response to it - a parallax stack where the layer closest to the "camera" (subject, top
+    // of the stack) punches inward the most on a fresh bass hit and each layer underneath it moves
+    // less, down to backgroundColor (bottom of the stack) barely moving at all. Strictly descending
+    // (ProjectMCoordinator.subjectBeatZoomStrength > textBeatZoomStrength >
+    // backgroundDetailBeatZoomStrength > backgroundColorBeatZoomStrength) so the depth ordering
+    // always reads correctly regardless of how hard a given track hits.
+    var beatPulse: Float
+    var backgroundColorBeatZoomStrength: Float
+    var backgroundDetailBeatZoomStrength: Float
+    var textBeatZoomStrength: Float
+    var subjectBeatZoomStrength: Float
+    // Whether the previous track's art is concurrently dissolving away underneath everything above
+    // - a separate, pre-existing dormant feature (see ProjectMCompositeShader.metal's own header)
+    // this four-style cycle doesn't touch; outgoingActive is always 0 today (see draw(in:)).
     var outgoingActive: Float
     var outgoingProgress: Float
 }
@@ -73,6 +80,31 @@ private enum AlbumArtIntroStyle {
     static let all: [Float] = [forward, reverseScale, slideRight, slideDown]
 }
 
+/// ContentView's four-style manual preview cycle ("M") — four independent layers, permanently
+/// stacked in this fixed order, top to bottom: subject, text, backgroundDetail, backgroundColor
+/// (see ProjectMCompositeShader.metal's compositing, and NowPlayingManager.subjectOnlyArtwork/
+/// textOnlyArtwork/backgroundDetailArtwork/backgroundColorArtwork for what each one actually
+/// shows — all four are fully separated, non-overlapping pieces of the cover, not the whole photo
+/// repeated across layers). Each layer carries a fixed beat-zoom "movement" strength that never
+/// changes (see beatPulse/subjectBeatZoomStrength's own doc comment below) - a parallax stack
+/// where subject moves the most, then text, then backgroundDetail, then backgroundColor moves the
+/// least - plus, for backgroundDetail specifically, two further fixed effects on top of that
+/// movement (ProjectMCoordinator's backgroundColorChromaticAberrationStrength/
+/// backgroundDetailDistortionStrength - both named for historical reasons, applied only to
+/// backgroundDetail; backgroundColor is a flat fill with nothing for either to visibly act on).
+/// "M" doesn't pick a named style or swap any layer's
+/// content/effect - it just reveals or hides layers starting from the *bottom* of the stack: press
+/// it and the bottom-most currently-visible layer drops out (4 visible -> 3 -> 2 -> 1 -> 0 -> back
+/// to all 4), so pressing through the whole cycle peels the flat background color away first, then
+/// the color-keyed background detail under the subject, then the static text, leaving just the
+/// beat-zooming subject alone, then nothing, then wraps back to everything. `displayVisibleLayerCount`
+/// (below) is that count, 0...4; a layer's on/off state is just "is my position in the stack
+/// (backgroundColor=1, backgroundDetail=2, text=3, subject=4, counting from the bottom) at or below
+/// the current count."
+enum AlbumArtLayerCount {
+    static let all = 4
+}
+
 final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private let engine: ProjectMEngine?
     private let audioEngine: CoreAudioTapEngine
@@ -97,6 +129,22 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private static let subjectExitDuration: Float = 2.0
     private static let albumArtSizePixels: Float = 480
     private static let globalAlphaEaseSpeed: Float = 8
+    // The four-style cycle's own fixed per-layer effect strengths (see AlbumArtLayerCount) -
+    // always applied at these same values whether or not that layer is currently visible; only
+    // visibility itself is what "M" actually toggles.
+    private static let backgroundColorChromaticAberrationStrength: Float = 0.01
+    private static let backgroundDetailDistortionStrength: Float = 0.05
+    // Per-layer beat-zoom "movement" strength - a parallax stack, strictly descending from the top
+    // of the stack (subject) to the bottom (backgroundColor), so subject punches inward the most on
+    // a bass hit and each layer underneath it moves less, in proportion to how far back in the
+    // stack it sits. Keep these in strictly descending order (subject > text > backgroundDetail >
+    // backgroundColor) - the shader's own overhang margin (see ProjectMCompositeShader.metal's
+    // beatZoomBound) is sized off subjectBeatZoomStrength alone on the assumption it's always the
+    // largest of the four.
+    private static let backgroundColorBeatZoomStrength: Float = 0.03
+    private static let backgroundDetailBeatZoomStrength: Float = 0.06
+    private static let textBeatZoomStrength: Float = 0.10
+    private static let subjectBeatZoomStrength: Float = 0.15
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
     // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
     // separate, same "one continuous ramp" shape as the forward intro's 0 -> 1 -> beyond.
@@ -135,6 +183,17 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var currentFullBackgroundTexture: MTLTexture?
     private var currentBackgroundTexture: MTLTexture?
     private var currentSubjectTexture: MTLTexture?
+    // The four-layer stack's own dedicated textures (see AlbumArtLayerCount) - uploaded
+    // unconditionally in promoteToCurrentTrack alongside the three above, straight from
+    // NowPlayingManager's backgroundColorArtwork/backgroundDetailArtwork/subjectOnlyArtwork/
+    // textOnlyArtwork - all four genuinely non-overlapping pieces of the cover, unlike
+    // currentBackgroundTexture/currentFullBackgroundTexture above (which still carry the whole
+    // photo). All four are always bound and sampled every frame regardless of the current reveal
+    // count - only each one's *Visible uniform flag changes (see draw(in:)).
+    private var currentBackgroundColorTexture: MTLTexture?
+    private var currentBackgroundDetailTexture: MTLTexture?
+    private var currentSubjectOnlyTexture: MTLTexture?
+    private var currentTextOnlyTexture: MTLTexture?
     private var currentRawImage: NSImage?
     private var trackAnimationClock: Float = 0
     // Which of the four intro choreographies this track got, picked once per track in
@@ -167,12 +226,30 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var latestRawImage: NSImage?
     private var latestColorKeyedImage: NSImage?
     private var latestSubjectImage: NSImage?
+    private var latestSubjectOnlyImage: NSImage?
+    private var latestTextOnlyImage: NSImage?
+    private var latestBackgroundDetailImage: NSImage?
+    private var latestBackgroundColorImage: NSImage?
+    // How many layers, counting from the bottom of the stack, draw(in:) shows right now - see
+    // AlbumArtLayerCount's own doc comment. Driven by ContentView's "M" hotkey via updateAlbumArt
+    // below. Starts at `all` (4) - the full stack - matching AlbumArtLayerCount's own cycle order.
+    private var displayVisibleLayerCount = AlbumArtLayerCount.all
     private var albumArtHidden = false
     // "H" hidden-toggle / nothing-loaded-yet mute, eased quickly (not the stage choreography's own
     // pacing) toward 0 or 1 each frame - independent of, and multiplied on top of, whichever stage
     // is currently driving the animation.
     private var globalAlpha: Float = 0
     private var lastAlbumArtTimestamp: CFTimeInterval?
+    // Beat-driven "punch" envelope for the zoom applied in ProjectMCompositeShader.metal (see
+    // subjectBeatZoomStrength) - a simple peak-and-decay follower over
+    // audioEngine.levels' lowest bands (~60-130Hz, the kick-drum/bass range), not real tempo/
+    // onset detection: snaps straight up to match a fresh, louder bass hit (the per-band
+    // smoothing SpectrumAnalyzer already does gives that snap its fast attack), then decays
+    // linearly at beatPulseDecayPerSecond between hits, which is what actually reads as a "pulse"
+    // rather than the zoom just continuously tracking bass loudness.
+    private var beatPulse: Float = 0
+    private static let beatPulseBassBandCount = 6
+    private static let beatPulseDecayPerSecond: Float = 2.0
 
     private var lastLoadedPresetURL: URL?
     private weak var model: ProjectMVisualizerModel?
@@ -212,10 +289,19 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// Called from ProjectMMetalView.updateNSView every SwiftUI update tick (cheap: just stored
     /// properties) - the real work (texture uploads, stage transitions) happens lazily in
     /// draw(in:)'s advanceAlbumArtAnimation, since that's where a live MTLDevice is on hand.
-    func updateAlbumArt(rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?, hidden: Bool) {
+    func updateAlbumArt(
+        rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?, subjectOnlyImage: NSImage?,
+        textOnlyImage: NSImage?, backgroundDetailImage: NSImage?, backgroundColorImage: NSImage?,
+        visibleLayerCount: Int, hidden: Bool
+    ) {
         latestRawImage = rawImage
         latestColorKeyedImage = colorKeyedImage
         latestSubjectImage = subjectImage
+        latestSubjectOnlyImage = subjectOnlyImage
+        latestTextOnlyImage = textOnlyImage
+        latestBackgroundDetailImage = backgroundDetailImage
+        latestBackgroundColorImage = backgroundColorImage
+        displayVisibleLayerCount = visibleLayerCount
         albumArtHidden = hidden
     }
 
@@ -272,60 +358,58 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             return
         }
 
-        // Art square is a fixed 480x480 device pixels (Spotify's own artwork resolution),
-        // centered - the same spot SwiftUI's ZStack centered it by default before this moved
-        // into the shader.
-        // --- Album transition code temporarily disabled: force steady-state (fully in, no
-        // scale/slide/dissolve, no outgoing layer) instead of running the choreography below. ---
-        // let (stage, stageProgress) = albumArtStageAndProgress()
-        // let (outgoingActive, outgoingProgress) = outgoingActiveAndProgress()
-        let stage = AlbumArtStage.steady
-        let stageProgress: Float = 1
+        // Art square is a fixed 480x480 device pixels (Spotify's own artwork resolution), centered
+        // - the same spot SwiftUI's ZStack centered it by default before this moved into the
+        // shader. outgoingActive/outgoingProgress stay hardcoded off - that's the separate,
+        // pre-existing track-transition-dissolve feature (see ProjectMCompositeShader.metal's own
+        // header), disabled before this four-style cycle existed and untouched by it.
         let outgoingActive: Float = 0
         let outgoingProgress: Float = 0
-        let hasSubjectMask = currentSubjectTexture != nil
-        // let (subjectScale, backgroundScale) = albumArtScales(hasSubjectMask: hasSubjectMask)
-        // let (subjectOffset, backgroundOffset) = albumArtOffsets(hasSubjectMask: hasSubjectMask)
-        let subjectScale: Float = 1
-        let backgroundScale: Float = 1
-        let subjectOffset = SIMD2<Float>(0, 0)
-        let backgroundOffset = SIMD2<Float>(0, 0)
-        // --- end disabled ---
         var uniforms = AlbumArtUniforms(
             waveTexelSize: SIMD2(1.0 / Float(width), 1.0 / Float(height)),
             artCenter: SIMD2(0.5, 0.5),
             artHalfSize: SIMD2(
                 Self.albumArtSizePixels / 2.0 / Float(width), Self.albumArtSizePixels / 2.0 / Float(height)
             ),
-            stage: stage,
-            stageProgress: stageProgress,
-            hasSubjectMask: hasSubjectMask ? 1 : 0,
             globalAlpha: globalAlpha,
-            distortionStrength: 0.06,
-            subjectScale: subjectScale,
-            backgroundScale: backgroundScale,
-            introAlpha: 1, // introAlpha(), -- disabled, see above
-            subjectOffset: subjectOffset,
-            backgroundOffset: backgroundOffset,
+            // Bottom of the stack disappears first as the count drops from 4 (see
+            // AlbumArtLayerCount's own doc comment): backgroundColor needs the full count to show,
+            // subject only needs at least 1 - it's the last one left before the stack hits 0 and
+            // wraps.
+            backgroundColorVisible: displayVisibleLayerCount >= 4 ? 1 : 0,
+            backgroundDetailVisible: displayVisibleLayerCount >= 3 ? 1 : 0,
+            subjectVisible: displayVisibleLayerCount >= 1 ? 1 : 0,
+            textVisible: displayVisibleLayerCount >= 2 ? 1 : 0,
+            chromaticAberrationStrength: Self.backgroundColorChromaticAberrationStrength,
+            distortionStrength: Self.backgroundDetailDistortionStrength,
+            beatPulse: beatPulse,
+            backgroundColorBeatZoomStrength: Self.backgroundColorBeatZoomStrength,
+            backgroundDetailBeatZoomStrength: Self.backgroundDetailBeatZoomStrength,
+            textBeatZoomStrength: Self.textBeatZoomStrength,
+            subjectBeatZoomStrength: Self.subjectBeatZoomStrength,
             outgoingActive: outgoingActive,
             outgoingProgress: outgoingProgress
         )
 
-        // scaleIn shows the genuinely full cover (no hole) as its background layer; separate/steady
-        // switch to the hole-punched version the instant the subject locks and the rest starts
-        // pulling away - see currentFullBackgroundTexture/currentBackgroundTexture's own doc comment.
-        let backgroundTex = (stage == AlbumArtStage.scaleIn ? currentFullBackgroundTexture : currentBackgroundTexture)
-            ?? emptyAlbumArtTexture
-        let subjectTex = currentSubjectTexture ?? emptyAlbumArtTexture
-        // Previous track's snapshot, dissolving away as its own layer underneath the incoming
-        // track above - see outgoingTexture's own doc comment.
+        // The four-layer stack's own layers - always bound the same way regardless of the current
+        // reveal count; only the uniforms' *Visible flags above change with it. Falls back to
+        // emptyAlbumArtTexture (fully transparent) per layer when this track has nothing for it
+        // (e.g. no clean color key, or Vision found no subject).
+        let backgroundColorTex = currentBackgroundColorTexture ?? emptyAlbumArtTexture
+        let backgroundDetailTex = currentBackgroundDetailTexture ?? emptyAlbumArtTexture
+        let subjectTex = currentSubjectOnlyTexture ?? emptyAlbumArtTexture
+        let textTex = currentTextOnlyTexture ?? emptyAlbumArtTexture
+        // Previous track's snapshot, dissolving away as its own layer underneath everything above
+        // - see outgoingTexture's own doc comment.
         let outgoingTex = outgoingTexture ?? emptyAlbumArtTexture
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentTexture(texture, index: 0)
-        encoder.setFragmentTexture(backgroundTex, index: 1)
-        encoder.setFragmentTexture(subjectTex, index: 2)
-        encoder.setFragmentTexture(outgoingTex, index: 3)
+        encoder.setFragmentTexture(backgroundColorTex, index: 1)
+        encoder.setFragmentTexture(backgroundDetailTex, index: 2)
+        encoder.setFragmentTexture(subjectTex, index: 3)
+        encoder.setFragmentTexture(textTex, index: 4)
+        encoder.setFragmentTexture(outgoingTex, index: 5)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<AlbumArtUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
@@ -350,7 +434,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
                 // First track this launch - nothing on screen yet to dissolve away first.
                 promoteToCurrentTrack(
                     device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
-                    subjectImage: latestSubjectImage
+                    subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,
+                    textOnlyImage: latestTextOnlyImage, backgroundDetailImage: latestBackgroundDetailImage,
+                    backgroundColorImage: latestBackgroundColorImage
                 )
             } else {
                 // --- Album transition code temporarily disabled: no outgoing dissolve layer, just
@@ -361,13 +447,16 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
                 // --- end disabled ---
                 promoteToCurrentTrack(
                     device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
-                    subjectImage: latestSubjectImage
+                    subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,
+                    textOnlyImage: latestTextOnlyImage, backgroundDetailImage: latestBackgroundDetailImage,
+                    backgroundColorImage: latestBackgroundColorImage
                 )
             }
         }
 
         defer { lastAlbumArtTimestamp = now }
         let dt = lastAlbumArtTimestamp.map { Float(now - $0) } ?? 0
+        updateBeatPulse(dt: dt)
 
         // --- Album transition code temporarily disabled ---
         // if isOutgoingExitActive {
@@ -383,6 +472,23 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let hasContent = currentBackgroundTexture != nil || currentSubjectTexture != nil || isOutgoingExitActive
         let target: Float = (hasContent && !albumArtHidden) ? 1 : 0
         globalAlpha += (target - globalAlpha) * min(1, max(0, dt) * Self.globalAlphaEaseSpeed)
+    }
+
+    /// Peak-and-decay follower over the lowest bands of audioEngine.levels (SpectrumAnalyzer's
+    /// 40-band log-spaced spectrum, 60Hz-10kHz - see beatPulse's own doc comment for why the
+    /// first `beatPulseBassBandCount` bands land squarely in kick-drum/bass territory).
+    /// Deliberately not real onset/tempo detection - just tracks the loudest recent bass hit and
+    /// lets it decay, which reads as a satisfying "punch" on transients without the false-positive
+    /// risk a proper beat tracker would carry for comparatively little visual difference here.
+    private func updateBeatPulse(dt: Float) {
+        let bassBandCount = min(Self.beatPulseBassBandCount, audioEngine.levels.count)
+        guard bassBandCount > 0 else { return }
+        let bassEnergy = Float(audioEngine.levels[0..<bassBandCount].reduce(0, +)) / Float(bassBandCount)
+        if bassEnergy > beatPulse {
+            beatPulse = bassEnergy
+        } else {
+            beatPulse = max(0, beatPulse - Self.beatPulseDecayPerSecond * max(0, dt))
+        }
     }
 
     // --- Album transition code temporarily disabled ---
@@ -496,7 +602,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     */
     // --- end disabled ---
 
-    private func promoteToCurrentTrack(device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?) {
+    private func promoteToCurrentTrack(
+        device: MTLDevice, rawImage: NSImage?, colorKeyedImage: NSImage?, subjectImage: NSImage?,
+        subjectOnlyImage: NSImage?, textOnlyImage: NSImage?, backgroundDetailImage: NSImage?,
+        backgroundColorImage: NSImage?
+    ) {
         currentRawImage = rawImage
         // Random pick each track, excluded from repeating the style just used so back-to-back
         // tracks never play the same intro choreography twice in a row.
@@ -522,6 +632,23 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
         }
         currentSubjectTexture = subjectImage.flatMap {
+            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
+        }
+        // The four-layer stack's own textures - see AlbumArtLayerCount. backgroundColorImage/
+        // backgroundDetailImage are genuinely separate ingredients from rawImage/colorKeyedImage
+        // above (see NowPlayingManager.backgroundColorArtwork/backgroundDetailArtwork's own doc
+        // comments) - a flat color fill and a subject/text-hole-punched color key, respectively,
+        // rather than the whole cover repeated across layers.
+        currentBackgroundColorTexture = backgroundColorImage.flatMap {
+            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
+        }
+        currentBackgroundDetailTexture = backgroundDetailImage.flatMap {
+            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
+        }
+        currentSubjectOnlyTexture = subjectOnlyImage.flatMap {
+            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
+        }
+        currentTextOnlyTexture = textOnlyImage.flatMap {
             Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
         }
         trackAnimationClock = 0

@@ -360,6 +360,34 @@ extension NSImage {
         guard let outCGImage = context.makeImage() else { return nil }
         return outCGImage.asPixelExactNSImage()
     }
+
+    /// A flat, fully-opaque fill of `color` at `size` - the four-layer stack's own "background
+    /// color" layer (see NowPlayingManager.backgroundColorArtwork), sized to match the raw
+    /// artwork's own pixel dimensions so it samples at the same scale as every other layer despite
+    /// having no actual detail of its own. Built via CGContext + asPixelExactNSImage(), the same
+    /// pattern every other derived-image helper in this file uses (see keyingOutBackground above)
+    /// - NOT `NSImage(size:).lockFocus()/.unlockFocus()`, which was the original implementation and
+    /// the actual reason this layer never rendered: lockFocus draws at the *screen's* backing scale
+    /// factor rather than `size`'s own pixel dimensions, and PixelExactImage.swift's own header
+    /// documents a closely related NSImage-representation/scale mismatch this codebase already hit
+    /// once (NSImage(cgImage:size:)'s lazy NSCGImageSnapshotRep silently resampling); going through
+    /// a real CGContext and asPixelExactNSImage() sidesteps both failure modes the same way the
+    /// rest of this file already does.
+    nonisolated static func filled(with color: NSColor, size: NSSize) -> NSImage {
+        let width = max(1, Int(size.width.rounded()))
+        let height = max(1, Int(size.height.rounded()))
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let rgbColor = color.usingColorSpace(.sRGB) else {
+            return NSImage(size: size)
+        }
+        context.setFillColor(red: rgbColor.redComponent, green: rgbColor.greenComponent, blue: rgbColor.blueComponent, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let cgImage = context.makeImage() else { return NSImage(size: size) }
+        return cgImage.asPixelExactNSImage()
+    }
 }
 
 /// Which of the two "special" background tones (if either) a color counts as — used to decide

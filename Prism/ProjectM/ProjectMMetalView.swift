@@ -26,6 +26,22 @@ struct ProjectMMetalView: NSViewRepresentable {
     var albumArtRawImage: NSImage?
     var albumArtColorKeyedImage: NSImage?
     var albumArtSubjectImage: NSImage?
+    // The "only the subject" (no text) layer of ContentView's four-style cycle - see
+    // NowPlayingManager.subjectOnlyArtwork/ProjectMCoordinator.AlbumArtLayerCount.
+    var albumArtSubjectOnlyImage: NSImage?
+    // OCR text alone, no subject - see NowPlayingManager.textOnlyArtwork. Kept separate from
+    // albumArtSubjectImage so the coordinator can hold it static while the subject layer
+    // beat-zooms independently on top of it.
+    var albumArtTextOnlyImage: NSImage?
+    // The four-layer stack's own two "background" layers - genuinely non-overlapping with
+    // albumArtSubjectOnlyImage/albumArtTextOnlyImage above, unlike albumArtRawImage/
+    // albumArtColorKeyedImage (which still carry the whole photo) - see
+    // NowPlayingManager.backgroundDetailArtwork/backgroundColorArtwork.
+    var albumArtBackgroundDetailImage: NSImage?
+    var albumArtBackgroundColorImage: NSImage?
+    // How many of the four stacked layers are currently visible, 0...4 - ContentView's "M" hotkey.
+    // See ProjectMCoordinator.AlbumArtLayerCount.
+    var albumArtVisibleLayerCount: Int
     var isAlbumArtHidden: Bool
     var onDropPreset: (URL) -> Void
     var onDropTargetChanged: (Bool) -> Void
@@ -56,7 +72,10 @@ struct ProjectMMetalView: NSViewRepresentable {
         context.coordinator.updateModelIfNeeded(model)
         context.coordinator.updateAlbumArt(
             rawImage: albumArtRawImage, colorKeyedImage: albumArtColorKeyedImage,
-            subjectImage: albumArtSubjectImage, hidden: isAlbumArtHidden
+            subjectImage: albumArtSubjectImage, subjectOnlyImage: albumArtSubjectOnlyImage,
+            textOnlyImage: albumArtTextOnlyImage, backgroundDetailImage: albumArtBackgroundDetailImage,
+            backgroundColorImage: albumArtBackgroundColorImage,
+            visibleLayerCount: albumArtVisibleLayerCount, hidden: isAlbumArtHidden
         )
         nsView.onDropPreset = onDropPreset
         nsView.onDropTargetChanged = onDropTargetChanged
