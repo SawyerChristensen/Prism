@@ -38,18 +38,21 @@ private struct AlbumArtUniforms {
     // every layer carries its own beat-zoom strength below.
     var chromaticAberrationStrength: Float
     var distortionStrength: Float
-    // Audio-driven "punch" envelope (see beatPulse's own doc comment) and every layer's own fixed
-    // zoom response to it - a parallax stack where the layer closest to the "camera" (subject, top
-    // of the stack) punches inward the most on a fresh bass hit and each layer underneath it moves
-    // less, down to backgroundColor (bottom of the stack) barely moving at all. Strictly descending
-    // (ProjectMCoordinator.subjectBeatZoomStrength > textBeatZoomStrength >
-    // backgroundDetailBeatZoomStrength > backgroundColorBeatZoomStrength) so the depth ordering
-    // always reads correctly regardless of how hard a given track hits.
+    // Audio-driven "punch" envelope (see beatPulse's own doc comment) and every layer's own zoom
+    // response to it - a parallax stack where the layer closest to the "camera" punches inward the
+    // most on a fresh bass hit and each layer underneath it moves less, down to backgroundColor
+    // (bottom of the stack) barely moving at all. backgroundColorBeatZoomStrength is a fixed
+    // constant, but the other three are resampled per track (see
+    // ProjectMCoordinator.resampleBeatZoomStrengths) from this cover's actual subject/text/
+    // backgroundDetail layer count, not tied to those specific named layers - always strictly
+    // descending and always <= ProjectMCoordinator.primaryBeatZoomStrength, so the depth ordering
+    // always reads correctly regardless of how many layers this cover actually has or how hard a
+    // given track hits.
     var beatPulse: Float
     var backgroundColorBeatZoomStrength: Float
-    var backgroundDetailBeatZoomStrength: Float
-    var textBeatZoomStrength: Float
-    var subjectBeatZoomStrength: Float
+    var tertiaryBeatZoomStrength: Float
+    var secondaryBeatZoomStrength: Float
+    var primaryBeatZoomStrength: Float
     // Whether the previous track's art is concurrently dissolving away underneath everything above
     // - a separate, pre-existing dormant feature (see ProjectMCompositeShader.metal's own header)
     // this four-style cycle doesn't touch; outgoingActive is always 0 today (see draw(in:)).
@@ -85,13 +88,21 @@ private enum AlbumArtIntroStyle {
 /// (see ProjectMCompositeShader.metal's compositing, and NowPlayingManager.subjectOnlyArtwork/
 /// textOnlyArtwork/backgroundDetailArtwork/backgroundColorArtwork for what each one actually
 /// shows — all four are fully separated, non-overlapping pieces of the cover, not the whole photo
-/// repeated across layers). Each layer carries a fixed beat-zoom "movement" strength that never
-/// changes (see beatPulse/subjectBeatZoomStrength's own doc comment below) - a parallax stack
-/// where subject moves the most, then text, then backgroundDetail, then backgroundColor moves the
-/// least - plus, for backgroundDetail specifically, two further fixed effects on top of that
-/// movement (ProjectMCoordinator's backgroundColorChromaticAberrationStrength/
-/// backgroundDetailDistortionStrength - both named for historical reasons, applied only to
-/// backgroundDetail; backgroundColor is a flat fill with nothing for either to visibly act on).
+/// repeated across layers). backgroundColor always carries the same fixed beat-zoom "movement"
+/// strength (backgroundColorBeatZoomStrength); the other three (subject/text/backgroundDetail)
+/// share a per-track *resampled* strength instead of each having its own fixed one - see
+/// resampleBeatZoomStrengths's own doc comment. A cover missing one of those three (no Vision
+/// subject, no OCR text) doesn't leave a gap: whichever of the three actually exist for this cover
+/// are re-ranked top-to-bottom starting from 1, and share out the same top-to-bottom strength
+/// falloff (primaryBeatZoomStrength -> secondaryBeatZoomStrength -> tertiaryBeatZoomStrength)
+/// as if the stack only ever had that many layers - so a cover with only backgroundDetail (no
+/// subject or text) has it moving at the full primaryBeatZoomStrength, not the small
+/// tertiaryBeatZoomStrength it'd get if all three existed. This is independent of "M"'s
+/// own reveal count below - resampling is about how hard each layer *punches when visible*, not
+/// whether it's currently revealed. Separately, backgroundDetail specifically also carries two
+/// further fixed effects on top of its movement (ProjectMCoordinator's
+/// backgroundColorChromaticAberrationStrength/backgroundDetailDistortionStrength - both named for
+/// historical reasons; backgroundColor is a flat fill with nothing for either to visibly act on).
 /// "M" doesn't pick a named style or swap any layer's
 /// content/effect - it just reveals or hides layers starting from the *bottom* of the stack: press
 /// it and the bottom-most currently-visible layer drops out (4 visible -> 3 -> 2 -> 1 -> 0 -> back
@@ -132,19 +143,25 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // The four-style cycle's own fixed per-layer effect strengths (see AlbumArtLayerCount) -
     // always applied at these same values whether or not that layer is currently visible; only
     // visibility itself is what "M" actually toggles.
-    private static let backgroundColorChromaticAberrationStrength: Float = 0.01
+    private static let backgroundColorChromaticAberrationStrength: Float = 0.005
     private static let backgroundDetailDistortionStrength: Float = 0.05
     // Per-layer beat-zoom "movement" strength - a parallax stack, strictly descending from the top
     // of the stack (subject) to the bottom (backgroundColor), so subject punches inward the most on
     // a bass hit and each layer underneath it moves less, in proportion to how far back in the
     // stack it sits. Keep these in strictly descending order (subject > text > backgroundDetail >
     // backgroundColor) - the shader's own overhang margin (see ProjectMCompositeShader.metal's
-    // beatZoomBound) is sized off subjectBeatZoomStrength alone on the assumption it's always the
-    // largest of the four.
-    private static let backgroundColorBeatZoomStrength: Float = 0.03
-    private static let backgroundDetailBeatZoomStrength: Float = 0.06
-    private static let textBeatZoomStrength: Float = 0.10
-    private static let subjectBeatZoomStrength: Float = 0.15
+    // beatZoomBound) is sized off primaryBeatZoomStrength alone on the assumption it's always the
+    // largest of the four - still true after resampling (see resampleBeatZoomStrengths), since the
+    // top-ranked present layer always gets exactly primaryBeatZoomStrength, never more.
+    // backgroundColorBeatZoomStrength is applied as-is, always; the other three are this cover's
+    // *base* full-stack values - what actually reaches the shader for subject/text/backgroundDetail
+    // is resampleBeatZoomStrengths's per-track output (see currentPrimaryBeatZoomStrength etc.),
+    // not these constants directly, except when all three layers exist for a given cover (the
+    // common case), where resampling is the identity and these values pass straight through.
+    private static let backgroundColorBeatZoomStrength: Float = 0.05 //disabled for now
+    private static let tertiaryBeatZoomStrength: Float = 0.2
+    private static let secondaryBeatZoomStrength: Float = 0.3
+    private static let primaryBeatZoomStrength: Float = 0.45
     // How zoomed-in the reverse intro starts (see introStyle) - the ramp runs
     // reverseIntroStartScale -> 1 over scaleIn, then keeps going at that same rate through
     // separate, same "one continuous ramp" shape as the forward intro's 0 -> 1 -> beyond.
@@ -194,6 +211,14 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var currentBackgroundDetailTexture: MTLTexture?
     private var currentSubjectOnlyTexture: MTLTexture?
     private var currentTextOnlyTexture: MTLTexture?
+    // This cover's actual beat-zoom strengths for subject/text/backgroundDetail, resolved once per
+    // track in promoteToCurrentTrack by resampleBeatZoomStrengths - see that function's own doc
+    // comment. Default to the full-stack constants so nothing looks wrong before the first track
+    // ever loads. backgroundColor isn't here since its strength never varies - draw(in:) reads
+    // Self.backgroundColorBeatZoomStrength directly for it, same as before.
+    private var currentPrimaryBeatZoomStrength = ProjectMCoordinator.primaryBeatZoomStrength
+    private var currentSecondaryBeatZoomStrength = ProjectMCoordinator.secondaryBeatZoomStrength
+    private var currentTertiaryBeatZoomStrength = ProjectMCoordinator.tertiaryBeatZoomStrength
     private var currentRawImage: NSImage?
     private var trackAnimationClock: Float = 0
     // Which of the four intro choreographies this track got, picked once per track in
@@ -241,7 +266,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var globalAlpha: Float = 0
     private var lastAlbumArtTimestamp: CFTimeInterval?
     // Beat-driven "punch" envelope for the zoom applied in ProjectMCompositeShader.metal (see
-    // subjectBeatZoomStrength) - a simple peak-and-decay follower over
+    // primaryBeatZoomStrength) - a simple peak-and-decay follower over
     // audioEngine.levels' lowest bands (~60-130Hz, the kick-drum/bass range), not real tempo/
     // onset detection: snaps straight up to match a fresh, louder bass hit (the per-band
     // smoothing SpectrumAnalyzer already does gives that snap its fast attack), then decays
@@ -385,9 +410,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             distortionStrength: Self.backgroundDetailDistortionStrength,
             beatPulse: beatPulse,
             backgroundColorBeatZoomStrength: Self.backgroundColorBeatZoomStrength,
-            backgroundDetailBeatZoomStrength: Self.backgroundDetailBeatZoomStrength,
-            textBeatZoomStrength: Self.textBeatZoomStrength,
-            subjectBeatZoomStrength: Self.subjectBeatZoomStrength,
+            tertiaryBeatZoomStrength: currentTertiaryBeatZoomStrength,
+            secondaryBeatZoomStrength: currentSecondaryBeatZoomStrength,
+            primaryBeatZoomStrength: currentPrimaryBeatZoomStrength,
             outgoingActive: outgoingActive,
             outgoingProgress: outgoingProgress
         )
@@ -652,7 +677,50 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         currentTextOnlyTexture = textOnlyImage.flatMap {
             Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
         }
+
+        // Resolve this cover's actual beat-zoom strengths - see resampleBeatZoomStrengths's own doc
+        // comment. Order matters: this must match the fixed top-to-bottom depth stack (subject,
+        // text, backgroundDetail) that Self.fullBeatZoomStrengths is itself ordered in.
+        let layersPresent = [subjectOnlyImage != nil, textOnlyImage != nil, backgroundDetailImage != nil]
+        let resampled = Self.resampleBeatZoomStrengths(
+            Self.fullBeatZoomStrengths, to: layersPresent.filter { $0 }.count
+        )
+        var resampledStrengths = resampled.makeIterator()
+        currentPrimaryBeatZoomStrength = layersPresent[0] ? (resampledStrengths.next() ?? 0) : 0
+        currentSecondaryBeatZoomStrength = layersPresent[1] ? (resampledStrengths.next() ?? 0) : 0
+        currentTertiaryBeatZoomStrength = layersPresent[2] ? (resampledStrengths.next() ?? 0) : 0
+
         trackAnimationClock = 0
+    }
+
+    /// This cover's actual full-stack beat-zoom strengths, top-to-bottom (subject, text,
+    /// backgroundDetail) - backgroundColor is deliberately excluded, since its strength never
+    /// varies regardless of what the other three layers look like.
+    private static let fullBeatZoomStrengths: [Float] = [
+        primaryBeatZoomStrength, secondaryBeatZoomStrength, tertiaryBeatZoomStrength,
+    ]
+
+    /// Resamples `base` (a strictly descending, top-to-bottom "if every layer existed" strength
+    /// list) down to `count` values, so a cover missing some of those layers still gets a smooth
+    /// top-to-bottom falloff scaled to however many it actually has, rather than either reusing
+    /// `base`'s values verbatim (which would leave whatever layer happens to survive stuck with
+    /// whatever weak strength its *original* named slot had) or - worse - concentrating all the
+    /// punch on `base.first` regardless of stack depth. The first output always exactly equals
+    /// `base.first` (the strongest value) - so a cover with only one of these three layers has it
+    /// moving at the full top-of-stack strength, not some smaller one - and the rest are
+    /// linearly interpolated between `base`'s neighboring entries at evenly-spaced positions, so
+    /// e.g. resampling [0.15, 0.10, 0.06] to 2 values gives [0.15, 0.125]: the first entry
+    /// untouched, the second roughly splitting the difference between `base`'s middle and last
+    /// entries rather than jumping straight to either one.
+    private static func resampleBeatZoomStrengths(_ base: [Float], to count: Int) -> [Float] {
+        guard count > 0, !base.isEmpty else { return [] }
+        return (0..<count).map { i in
+            let position = Float(i) * Float(base.count) / Float(count)
+            let lowerIndex = min(Int(position), base.count - 1)
+            let upperIndex = min(lowerIndex + 1, base.count - 1)
+            let fraction = position - Float(lowerIndex)
+            return base[lowerIndex] + (base[upperIndex] - base[lowerIndex]) * fraction
+        }
     }
 
     /// Punches a subject-shaped hole out of `raw`, using `subjectMask`'s own alpha as the stencil

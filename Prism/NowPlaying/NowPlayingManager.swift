@@ -600,11 +600,18 @@ final class NowPlayingManager {
         // same way `colorKeyedArtwork` is would leave the backgroundColor layer permanently nil
         // (and this layer of the four-layer stack invisible) for every cover whose background
         // isn't near-black/near-white, which is most of them.
-        if let background = cachedColors?.background {
-            cachedBackgroundColorArtwork = .filled(with: background, size: cachedRawArtwork.size)
-        } else {
-            cachedBackgroundColorArtwork = nil
-        }
+        //
+        // Disabled - always nil for now, which the rest of the pipeline already treats as "this
+        // layer doesn't exist for this cover" (see ContentView.meaningfulAlbumArtLayerCounts's own
+        // doc comment): ProjectMCoordinator falls back to its transparent empty texture, and "M"'s
+        // reveal cycle skips straight from the full stack to backgroundDetail without a dead step.
+        // Uncomment to bring the flat-fill layer back.
+        // if let background = cachedColors?.background {
+        //     cachedBackgroundColorArtwork = .filled(with: background, size: cachedRawArtwork.size)
+        // } else {
+        //     cachedBackgroundColorArtwork = nil
+        // }
+        cachedBackgroundColorArtwork = nil
     }
 
     /// Re-composites `artwork` from this track's already-cached ingredients (raw image, colors,

@@ -15,24 +15,32 @@
 //  subjectOnlyArtwork), each sampled with a fixed set of effects that never changes, composited
 //  with standard sequential "over" blending. Every layer carries the same beat-driven zoom
 //  (ProjectMCoordinator.beatPulse - punches inward on a fresh bass hit, relaxes back as the pulse
-//  decays) at its own fixed strength, forming a parallax stack: subject (topmost, "closest") moves
-//  the most, then text, then backgroundDetail, then backgroundColor (bottom, "furthest") moves the
-//  least. backgroundDetail alone additionally carries chromatic aberration (R/B channel split,
+//  decays), forming a parallax stack: subject (topmost, "closest") moves the most, then text, then
+//  backgroundDetail, then backgroundColor (bottom, "furthest") moves the least. backgroundColor's
+//  strength is fixed; the other three's strengths are resampled per track from however many of
+//  subject/text/backgroundDetail this cover actually has (ProjectMCoordinator.
+//  resampleBeatZoomStrengths) - a cover missing its subject, say, has text take over the
+//  topmost/strongest slot instead of being stuck at its own weaker one, so the frontmost surviving
+//  layer always punches the hardest regardless of which layers this particular cover has.
+//  backgroundDetail alone additionally carries chromatic aberration (R/B channel split,
 //  ProjectMCoordinator.backgroundColorChromaticAberrationStrength - named for the layer beneath it
 //  in the stack, not the layer it's actually applied to, see below) and wave-gradient UV distortion:
 //    backgroundColor  - a flat fill of the measured background color.
-//                        Effects: beat zoom only - a flat fill has no internal color variation for
-//                        chromatic aberration or distortion to act on (either would be a structural
-//                        no-op here regardless of strength - see this file's own backgroundColor
-//                        sampling comment below), so neither is applied.
+//                        Effects: beat zoom only, at a fixed strength - a flat fill has no internal
+//                        color variation for chromatic aberration or distortion to act on (either
+//                        would be a structural no-op here regardless of strength - see this file's
+//                        own backgroundColor sampling comment below), so neither is applied.
 //    backgroundDetail - the color-keyed cover, with the subject and text also punched out.
-//                        Effects: beat zoom + chromatic aberration + wave-gradient UV distortion (a
-//                        cheap refraction/heat-haze trick - a hard edge or bright streak in the wave
-//                        visibly pushes this layer around). This is the layer with real image
-//                        content, so both of backgroundColor's would-be effects live here instead.
-//    text             - the isolated OCR text.  Effect: beat zoom only.
+//                        Effects: beat zoom (resampled strength) + chromatic aberration +
+//                        wave-gradient UV distortion (a cheap refraction/heat-haze trick - a hard
+//                        edge or bright streak in the wave visibly pushes this layer around). This
+//                        is the layer with real image content, so both of backgroundColor's
+//                        would-be effects live here instead.
+//    text             - the isolated OCR text.  Effect: beat zoom only (resampled strength).
 //    subject          - the isolated Vision cutout, always drawn topmost.
-//                        Effect: beat zoom (greatest of the four).
+//                        Effect: beat zoom only (resampled strength, usually the greatest of the
+//                        four - see maxBeatZoomStrength below for the one case it isn't: this
+//                        cover having no subject at all).
 //  "M" never changes what a layer contains or how it's treated - see AlbumArtUniforms's four
 //  `*Visible` flags below - it only reveals or hides layers starting from the bottom of the stack
 //  (4 visible -> 3 -> 2 -> 1 (just the subject) -> 0 -> wraps back to 4).
@@ -153,15 +161,19 @@ struct AlbumArtUniforms {
     float chromaticAberrationStrength;
     float distortionStrength;
     // Audio-driven "punch" envelope (ProjectMCoordinator.beatPulse - snaps up on a fresh bass hit,
-    // decays linearly otherwise) and every layer's own fixed zoom response to it - strictly
-    // descending front-to-back (subjectBeatZoomStrength > textBeatZoomStrength >
-    // backgroundDetailBeatZoomStrength > backgroundColorBeatZoomStrength), so subject punches
-    // inward the most and backgroundColor barely moves - see this file's own header.
+    // decays linearly otherwise) and every layer's own zoom response to it - strictly descending
+    // front-to-back (primaryBeatZoomStrength > secondaryBeatZoomStrength > tertiaryBeatZoomStrength
+    // > backgroundColorBeatZoomStrength) for whichever layers this cover actually has, so the
+    // frontmost surviving layer always punches inward the most and backgroundColor always barely
+    // moves - see this file's own header and ProjectMCoordinator.resampleBeatZoomStrengths. Which
+    // named field ends up carrying the largest value depends on this cover's actual layers (e.g. a
+    // subject-less cover has secondaryBeatZoomStrength, not primaryBeatZoomStrength, as the largest) -
+    // don't assume primaryBeatZoomStrength is always the max (see maxBeatZoomStrength below).
     float beatPulse;
     float backgroundColorBeatZoomStrength;
-    float backgroundDetailBeatZoomStrength;
-    float textBeatZoomStrength;
-    float subjectBeatZoomStrength;
+    float tertiaryBeatZoomStrength;
+    float secondaryBeatZoomStrength;
+    float primaryBeatZoomStrength;
     // Whether the previous track's art is concurrently dissolving away underneath everything above
     // - see this file's own header. Always 0 today.
     float outgoingActive;
@@ -185,12 +197,19 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // Beat zoom can magnify a layer past its own fixed artCenter/artHalfSize square - grant a
     // matching overhang margin here so that doesn't get clipped right back to the square's
     // original edge (half of (scale - 1) is exactly how far past [0,1] artUV the zoomed content
-    // reaches - see subjectUV below). Sized off subjectBeatZoomStrength alone since it's always the
-    // largest of the four per-layer strengths (see this file's own header) - every other layer's
-    // zoom stays within that same bound. The outgoing track's own dissolve keeps its preexisting
-    // generous margin for its scatter.
+    // reaches - see subjectUV below). Sized off whichever of the three per-layer strengths is
+    // actually largest *this frame* - primaryBeatZoomStrength no longer always wins on its own now
+    // that ProjectMCoordinator.resampleBeatZoomStrengths can hand the top-of-stack value to
+    // whichever of subject/text/backgroundDetail this cover actually has (e.g. a cover with no
+    // subject has secondaryBeatZoomStrength carrying it instead). backgroundColor is excluded -
+    // it's disabled (see NowPlayingManager.recomputeDerivedAlbumArtLayers), never actually sampled
+    // below, so its strength can't be the frame's real max regardless of what the uniform holds.
+    // The outgoing track's own dissolve keeps its preexisting generous margin for its scatter.
     bool outgoingActive = u.outgoingActive > 0.5;
-    float beatZoomBound = u.beatPulse * u.subjectBeatZoomStrength * 0.5;
+    float maxBeatZoomStrength = max(
+        u.primaryBeatZoomStrength, max(u.secondaryBeatZoomStrength, u.tertiaryBeatZoomStrength)
+    );
+    float beatZoomBound = u.beatPulse * maxBeatZoomStrength * 0.5;
     float bound = max(outgoingActive ? 1.0 : 0.0, beatZoomBound);
     float2 artUV = (in.texCoord - u.artCenter) / (u.artHalfSize * 2.0) + 0.5;
     if (artUV.x < -bound || artUV.x > 1.0 + bound
@@ -220,20 +239,15 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         outAlpha = outArt.a * edgeAlpha * exitOpacity;
     }
 
-    // backgroundColor layer: beat zoom only (smallest of the four - see this file's own header).
-    // No per-pixel color/UV effect (chromatic aberration, distortion) can ever read as visible
-    // here: backgroundColorArtTexture is a flat, single-color fill (see
-    // NowPlayingManager.backgroundColorArtwork/NSImage.filled(with:size:)), so sampling it at any
-    // offset or warped UV returns the exact same color - there's no internal variation for either
-    // effect to act on. Beat zoom still visibly works because it's a *boundary* effect, not an
-    // internal one: it's the zoomed UV itself that feeds the in-bounds test just below, so the
-    // flat swatch's edges genuinely grow/shrink with the pulse even though its interior never
-    // changes. Both other effects live entirely on backgroundDetail instead (below), which has
-    // real image content for them to act on.
-    float2 backgroundColorZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.backgroundColorBeatZoomStrength);
-    bool backgroundColorInBounds = all(backgroundColorZoomedUV >= 0.0) && all(backgroundColorZoomedUV <= 1.0);
-    float4 backgroundColorSample = backgroundColorArtTexture.sample(artSampler, saturate(backgroundColorZoomedUV));
-    float backgroundColorA = backgroundColorInBounds ? backgroundColorSample.a * u.backgroundColorVisible : 0.0;
+    // backgroundColor layer: disabled (see NowPlayingManager.recomputeDerivedAlbumArtLayers) -
+    // backgroundColorArtwork is always nil now, so backgroundColorArtTexture is always the empty
+    // transparent stand-in and this layer never contributes anything to the composite below.
+    // backgroundDetail is the new base of the "over" chain instead - see that block below. Uncomment
+    // to bring this layer back (and restore it as the compositing base, undoing that change too).
+    // float2 backgroundColorZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.backgroundColorBeatZoomStrength);
+    // bool backgroundColorInBounds = all(backgroundColorZoomedUV >= 0.0) && all(backgroundColorZoomedUV <= 1.0);
+    // float4 backgroundColorSample = backgroundColorArtTexture.sample(artSampler, saturate(backgroundColorZoomedUV));
+    // float backgroundColorA = backgroundColorInBounds ? backgroundColorSample.a * u.backgroundColorVisible : 0.0;
 
     // backgroundDetail layer: beat zoom (second-smallest) plus wave-gradient UV distortion (a
     // cheap refraction/heat-haze trick where a hard edge or bright streak in the wave visibly
@@ -254,7 +268,7 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     float gLen = length(waveGradient);
     float2 aberrationDir = gLen > 0.0001 ? (waveGradient / gLen) : float2(1.0, 0.0);
     float2 aberrationOffset = aberrationDir * u.chromaticAberrationStrength;
-    float2 backgroundDetailZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.backgroundDetailBeatZoomStrength);
+    float2 backgroundDetailZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.tertiaryBeatZoomStrength);
     float2 backgroundDetailUV = backgroundDetailZoomedUV + waveGradient * u.distortionStrength;
     bool backgroundDetailInBounds = all(backgroundDetailUV >= 0.0) && all(backgroundDetailUV <= 1.0);
     float4 backgroundDetailCenter = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV));
@@ -265,27 +279,28 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
 
     // text layer: beat zoom only (second-largest) - no other effect, so the text itself never
     // warps or fringes, just moves with the parallax punch.
-    float2 textUV = beat_zoom_uv(artUV, u.beatPulse, u.textBeatZoomStrength);
+    float2 textUV = beat_zoom_uv(artUV, u.beatPulse, u.secondaryBeatZoomStrength);
     bool textInBounds = all(textUV >= 0.0) && all(textUV <= 1.0);
     float4 textSample = textArtTexture.sample(artSampler, saturate(textUV));
     float textA = textInBounds ? textSample.a * u.textVisible : 0.0;
 
-    // subject layer: beat zoom only, and the largest of the four (see beatZoomBound above) - the
-    // "closest to camera" layer in the parallax stack, so it punches inward the most.
-    float2 subjectUV = beat_zoom_uv(artUV, u.beatPulse, u.subjectBeatZoomStrength);
+    // subject layer: beat zoom only, and the largest of the four when this cover actually has a
+    // subject (see maxBeatZoomStrength above) - the "closest to camera" layer in the parallax
+    // stack, so it punches inward the most.
+    float2 subjectUV = beat_zoom_uv(artUV, u.beatPulse, u.primaryBeatZoomStrength);
     bool subjectInBounds = all(subjectUV >= 0.0) && all(subjectUV <= 1.0);
     float4 subjectSample = subjectArtTexture.sample(artSampler, saturate(subjectUV));
     float subjectA = subjectInBounds ? subjectSample.a * u.subjectVisible : 0.0;
 
-    // Standard sequential "over" compositing, bottom to top: backgroundColor, backgroundDetail,
-    // text, subject - so subject is always the topmost layer whenever it's visible, text just
-    // underneath it. Correct regardless of how many layers are actually on at once (see
-    // ProjectMCoordinator.displayVisibleLayerCount - "M" reveals from the bottom up: backgroundColor,
-    // +backgroundDetail, +text, +subject, or peels back down to nothing).
-    float3 color = backgroundColorSample.rgb;
-    float alpha = backgroundColorA;
-    color = mix(color, backgroundDetailSample.rgb, backgroundDetailA);
-    alpha = backgroundDetailA + alpha * (1.0 - backgroundDetailA);
+    // Standard sequential "over" compositing, bottom to top: backgroundDetail, text, subject - so
+    // subject is always the topmost layer whenever it's visible, text just underneath it.
+    // backgroundDetail is the base now, not a mix-in - backgroundColor (which used to sit beneath
+    // it) is disabled, see this file's own backgroundColor-layer comment above. Correct regardless
+    // of how many layers are actually on at once (see ProjectMCoordinator.displayVisibleLayerCount
+    // - "M" reveals from the bottom up: backgroundDetail, +text, +subject, or peels back down to
+    // nothing).
+    float3 color = backgroundDetailSample.rgb;
+    float alpha = backgroundDetailA;
     color = mix(color, textSample.rgb, textA);
     alpha = textA + alpha * (1.0 - textA);
     color = mix(color, subjectSample.rgb, subjectA);
