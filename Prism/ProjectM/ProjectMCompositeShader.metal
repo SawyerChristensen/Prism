@@ -22,20 +22,27 @@
 //  resampleBeatZoomStrengths) - a cover missing its subject, say, has text take over the
 //  topmost/strongest slot instead of being stuck at its own weaker one, so the frontmost surviving
 //  layer always punches the hardest regardless of which layers this particular cover has.
-//  backgroundDetail alone additionally carries chromatic aberration (R/B channel split,
-//  ProjectMCoordinator.backgroundColorChromaticAberrationStrength - named for the layer beneath it
-//  in the stack, not the layer it's actually applied to, see below) and wave-gradient UV distortion:
+//  backgroundDetail alone additionally carries chromatic aberration (R/B channel split, slowly
+//  spinning independent of the wave gradient - ProjectMCoordinator.
+//  backgroundColorChromaticAberrationStrength/aberrationRotationPeriod - named for the layer
+//  beneath it in the stack, not the layer it's actually applied to, see below), wave-gradient UV
+//  distortion, and a wave-brightness alpha fade:
 //    backgroundColor  - a flat fill of the measured background color.
 //                        Effects: beat zoom only, at a fixed strength - a flat fill has no internal
-//                        color variation for chromatic aberration or distortion to act on (either
-//                        would be a structural no-op here regardless of strength - see this file's
-//                        own backgroundColor sampling comment below), so neither is applied.
+//                        color variation for chromatic aberration, distortion, or the brightness
+//                        fade to act on (all three would be a structural no-op here regardless of
+//                        strength - see this file's own backgroundColor sampling comment below), so
+//                        none of them are applied.
 //    backgroundDetail - the color-keyed cover, with the subject and text also punched out.
 //                        Effects: beat zoom (resampled strength) + chromatic aberration +
 //                        wave-gradient UV distortion (a cheap refraction/heat-haze trick - a hard
-//                        edge or bright streak in the wave visibly pushes this layer around). This
-//                        is the layer with real image content, so both of backgroundColor's
-//                        would-be effects live here instead.
+//                        edge or bright streak in the wave visibly pushes this layer around) + a
+//                        wave-brightness alpha fade (ProjectMCoordinator.
+//                        backgroundDetailDistortionAlphaLow/High - punches an actual hole through
+//                        this layer wherever the wave itself is bright, revealing the usually far
+//                        more colorful wave beneath instead of just warping over it). This is the
+//                        layer with real image content, so all three of backgroundColor's would-be
+//                        effects live here instead.
 //    text             - the isolated OCR text.  Effect: beat zoom only (resampled strength).
 //    subject          - the isolated Vision cutout, always drawn topmost.
 //                        Effect: beat zoom only (resampled strength, usually the greatest of the
@@ -160,6 +167,14 @@ struct AlbumArtUniforms {
     // carries either of these.
     float chromaticAberrationStrength;
     float distortionStrength;
+    // Fades backgroundDetail's alpha out where the wave itself is bright (waveLuma below) - see
+    // this file's own backgroundDetail comment and ProjectMCoordinator's mirrored fields.
+    float distortionAlphaLow;
+    float distortionAlphaHigh;
+    // Slowly rotates aberrationDir below independent of the wave gradient (see
+    // ProjectMCoordinator.aberrationRotationPeriod) - a "spinning prism" feel layered on top of the
+    // gradient-driven direction.
+    float aberrationAngle;
     // Audio-driven "punch" envelope (ProjectMCoordinator.beatPulse - snaps up on a fresh bass hit,
     // decays linearly otherwise) and every layer's own zoom response to it - strictly descending
     // front-to-back (primaryBeatZoomStrength > secondaryBeatZoomStrength > tertiaryBeatZoomStrength
@@ -253,20 +268,31 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // cheap refraction/heat-haze trick where a hard edge or bright streak in the wave visibly
     // pushes this layer around, so it reads as embedded in the wave rather than merely stacked on
     // top of it) plus chromatic aberration (R and B sampled at small, opposite offsets along the
-    // wave gradient's *direction*, G/alpha left at the undisplaced center sample - shifting alpha
-    // too would fringe the layer's own edge with ghost partial-transparency rather than just
-    // color, which reads as a glitch rather than a lens effect). Both of backgroundColor's would-be
-    // effects landed here instead - see the NOTE on backgroundColor above for why. Normalized
-    // (rather than scaled by the gradient's own magnitude, like the distortion below) because a
-    // static color split needs a much bigger, gradient-magnitude-independent offset to read as
-    // separated color at all - scaling it down in calm, low-contrast regions of the wave would make
-    // it disappear almost everywhere. Falls back to a fixed horizontal split, same as
-    // wave_dissolve_walk's own fallbackDir, wherever the local gradient is too weak to give a
-    // reliable direction. Aberration is sampled post-distortion (offset from `backgroundDetailUV`,
+    // wave gradient's *direction*, further rotated by aberrationAngle so the split direction slowly
+    // spins independent of the gradient - see aberrationDir below - G/alpha left at the undisplaced
+    // center sample - shifting alpha too would fringe the layer's own edge with ghost
+    // partial-transparency rather than just color, which reads as a glitch rather than a lens
+    // effect). Both of backgroundColor's would-be effects landed here instead - see the NOTE on
+    // backgroundColor above for why. Normalized (rather than scaled by the gradient's own magnitude,
+    // like the distortion below) because a static color split needs a much bigger,
+    // gradient-magnitude-independent offset to read as separated color at all - scaling it down in
+    // calm, low-contrast regions of the wave would make it disappear almost everywhere. Falls back
+    // to a fixed horizontal split (before rotation), same as wave_dissolve_walk's own fallbackDir,
+    // wherever the local gradient is too weak to give a reliable direction. Aberration is sampled
+    // post-distortion (offset from `backgroundDetailUV`,
     // not the undistorted `backgroundDetailZoomedUV`) so the two effects compose rather than fight
     // over the base UV.
     float gLen = length(waveGradient);
     float2 aberrationDir = gLen > 0.0001 ? (waveGradient / gLen) : float2(1.0, 0.0);
+    // Rotate by aberrationAngle (see AlbumArtUniforms) so the split direction slowly spins
+    // independent of the wave gradient, rather than sitting fixed on whatever direction the
+    // gradient happens to pick.
+    float sinA = sin(u.aberrationAngle);
+    float cosA = cos(u.aberrationAngle);
+    aberrationDir = float2(
+        aberrationDir.x * cosA - aberrationDir.y * sinA,
+        aberrationDir.x * sinA + aberrationDir.y * cosA
+    );
     float2 aberrationOffset = aberrationDir * u.chromaticAberrationStrength;
     float2 backgroundDetailZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.tertiaryBeatZoomStrength);
     float2 backgroundDetailUV = backgroundDetailZoomedUV + waveGradient * u.distortionStrength;
@@ -275,7 +301,13 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     float backgroundDetailR = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV + aberrationOffset)).r;
     float backgroundDetailB = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV - aberrationOffset)).b;
     float4 backgroundDetailSample = float4(backgroundDetailR, backgroundDetailCenter.g, backgroundDetailB, backgroundDetailCenter.a);
-    float backgroundDetailA = backgroundDetailInBounds ? backgroundDetailSample.a * u.backgroundDetailVisible : 0.0;
+    // Punch a hole through backgroundDetail wherever the wave itself is bright at this pixel,
+    // revealing the (usually far more colorful) wave layer beneath instead of just warping this
+    // layer's own content there. `wave`/`luma` already sampled/defined above for the rest of this
+    // function.
+    float waveLuma = dot(wave.rgb, luma);
+    float distortionAlphaMul = 1.0 - smoothstep(u.distortionAlphaLow, u.distortionAlphaHigh, waveLuma);
+    float backgroundDetailA = backgroundDetailInBounds ? backgroundDetailSample.a * u.backgroundDetailVisible * distortionAlphaMul : 0.0;
 
     // text layer: beat zoom only (second-largest) - no other effect, so the text itself never
     // warps or fringes, just moves with the parallax punch.

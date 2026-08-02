@@ -9,8 +9,8 @@
   - [ ] The extension should skip the starting screen — cause not confirmed yet (likely projectM's own built-in default/idle state showing for a moment before the first `loadPresetAtURL` call takes effect); untested in a real running Music.app
 - [ ] Better album overlays
   - [x] Different layers of the album should be on different layers of the visualizer
-  - [ ] comment out chromatic aberation
-  - [ ] Better base reacivity
+  - [ ] Improve chromatic aberation
+  - [ ] Make base reactivity mellow out of if the song is a relaxing one
   - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
 - [ ] Make own presets?
 - [ ] Slow down all visuals

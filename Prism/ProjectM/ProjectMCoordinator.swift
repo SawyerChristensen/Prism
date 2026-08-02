@@ -38,6 +38,17 @@ private struct AlbumArtUniforms {
     // every layer carries its own beat-zoom strength below.
     var chromaticAberrationStrength: Float
     var distortionStrength: Float
+    // Fades backgroundDetail's own alpha out wherever the wave itself is bright at that pixel, so a
+    // bright streak/bloom in the wave punches a hole straight through the artwork there instead of
+    // just warping it - revealing the (usually much more colorful) wave layer beneath.
+    // smoothstep(distortionAlphaLow, distortionAlphaHigh, waveLuma) - see
+    // ProjectMCoordinator.backgroundDetailDistortionAlphaLow/High.
+    var distortionAlphaLow: Float
+    var distortionAlphaHigh: Float
+    // Slowly rotates the aberration's R/B split direction independent of the wave gradient (see
+    // ProjectMCoordinator.aberrationRotationPeriod) - a "spinning prism" feel layered on top of the
+    // gradient-driven direction, computed fresh from CACurrentMediaTime each frame in draw(in:).
+    var aberrationAngle: Float
     // Audio-driven "punch" envelope (see beatPulse's own doc comment) and every layer's own zoom
     // response to it - a parallax stack where the layer closest to the "camera" punches inward the
     // most on a fresh bass hit and each layer underneath it moves less, down to backgroundColor
@@ -145,6 +156,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // visibility itself is what "M" actually toggles.
     private static let backgroundColorChromaticAberrationStrength: Float = 0.005
     private static let backgroundDetailDistortionStrength: Float = 0.05
+    // Seconds for aberrationAngle (see AlbumArtUniforms) to complete one full rotation.
+    private static let aberrationRotationPeriod: Double = 8.0
+    // smoothstep bounds for backgroundDetail's wave-brightness-driven alpha fade (see
+    // AlbumArtUniforms.distortionAlphaLow/High) - waveLuma sits in 0...1.
+    private static let backgroundDetailDistortionAlphaLow: Float = 0.2
+    private static let backgroundDetailDistortionAlphaHigh: Float = 0.7
     // Per-layer beat-zoom "movement" strength - a parallax stack, strictly descending from the top
     // of the stack (subject) to the bottom (backgroundColor), so subject punches inward the most on
     // a bass hit and each layer underneath it moves less, in proportion to how far back in the
@@ -408,6 +425,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             textVisible: displayVisibleLayerCount >= 2 ? 1 : 0,
             chromaticAberrationStrength: Self.backgroundColorChromaticAberrationStrength,
             distortionStrength: Self.backgroundDetailDistortionStrength,
+            distortionAlphaLow: Self.backgroundDetailDistortionAlphaLow,
+            distortionAlphaHigh: Self.backgroundDetailDistortionAlphaHigh,
+            aberrationAngle: Float(
+                now.truncatingRemainder(dividingBy: Self.aberrationRotationPeriod)
+                    / Self.aberrationRotationPeriod * 2.0 * Double.pi
+            ),
             beatPulse: beatPulse,
             backgroundColorBeatZoomStrength: Self.backgroundColorBeatZoomStrength,
             tertiaryBeatZoomStrength: currentTertiaryBeatZoomStrength,
