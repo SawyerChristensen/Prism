@@ -11,6 +11,7 @@
   - [x] Different layers of the album should be on different layers of the visualizer
   - [ ] Improve chromatic aberation
   - [ ] Make base reactivity mellow out of if the song is a relaxing one
+  - [ ] Improve the test mask! Sometimes theres artifcats around the edges not connected to the text (see Once Twice Melody)
   - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
 - [ ] Make own presets?
 - [ ] Slow down all visuals

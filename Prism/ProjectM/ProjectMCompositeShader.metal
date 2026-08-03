@@ -22,8 +22,10 @@
 //  resampleBeatZoomStrengths) - a cover missing its subject, say, has text take over the
 //  topmost/strongest slot instead of being stuck at its own weaker one, so the frontmost surviving
 //  layer always punches the hardest regardless of which layers this particular cover has.
-//  backgroundDetail alone additionally carries chromatic aberration (R/B channel split, slowly
-//  spinning independent of the wave gradient - ProjectMCoordinator.
+//  backgroundDetail alone additionally carries chromatic aberration (R/G/B split along a slowly
+//  spinning axis, each channel's own offset magnitude further eased by a cosine of the same
+//  spin angle so the effect continuously cycles through every hue rather than sitting fixed on a
+//  static R/B split - see this file's own backgroundDetail comment below - ProjectMCoordinator.
 //  backgroundColorChromaticAberrationStrength/aberrationRotationPeriod - named for the layer
 //  beneath it in the stack, not the layer it's actually applied to, see below), wave-gradient UV
 //  distortion, and a wave-brightness alpha fade:
@@ -95,6 +97,22 @@ inline float2 sample_wave_gradient(texture2d<float> waveTexture, sampler s, floa
     return float2(lumR - lumL, lumD - lumU);
 }
 
+// Samples one color channel of `tex` as a soft 5-tap plus-shaped box blur (center + the four
+// texelBlur-offset neighbors, averaged) rather than a single crisp point/bilinear sample - used by
+// the backgroundDetail layer's chromatic aberration so each channel's offset copy fades softly
+// into the unshifted image around it instead of ending in a hard, single-pixel-wide edge. That
+// hard edge is what reads as "noisy" wherever the underlying art has a lot of fine contrast: this
+// blurs it into a gradient instead.
+inline float sample_channel_soft(texture2d<float> tex, sampler s, float2 uv, float2 texelBlur, int channel)
+{
+    float4 c = tex.sample(s, uv);
+    c += tex.sample(s, uv + float2(texelBlur.x, 0.0));
+    c += tex.sample(s, uv - float2(texelBlur.x, 0.0));
+    c += tex.sample(s, uv + float2(0.0, texelBlur.y));
+    c += tex.sample(s, uv - float2(0.0, texelBlur.y));
+    return (c / 5.0)[channel];
+}
+
 // Inverse-mapped divide: dividing by a scale over 1 pulls every screen position in towards center,
 // reading as a zoomed-in crop that visibly extends past its own square (see beatZoomBound in the
 // fragment function below) - the shared "parallax punch" every album art layer applies to itself on
@@ -162,7 +180,7 @@ struct AlbumArtUniforms {
     float subjectVisible;
     float textVisible;
     // Fixed per-layer effect strengths (ProjectMCoordinator.backgroundColorChromaticAberrationStrength/
-    // backgroundDetailDistortionStrength) - the backgroundColor layer's R/B channel split and the
+    // backgroundDetailDistortionStrength) - the backgroundColor layer's R/G/B channel split and the
     // backgroundDetail layer's wave-gradient UV nudge, respectively. Neither subject nor text
     // carries either of these.
     float chromaticAberrationStrength;
@@ -171,9 +189,11 @@ struct AlbumArtUniforms {
     // this file's own backgroundDetail comment and ProjectMCoordinator's mirrored fields.
     float distortionAlphaLow;
     float distortionAlphaHigh;
-    // Slowly rotates aberrationDir below independent of the wave gradient (see
-    // ProjectMCoordinator.aberrationRotationPeriod) - a "spinning prism" feel layered on top of the
-    // gradient-driven direction.
+    // Drives two things below, both in the backgroundDetail chromatic aberration: slowly rotates
+    // aberrationDir independent of the wave gradient, and (reused as-is, not a second phase) sets
+    // each channel's own offset magnitude via channelScaleR/G/B's cosines, so the whole effect
+    // continuously cycles hue as this angle advances (see ProjectMCoordinator.
+    // aberrationRotationPeriod and this file's own backgroundDetail comment).
     float aberrationAngle;
     // Audio-driven "punch" envelope (ProjectMCoordinator.beatPulse - snaps up on a fresh bass hit,
     // decays linearly otherwise) and every layer's own zoom response to it - strictly descending
@@ -267,12 +287,20 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // backgroundDetail layer: beat zoom (second-smallest) plus wave-gradient UV distortion (a
     // cheap refraction/heat-haze trick where a hard edge or bright streak in the wave visibly
     // pushes this layer around, so it reads as embedded in the wave rather than merely stacked on
-    // top of it) plus chromatic aberration (R and B sampled at small, opposite offsets along the
-    // wave gradient's *direction*, further rotated by aberrationAngle so the split direction slowly
-    // spins independent of the gradient - see aberrationDir below - G/alpha left at the undisplaced
-    // center sample - shifting alpha too would fringe the layer's own edge with ghost
-    // partial-transparency rather than just color, which reads as a glitch rather than a lens
-    // effect). Both of backgroundColor's would-be effects landed here instead - see the NOTE on
+    // top of it) plus chromatic aberration. R, G, and B are each sampled at their own offset along
+    // the wave gradient's *direction* (aberrationDir below, itself further rotated by
+    // aberrationAngle so it slowly spins independent of the gradient), but each channel's offset
+    // *magnitude* is separately modulated by its own cosine of aberrationAngle, the three cosines
+    // 120 degrees out of phase with each other (channelScaleR/G/B below). Since three cosines spaced
+    // 120 degrees apart always sum to ~0, at any instant this nets out to roughly two channels
+    // pushed oppositely and the third near zero - but which channel is near zero continuously drifts
+    // (R -> G -> B -> R -> ...) as aberrationAngle advances, and every step of that drift is a plain
+    // cosine, so the whole effect eases smoothly through every hue with no discrete jump - nothing
+    // is ever permanently anchored to a fixed channel the way a hard R/B-only split (or a stepped
+    // R/B -> G/R -> B/G switch) would leave one channel statically un-shifted. Alpha alone is always
+    // left at the undisplaced center sample - shifting alpha too would fringe the layer's own edge
+    // with ghost partial-transparency rather than just color, which reads as a glitch rather than a
+    // lens effect. Both of backgroundColor's would-be effects landed here instead - see the NOTE on
     // backgroundColor above for why. Normalized (rather than scaled by the gradient's own magnitude,
     // like the distortion below) because a static color split needs a much bigger,
     // gradient-magnitude-independent offset to read as separated color at all - scaling it down in
@@ -293,14 +321,27 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
         aberrationDir.x * cosA - aberrationDir.y * sinA,
         aberrationDir.x * sinA + aberrationDir.y * cosA
     );
-    float2 aberrationOffset = aberrationDir * u.chromaticAberrationStrength;
+    // See the comment above: reusing aberrationAngle again here (rather than a second, independent
+    // phase) ties the hue cycle's period to the same rotation as the direction spin - one knob,
+    // two coupled motions, still reads as a single coherent "spinning prism" rather than two
+    // motions drifting in and out of sync.
+    const float kThirdTurn = 2.0943951023931953; // 2*pi/3
+    float channelScaleR = cos(u.aberrationAngle);
+    float channelScaleG = cos(u.aberrationAngle - kThirdTurn);
+    float channelScaleB = cos(u.aberrationAngle - 2.0 * kThirdTurn);
     float2 backgroundDetailZoomedUV = beat_zoom_uv(artUV, u.beatPulse, u.tertiaryBeatZoomStrength);
     float2 backgroundDetailUV = backgroundDetailZoomedUV + waveGradient * u.distortionStrength;
     bool backgroundDetailInBounds = all(backgroundDetailUV >= 0.0) && all(backgroundDetailUV <= 1.0);
     float4 backgroundDetailCenter = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV));
-    float backgroundDetailR = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV + aberrationOffset)).r;
-    float backgroundDetailB = backgroundDetailArtTexture.sample(artSampler, saturate(backgroundDetailUV - aberrationOffset)).b;
-    float4 backgroundDetailSample = float4(backgroundDetailR, backgroundDetailCenter.g, backgroundDetailB, backgroundDetailCenter.a);
+    // Softens each channel's offset copy (see sample_channel_soft above) rather than leaving it a
+    // crisp point/bilinear sample - scaled off chromaticAberrationStrength itself so a bigger split
+    // gets a proportionally softer edge instead of a fixed blur that's invisible at large splits or
+    // mushy at small ones.
+    float2 aberrationBlur = float2(u.chromaticAberrationStrength * 0.35);
+    float backgroundDetailR = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleR * u.chromaticAberrationStrength), aberrationBlur, 0);
+    float backgroundDetailG = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleG * u.chromaticAberrationStrength), aberrationBlur, 1);
+    float backgroundDetailB = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleB * u.chromaticAberrationStrength), aberrationBlur, 2);
+    float4 backgroundDetailSample = float4(backgroundDetailR, backgroundDetailG, backgroundDetailB, backgroundDetailCenter.a);
     // Punch a hole through backgroundDetail wherever the wave itself is bright at this pixel,
     // revealing the (usually far more colorful) wave layer beneath instead of just warping this
     // layer's own content there. `wave`/`luma` already sampled/defined above for the rest of this
