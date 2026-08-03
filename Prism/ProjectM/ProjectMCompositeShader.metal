@@ -295,16 +295,39 @@ inline float preset_transition_mask_sweep(float2 uv, float progressCosine, float
 // Warp: a center-relative zoom blending an oppositely-scaled sample of the old texture with one of
 // the new texture - see TransitionShaderBuiltInWarpGlsl330.frag. At x=0 this is 100% oldSample
 // (unwarped); at x=1, 100% newSample (also unwarped) - the zoom itself only shows up in between.
-inline float4 preset_transition_warp_blend(texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float progressCosine, float4 seeds)
+// `uv` is expected to already carry the extra overhang the caller grants specifically for this
+// effect (see kWarpOverhangBound in the fragment function) - unlike every other per-layer UV in
+// this file, which stays inside [0,1] on its own, this one is deliberately allowed to start
+// outside it. The (uv - 0.5) * factor terms below (factor in 0...1) always pull *toward* center,
+// so a big enough overhang maps back to a genuine, non-edge-clamped sample instead of needing
+// `clamp_to_edge` to invent one - the exact same overhang-then-inverse-map trick beat_zoom_uv uses,
+// just driven by this effect's own factor instead of beatZoom. outEdgeAlpha softly fades out (via
+// wave_dissolve_edge_alpha) the sliver of the overhang where the granted margin still wasn't quite
+// enough and oldUV/newUV would've needed actual clamping - so that sliver fades to transparent
+// (revealing the wave beneath) instead of showing a stretched, clamp_to_edge-repeated edge.
+// `sweepUV` is deliberately a *different* coordinate than `uv`: real projectM's own warp sweeps
+// `coord` (and so `x`) across full screen-space UV (see this file's own header on the wave
+// texture's coordinate convention), the same space the wave layer underneath is swept in - not
+// the small album-local [0,1] square `uv` lives in. Feeding `uv` into the coord/x calculation
+// (as this used to) made the sweep race across the album's own tiny square in the time it takes
+// the wave to sweep across the whole screen, so the two visibly fell out of sync. `sweepUV` is
+// screen-space (`in.texCoord` from the caller) specifically so `x` - and therefore how far the
+// sweep has traveled at a given screen position, at a given instant - matches the wave exactly;
+// `uv` is still what actually gets zoomed/sampled, since that part does need album-local texture
+// coordinates.
+inline float4 preset_transition_warp_blend(texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float2 sweepUV, float progressCosine, float4 seeds, thread float &outEdgeAlpha)
 {
     // *.01 matches the original exactly (mod(float(iRandStatic.x) * .01, 4.)) - see this file's own
     // header on why dropping it picks a different (occasionally mirrored) direction branch below,
     // not just a differently-distributed one.
     float direction = preset_transition_glsl_mod(seeds.x * 0.01, 4.0);
-    float coord = direction < 1.0 ? uv.x : (direction < 2.0 ? 1.0 - uv.x : (direction < 3.0 ? uv.y : 1.0 - uv.y));
+    float coord = direction < 1.0 ? sweepUV.x : (direction < 2.0 ? 1.0 - sweepUV.x : (direction < 3.0 ? sweepUV.y : 1.0 - sweepUV.y));
     float x = smoothstep(0.0, 1.0, progressCosine * 2.0 + coord - 1.0);
-    float4 oldSample = oldTex.sample(s, saturate((uv - 0.5) * (1.0 - x) + 0.5));
-    float4 newSample = newTex.sample(s, saturate((uv - 0.5) * x + 0.5));
+    float2 oldUV = (uv - 0.5) * (1.0 - x) + 0.5;
+    float2 newUV = (uv - 0.5) * x + 0.5;
+    float4 oldSample = oldTex.sample(s, saturate(oldUV));
+    float4 newSample = newTex.sample(s, saturate(newUV));
+    outEdgeAlpha = mix(wave_dissolve_edge_alpha(oldUV), wave_dissolve_edge_alpha(newUV), x);
     return mix(oldSample, newSample, x);
 }
 
@@ -349,13 +372,19 @@ inline float4 preset_transition_zoom_blur_blend(texture2d<float> oldTex, texture
 // transition) and mask-style effects both just consume `fallbackNewSample` (mask-style blends it
 // against the old sample; warp/zoomBlur ignore it and sample old/new fresh themselves, since they
 // need their own displaced UVs rather than the plain one `fallbackNewSample` was taken at).
+// outEdgeAlpha is only ever <1 for warp (see preset_transition_warp_blend) - every other path
+// leaves it at 1 and the caller's own plain-UV bounds check is what gates those instead.
+// noiseSeedUV is screen-space (in.texCoord from every call site) - doubles as zoomBlur's per-pixel
+// random-offset seed and warp's sweepUV (see preset_transition_warp_blend's own doc comment on why
+// that needs to be screen-space rather than the album-local `uv`).
 inline float4 preset_transition_apply(
     bool on, int effect, float reveal, float progressCosine, float4 seeds,
     texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float2 noiseSeedUV,
-    float4 fallbackNewSample)
+    float4 fallbackNewSample, thread float &outEdgeAlpha)
 {
+    outEdgeAlpha = 1.0;
     if (!on) { return fallbackNewSample; }
-    if (effect == 4) { return preset_transition_warp_blend(oldTex, newTex, s, uv, progressCosine, seeds); }
+    if (effect == 4) { return preset_transition_warp_blend(oldTex, newTex, s, uv, noiseSeedUV, progressCosine, seeds, outEdgeAlpha); }
     if (effect == 5) { return preset_transition_zoom_blur_blend(oldTex, newTex, s, uv, progressCosine, noiseSeedUV); }
     return mix(oldTex.sample(s, saturate(uv)), fallbackNewSample, reveal);
 }
@@ -435,6 +464,18 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
 
     float4 wave = waveTexture.sample(waveSampler, in.texCoord);
 
+    bool outgoingActive = u.outgoingActive > 0.5;
+    // presetTransitionOn/transitionEffect/transitionProgressCosine are needed up front now (by
+    // kWarpOverhangBound below) - see this file's own header and PresetTransitionEffect's doc
+    // comment (ProjectMCoordinator.swift) for what each effect index means. transitionReveal (the
+    // other half of what used to be computed together further down) still waits until after the
+    // early-exit below, since it's only needed for pixels that pass it.
+    bool presetTransitionOn = u.presetTransitionActive > 0.5;
+    int transitionEffect = int(round(u.presetTransitionEffect));
+    bool warpActive = presetTransitionOn && transitionEffect == 4;
+    float transitionProgressCosine = presetTransitionOn
+        ? (-cos(saturate(u.presetTransitionProgress) * kPresetTransitionPi) + 1.0) * 0.5 : 0.0;
+
     // Beat zoom can magnify a layer past its own fixed artCenter/artHalfSize square - grant a
     // matching overhang margin here so that doesn't get clipped right back to the square's
     // original edge (half of (scale - 1) is exactly how far past [0,1] artUV the zoomed content
@@ -446,12 +487,30 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // it's disabled (see NowPlayingManager.recomputeDerivedAlbumArtLayers), never actually sampled
     // below, so its strength can't be the frame's real max regardless of what the uniform holds.
     // The outgoing track's own dissolve keeps its preexisting generous margin for its scatter.
-    bool outgoingActive = u.outgoingActive > 0.5;
     float maxBeatZoomStrength = max(
         u.primaryBeatZoomStrength, max(u.secondaryBeatZoomStrength, u.tertiaryBeatZoomStrength)
     );
     float beatZoomBound = u.beatPulse * maxBeatZoomStrength * 0.5;
-    float bound = max(outgoingActive ? 1.0 : 0.0, beatZoomBound);
+    // warp's own center-relative zoom (preset_transition_warp_blend) is the exact same kind of
+    // "can magnify past the square" effect beatZoom is (see that function's own doc comment) - but
+    // its factor is spatially swept across the screen (varies with `coord`, not one scalar the way
+    // beatPulse is), so there's no single tight bound to compute up front the way beatZoomBound
+    // has one. kWarpOverhangBound is a generous fixed stand-in instead, big enough that only the
+    // faintest (~10% weight) fringe of old/new content ever still needs more than it grants -
+    // preset_transition_warp_blend's own outEdgeAlpha (see below) softly fades out that fringe
+    // rather than showing a stretched clamp_to_edge repeat there. warpOverhangFade tapers this
+    // margin smoothly back to 0 over the first/last 10% of the transition's own progress, so the
+    // margin (and the rendering path that relies on it) is already back to baseline several frames
+    // *before* the engine flips presetTransitionActive off - without it, whatever margin was still
+    // in use on the last active frame would vanish in a single frame the moment the flag flips,
+    // reading as the art abruptly despawning rather than finishing its zoom back to normal.
+    // zoomBlur (effect 5) needs no such margin: its own pull is always *toward* center starting
+    // from a UV that's already valid, so it can never need more room than beatZoomBound provides.
+    constexpr float kWarpOverhangBound = 2.5;
+    float warpOverhangFade = warpActive
+        ? min(smoothstep(0.0, 0.1, transitionProgressCosine), smoothstep(0.0, 0.1, 1.0 - transitionProgressCosine))
+        : 0.0;
+    float bound = max(outgoingActive ? 1.0 : 0.0, max(beatZoomBound, kWarpOverhangBound * warpOverhangFade));
     float2 artUV = (in.texCoord - u.artCenter) / (u.artHalfSize * 2.0) + 0.5;
     if (artUV.x < -bound || artUV.x > 1.0 + bound
         || artUV.y < -bound || artUV.y > 1.0 + bound
@@ -466,14 +525,10 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // shared by all three layers below (screen-space, so the same wipe/noise/etc. shape lines up
     // across all of them at a given pixel) - only meaningful for the four mask-style effects
     // (0-3); warp/zoomBlur (4/5) compute their own per-layer blend entirely inside
-    // preset_transition_apply instead.
-    bool presetTransitionOn = u.presetTransitionActive > 0.5;
-    int transitionEffect = int(round(u.presetTransitionEffect));
-    float transitionProgressCosine = 0.0;
+    // preset_transition_apply instead. transitionProgressCosine itself was already computed above,
+    // before the early-exit, since kWarpOverhangBound needs it too.
     float transitionReveal = 0.0;
     if (presetTransitionOn) {
-        float p = saturate(u.presetTransitionProgress);
-        transitionProgressCosine = (-cos(p * kPresetTransitionPi) + 1.0) * 0.5;
         if (transitionEffect <= 3) {
             float screenW = 1.0 / u.waveTexelSize.x;
             float screenH = 1.0 / u.waveTexelSize.y;
@@ -582,9 +637,11 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     float backgroundDetailG = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleG * u.chromaticAberrationStrength), aberrationBlur, 1);
     float backgroundDetailB = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleB * u.chromaticAberrationStrength), aberrationBlur, 2);
     float4 backgroundDetailNewSample = float4(backgroundDetailR, backgroundDetailG, backgroundDetailB, backgroundDetailCenter.a);
+    float backgroundDetailEdgeAlpha = 1.0;
     float4 backgroundDetailSample = preset_transition_apply(
         presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
-        oldBackgroundDetailArtTexture, backgroundDetailArtTexture, artSampler, backgroundDetailUV, in.texCoord, backgroundDetailNewSample
+        oldBackgroundDetailArtTexture, backgroundDetailArtTexture, artSampler, backgroundDetailUV, in.texCoord, backgroundDetailNewSample,
+        backgroundDetailEdgeAlpha
     );
     // Punch a hole through backgroundDetail wherever the wave itself is bright at this pixel,
     // revealing the (usually far more colorful) wave layer beneath instead of just warping this
@@ -592,18 +649,26 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // function.
     float waveLuma = dot(wave.rgb, luma);
     float distortionAlphaMul = 1.0 - smoothstep(u.distortionAlphaLow, u.distortionAlphaHigh, waveLuma);
-    float backgroundDetailA = backgroundDetailInBounds ? backgroundDetailSample.a * u.backgroundDetailVisible * distortionAlphaMul : 0.0;
+    // warp uses its own softly-fading edge alpha (see preset_transition_warp_blend) instead of this
+    // plain UV's own [0,1] containment, which - now that the outer bound above grants warp real
+    // overhang - is frequently and correctly false out there (see kWarpOverhangBound's comment and
+    // warpActive above).
+    float backgroundDetailBoundsAlpha = warpActive ? backgroundDetailEdgeAlpha : (backgroundDetailInBounds ? 1.0 : 0.0);
+    float backgroundDetailA = backgroundDetailBoundsAlpha * backgroundDetailSample.a * u.backgroundDetailVisible * distortionAlphaMul;
 
     // text layer: beat zoom only (second-largest) - no other effect, so the text itself never
     // warps or fringes, just moves with the parallax punch.
     float2 textUV = beat_zoom_uv(artUV, u.beatPulse, u.secondaryBeatZoomStrength);
     bool textInBounds = all(textUV >= 0.0) && all(textUV <= 1.0);
     float4 textNewSample = textArtTexture.sample(artSampler, saturate(textUV));
+    float textEdgeAlpha = 1.0;
     float4 textSample = preset_transition_apply(
         presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
-        oldTextArtTexture, textArtTexture, artSampler, textUV, in.texCoord, textNewSample
+        oldTextArtTexture, textArtTexture, artSampler, textUV, in.texCoord, textNewSample,
+        textEdgeAlpha
     );
-    float textA = textInBounds ? textSample.a * u.textVisible : 0.0;
+    float textBoundsAlpha = warpActive ? textEdgeAlpha : (textInBounds ? 1.0 : 0.0);
+    float textA = textBoundsAlpha * textSample.a * u.textVisible;
 
     // subject layer: beat zoom only, and the largest of the four when this cover actually has a
     // subject (see maxBeatZoomStrength above) - the "closest to camera" layer in the parallax
@@ -611,11 +676,14 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     float2 subjectUV = beat_zoom_uv(artUV, u.beatPulse, u.primaryBeatZoomStrength);
     bool subjectInBounds = all(subjectUV >= 0.0) && all(subjectUV <= 1.0);
     float4 subjectNewSample = subjectArtTexture.sample(artSampler, saturate(subjectUV));
+    float subjectEdgeAlpha = 1.0;
     float4 subjectSample = preset_transition_apply(
         presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
-        oldSubjectArtTexture, subjectArtTexture, artSampler, subjectUV, in.texCoord, subjectNewSample
+        oldSubjectArtTexture, subjectArtTexture, artSampler, subjectUV, in.texCoord, subjectNewSample,
+        subjectEdgeAlpha
     );
-    float subjectA = subjectInBounds ? subjectSample.a * u.subjectVisible : 0.0;
+    float subjectBoundsAlpha = warpActive ? subjectEdgeAlpha : (subjectInBounds ? 1.0 : 0.0);
+    float subjectA = subjectBoundsAlpha * subjectSample.a * u.subjectVisible;
 
     // Standard sequential "over" compositing, bottom to top: backgroundDetail, text, subject - so
     // subject is always the topmost layer whenever it's visible, text just underneath it.
