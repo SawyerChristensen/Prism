@@ -148,6 +148,19 @@ final class NowPlayingManager {
     /// can drive an animation off the actual strings/positions without re-running OCR.
     private(set) var albumArtText: [RecognizedTextLine] = []
     private(set) var genre: String?
+    /// ReccoBeats' numeric traits for the current track (see ReccoBeatsClient/TO DO.md's
+    /// "Song-Preset Matching" section) — nil until the lookup for this track resolves, and stays
+    /// nil if ReccoBeats' catalog doesn't have a match. Reset to nil on every track change (unlike
+    /// artwork, this is keyed to the *track*, not the album, so it can't be left over from a
+    /// previous song on the same record the way stale album art would at least still be correct).
+    private(set) var songTraits: SongAudioTraits?
+    /// Bumped once per track once the ReccoBeats lookup for it has settled — success, cache hit,
+    /// cached/fresh miss, or outright failure all count as "settled" (same "must fire even on
+    /// failure" rule as `artworkSettledToken`, so a network hiccup can't leave a matched-preset
+    /// swap waiting forever). ContentView keys its Phase 2 "swap to the best-matched preset" step
+    /// off this, separately from Phase 1's instant fallback pick on `artworkSettledToken`.
+    private(set) var songTraitsSettledToken = 0
+    private let songAudioTraitsCache = SongAudioTraitsCache()
     private(set) var sourceApp: String?
     private(set) var albumBackgroundColor: NSColor?
     private(set) var albumForegroundColor: NSColor?
@@ -315,6 +328,8 @@ final class NowPlayingManager {
                         if key != self.currentTrackKey {
                             self.currentTrackKey = key
                             self.trackChangeToken += 1
+                            self.songTraits = nil
+                            self.loadSongTraits(artist: info.artist, title: info.track)
                             // Same-album track change (e.g. skipping to the next song on the same
                             // record) — the art itself isn't changing, so leave cachedRawArtwork/
                             // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
@@ -413,6 +428,70 @@ final class NowPlayingManager {
             logger.debug("now playing via \(app.name, privacy: .public): \(parts[0], privacy: .public) — \(parts[1], privacy: .public) — \(parts[2], privacy: .public)")
         }
         return (track: parts[0], artist: parts[1], album: parts[2])
+    }
+
+    // MARK: - Song traits
+
+    /// Looks the just-detected track up — cache first (see SongAudioTraitsCache's own doc comment
+    /// on why that's the difference between an instant matched-preset swap and a 200ms-2s network
+    /// wait), ReccoBeats itself on a cache miss — and logs whatever comes back. Fire-and-forget
+    /// like `loadArtwork`'s own fetches: a slow/failed lookup just leaves `songTraits` nil rather
+    /// than blocking anything else in `refresh()`. Called with `trackChangeToken` already bumped
+    /// for this track, so capturing it up front and checking it again once the fetch resolves is
+    /// enough to detect "the user has since skipped past this track" and skip the stale write —
+    /// same generation-counter shape as `recompositeGeneration`/`applyRecomposited`. Bumps
+    /// `songTraitsSettledToken` on every exit path, cache hit or miss or fresh network result or
+    /// outright failure alike — ContentView's Phase 2 matched-preset swap waits on that token, and
+    /// (same reasoning as `settleArtwork`) it must never be left waiting forever.
+    private func loadSongTraits(artist: String, title: String) {
+        let generation = trackChangeToken
+
+        switch songAudioTraitsCache.lookup(artist: artist, title: title) {
+        case .cachedHit(let traits):
+            logger.debug("ReccoBeats (cached): \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
+            songTraits = traits
+            songTraitsSettledToken += 1
+            return
+        case .cachedMiss:
+            logger.debug("ReccoBeats (cached miss): \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
+            songTraits = nil
+            songTraitsSettledToken += 1
+            return
+        case .notCached:
+            break
+        }
+
+        Task { [weak self] in
+            let traits = await ReccoBeatsClient.fetchTraits(artist: artist, title: title)
+            self?.songAudioTraitsCache.store(traits, artist: artist, title: title)
+
+            guard let traits else {
+                logger.debug("ReccoBeats: no match for \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
+                await MainActor.run {
+                    guard let self, self.trackChangeToken == generation else { return }
+                    self.songTraits = nil
+                    self.songTraitsSettledToken += 1
+                }
+                return
+            }
+            logger.debug("""
+                ReccoBeats traits for \"\(title, privacy: .public)\" — \(artist, privacy: .public): \
+                valence=\(traits.valence, format: .fixed(precision: 3)) \
+                energy=\(traits.energy, format: .fixed(precision: 3)) \
+                danceability=\(traits.danceability, format: .fixed(precision: 3)) \
+                acousticness=\(traits.acousticness, format: .fixed(precision: 3)) \
+                instrumentalness=\(traits.instrumentalness, format: .fixed(precision: 3)) \
+                liveness=\(traits.liveness, format: .fixed(precision: 3)) \
+                speechiness=\(traits.speechiness, format: .fixed(precision: 3)) \
+                tempo=\(traits.tempo, format: .fixed(precision: 1)) \
+                key=\(traits.key) mode=\(traits.mode) loudness=\(traits.loudness, format: .fixed(precision: 1))
+                """)
+            await MainActor.run {
+                guard let self, self.trackChangeToken == generation else { return }
+                self.songTraits = traits
+                self.songTraitsSettledToken += 1
+            }
+        }
     }
 
     // MARK: - Artwork

@@ -1,0 +1,87 @@
+//
+//  generate_preset_visual_traits.swift
+//  Prism
+//
+//  Dev-time tool (run via generate_preset_visual_traits.sh — NOT an Xcode build phase, unlike
+//  copy_bundled_presets.sh's per-build rsync): walks the preset pack once, runs
+//  MilkdropPresetVisualTraitsAnalyzer over every .milk file, and writes the whole corpus's traits
+//  out to Resources/PresetVisualTraits.json, keyed by filename (the same "filenames are unique
+//  across the whole corpus" assumption MilkdropNestDropFavoritesList.presetFilenames already
+//  relies on for matching NestDrop favorites — verified again here: zero collisions across all
+//  9,795 files in the shipped pack as of this writing).
+//
+//  MilkdropPresetVisualTraitsStore loads the committed output at launch and does a single
+//  dictionary lookup per preset from then on — this script is what makes that possible, by doing
+//  the actual text-scanning work once, ahead of time, instead of on every preset decision. Re-run
+//  it by hand (generate_preset_visual_traits.sh) whenever the preset pack changes; the committed
+//  JSON is not regenerated automatically on every build the way the raw .milk files themselves are.
+//
+//  Compiled and run standalone (see the .sh wrapper) rather than as an Xcode scheme/target — same
+//  reasoning as PrismTests avoiding `xcodebuild test` for anything that could touch the real
+//  audio-capturing app: this has nothing to do with that hazard, it's just simpler to not need a
+//  whole extra Xcode target for a script that only ever runs by hand on a developer's machine.
+//
+//  Lives at Scripts/ (repo top level, sibling to Prism/), not inside Prism/ anywhere, and is named
+//  .swift.txt, not .swift — belt and suspenders against Prism.xcodeproj's file-system-synchronized
+//  group for Prism/, which sweeps in *everything* under that folder as a build file automatically,
+//  re-evaluated on every build (not just once at file-creation time). This file has top-level
+//  executable statements (a script, not a library): living inside Prism/Scripts/ broke the real
+//  app build twice — first as plain .swift ("statements are not allowed at the top level"), then
+//  again as .swift.txt ("Unexpected input file") once the synced group re-scanned on a later
+//  build — both confirmed via an actual `xcodebuild build`/Xcode build, not just a stale-index
+//  warning. Being physically outside Prism/ is what actually fixes it; the .txt extension on top
+//  is just so a stray `git mv` back under Prism/ someday doesn't immediately reintroduce the
+//  original problem. The .sh wrapper copies this to a real .swift file in a temp directory before
+//  invoking swiftc, since swiftc itself does need the real extension to recognize it as source.
+//
+
+import Foundation
+
+let presetPackDir = ProcessInfo.processInfo.environment["PRISM_PRESET_PACK_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/PrismCollection/BestMilkdropPresetsPack/Presets")
+
+guard FileManager.default.fileExists(atPath: presetPackDir.path) else {
+    FileHandle.standardError.write("error: preset pack not found at \(presetPackDir.path) — set PRISM_PRESET_PACK_DIR to override\n".data(using: .utf8)!)
+    exit(1)
+}
+
+guard let enumerator = FileManager.default.enumerator(at: presetPackDir, includingPropertiesForKeys: nil) else {
+    FileHandle.standardError.write("error: couldn't enumerate \(presetPackDir.path)\n".data(using: .utf8)!)
+    exit(1)
+}
+
+var traitsByFilename: [String: MilkdropPresetVisualTraits] = [:]
+var duplicateFilenames: [String] = []
+
+for case let url as URL in enumerator {
+    guard url.pathExtension.lowercased() == "milk" else { continue }
+    guard let traits = MilkdropPresetVisualTraitsAnalyzer.analyze(url) else {
+        FileHandle.standardError.write("warning: couldn't read \(url.path) — skipping\n".data(using: .utf8)!)
+        continue
+    }
+    let filename = url.lastPathComponent
+    if traitsByFilename[filename] != nil {
+        duplicateFilenames.append(filename)
+    }
+    traitsByFilename[filename] = traits
+}
+
+if !duplicateFilenames.isEmpty {
+    FileHandle.standardError.write("warning: \(duplicateFilenames.count) duplicate filename(s) found — later entries silently overwrote earlier ones: \(duplicateFilenames.prefix(10).joined(separator: ", "))\n".data(using: .utf8)!)
+}
+
+let encoder = JSONEncoder()
+encoder.outputFormatting = [.sortedKeys] // not .prettyPrinted - this is a committed resource file, not something a person edits by hand (contrast ArtworkPreferences.json, which is hand-curated)
+let data = try! encoder.encode(traitsByFilename)
+
+// Not derived from #filePath: the .sh wrapper copies this source into a scratch temp directory
+// before compiling (see its own doc comment on why), so #filePath would resolve to that scratch
+// location instead of the real checkout — the wrapper exports PRISM_PROJECT_DIR instead.
+guard let projectDir = ProcessInfo.processInfo.environment["PRISM_PROJECT_DIR"] else {
+    FileHandle.standardError.write("error: PRISM_PROJECT_DIR not set — run via generate_preset_visual_traits.sh, not swiftc directly\n".data(using: .utf8)!)
+    exit(1)
+}
+let outputURL = URL(fileURLWithPath: projectDir).appendingPathComponent("Resources/PresetVisualTraits.json")
+try! data.write(to: outputURL)
+
+print("Wrote traits for \(traitsByFilename.count) presets (\(data.count / 1024) KB) to \(outputURL.path)")
