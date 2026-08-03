@@ -346,6 +346,19 @@ struct ContentView: View {
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             loadPresetAndTrack(from: url)
         }
+        // A song ending and a new one beginning should feel like a beat, not a silent swap: advance
+        // to a new preset — real projectM cross-fades old/new preset internally
+        // (ProjectMCoordinator.updateModelIfNeeded's smoothTransition), and that same preset load
+        // also drives ProjectMCoordinator's own preset-transition album-art effect (see its doc
+        // comments), so nothing else needs to be triggered here for the art to follow along.
+        // `oldValue != 0` skips the very first token change (0 -> the first track detected this
+        // launch) — that's "music started playing," not "a song ended," and this launch's own
+        // preset restore (onAppear/waitForMusicSignal) already owns picking the very first preset;
+        // racing this against it would fight over presetURL.
+        .onChange(of: nowPlaying.trackChangeToken) { oldValue, _ in
+            guard oldValue != 0, presetLibrary.isConfigured else { return }
+            loadNextSequentialPreset()
+        }
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(

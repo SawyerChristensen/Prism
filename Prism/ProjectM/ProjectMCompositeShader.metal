@@ -165,6 +165,171 @@ inline float wave_dissolve_edge_alpha(float2 walkedUV)
     return smoothstep(-0.05, 0.02, min(edgeDist.x, edgeDist.y));
 }
 
+// --- Preset-transition album-art effect ---
+// Ports real projectM's own built-in preset-transition shaders (Vendor/projectm/src/libprojectM/
+// Renderer/TransitionShaders/*Glsl330.frag) onto the album art layer, so it visibly reacts in the
+// same style as whatever real projectM is doing to the wave underneath during a preset transition
+// (see ProjectMCoordinator.PresetTransitionEffect's own doc comment for why this is Prism's own
+// independent pick from the same six algorithms rather than a literal mirror of projectM's - that
+// choice is fully internal to the engine with no way to observe it from outside).
+//
+// The originals blend an "old" (outgoing) and "new" (incoming) full-screen preset render together;
+// album art gets the literal same treatment here, blending whatever art was on screen the instant
+// this preset transition started (ProjectMCoordinator snapshots it into the old*ArtTexture
+// bindings) against the live/current art. When the track hasn't changed, old and new are the same
+// image, so every effect below is naturally a no-op (mix(X,X,t) == X, a warp/blur of identical
+// content still ends up back at that same content) - album art only visibly transitions when it's
+// actually changing, in lockstep with whichever effect is playing over the wave that moment:
+//   circle/plasma/sweep/simpleBlend - spatial reveal masks (how much of the *new* art shows through,
+//     in that effect's shape) - reveal is computed once in the fragment function below (screen-space,
+//     shared by all three layers) and consumed via mix(oldSample, newSample, reveal) per layer.
+//   warp - a center-relative zoom blending two oppositely-scaled samples, one from the old texture,
+//     one from the new - see preset_transition_warp_blend.
+//   zoomBlur - a radial blur toward screen center, crossfading old into new at each tap as it blurs
+//     (Exponential_easeInOut dissolve, same shape as the original) - see
+//     preset_transition_zoom_blur_blend. Ported with fewer taps (8, not 20) for cost.
+constant float kPresetTransitionPi = 3.14159265358979323846;
+
+// GLSL's mod(x,y) (== x - y*floor(x/y), always the same sign as y) rather than C/Metal's fmod
+// (truncates toward zero, so a negative x gives a negative result) - the real random seeds this
+// feeds (ProjectMEngine.presetTransitionRandomSeedA-D, real int32 values straight from projectM's
+// std::mt19937, so routinely negative) need GLSL's always-non-negative-for-positive-y behavior to
+// land in the ranges these ported formulas (originally GLSL mod() calls) expect.
+inline float preset_transition_glsl_mod(float x, float y)
+{
+    return x - y * floor(x / y);
+}
+
+inline float preset_transition_mask_circle(float2 uv, float aspect, float progressCosine, float4 seeds)
+{
+    float inOrOut = preset_transition_glsl_mod(seeds.x, 2.0);
+    float progress = inOrOut < 1.0 ? progressCosine : 1.0 - progressCosine;
+    float blendWidth = preset_transition_glsl_mod(seeds.y, 0.1) + 0.05;
+    progress = progress * (1.0 + blendWidth) - blendWidth;
+
+    float2 center = float2(0.5);
+    float rad = sqrt(center.x / aspect * center.x / aspect + center.y * center.y) * progress;
+    float rad2 = rad + blendWidth;
+    float r1 = sqrt((uv.x - center.x) / aspect * (uv.x - center.x) / aspect + (uv.y - center.y) * (uv.y - center.y));
+
+    float insideReveal = inOrOut < 1.0 ? 1.0 : 0.0;
+    float outsideReveal = 1.0 - insideReveal;
+    if (r1 > rad2) { return outsideReveal; }
+    if (r1 <= rad) { return insideReveal; }
+    return mix(insideReveal, outsideReveal, (r1 - rad) / (rad2 - rad));
+}
+
+inline float preset_transition_sin_noise(float2 uv, float seed)
+{
+    return fract(abs(sin(uv.x * 0.018 + uv.y * 0.3077) * (seed * 0.1)));
+}
+
+inline float preset_transition_value_noise(float2 uv, float scale, float seed)
+{
+    float2 luvs = smoothstep(0.0, 1.0, fract(uv * scale));
+    float2 id = floor(uv * scale);
+    float t = mix(preset_transition_sin_noise(id + float2(0.0, 1.0), seed),
+                  preset_transition_sin_noise(id + float2(1.0, 1.0), seed), luvs.x);
+    float b = mix(preset_transition_sin_noise(id + float2(0.0, 0.0), seed),
+                  preset_transition_sin_noise(id + float2(1.0, 0.0), seed), luvs.x);
+    return mix(b, t, luvs.y) * 2.0 - 1.0;
+}
+
+inline float preset_transition_mask_plasma(float2 uv, float aspect, float progressCosine, float4 seeds)
+{
+    float2 puv = uv;
+    puv.y *= aspect;
+    float scale = preset_transition_glsl_mod(seeds.y, 7.0) * 4.0 + 4.0;
+    float fractValue = 0.0;
+    float amp = 1.0;
+    for (int i = 0; i < 16; i++) {
+        fractValue += preset_transition_value_noise(puv, float(i + 1) * scale, seeds.x) * amp;
+        amp *= 0.5;
+    }
+    fractValue = fractValue * 0.25 + 0.5;
+    return smoothstep(progressCosine + 0.1, progressCosine - 0.1, fractValue);
+}
+
+inline float preset_transition_mask_sweep(float2 uv, float progressCosine, float4 seeds)
+{
+    float currentAngle = preset_transition_glsl_mod(seeds.x, 360.0);
+    float blendWidth = preset_transition_glsl_mod(seeds.y, 0.3) + 0.1;
+
+    float2 c = uv - 0.5;
+    constexpr float kDegToRad = kPresetTransitionPi / 180.0;
+    float angle = 90.0 * kDegToRad - currentAngle * kDegToRad + atan2(c.y, c.x);
+    float len = length(c) / sqrt(2.0);
+    float2 su = float2(cos(angle) * len, sin(angle) * len) + 0.5;
+
+    float towardOld = smoothstep(progressCosine, progressCosine + blendWidth, (su.x / (1.0 + 2.0 * blendWidth)) + blendWidth);
+    return 1.0 - towardOld;
+}
+
+// Warp: a center-relative zoom blending an oppositely-scaled sample of the old texture with one of
+// the new texture - see TransitionShaderBuiltInWarpGlsl330.frag. At x=0 this is 100% oldSample
+// (unwarped); at x=1, 100% newSample (also unwarped) - the zoom itself only shows up in between.
+inline float4 preset_transition_warp_blend(texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float progressCosine, float4 seeds)
+{
+    float direction = preset_transition_glsl_mod(seeds.x, 4.0);
+    float coord = direction < 1.0 ? uv.x : (direction < 2.0 ? 1.0 - uv.x : (direction < 3.0 ? uv.y : 1.0 - uv.y));
+    float x = smoothstep(0.0, 1.0, progressCosine * 2.0 + coord - 1.0);
+    float4 oldSample = oldTex.sample(s, saturate((uv - 0.5) * (1.0 - x) + 0.5));
+    float4 newSample = newTex.sample(s, saturate((uv - 0.5) * x + 0.5));
+    return mix(oldSample, newSample, x);
+}
+
+// Exponential_easeInOut(0, 1, 1, t) from TransitionShaderBuiltInZoomBlurGlsl330.frag - the old/new
+// crossfade curve zoomBlur's blur taps dissolve along.
+inline float preset_transition_exponential_ease_in_out(float t)
+{
+    float t2 = t * 2.0;
+    if (t2 < 1.0) { return 0.5 * pow(2.0, 10.0 * (t2 - 1.0)); }
+    return 0.5 * (-pow(2.0, -10.0 * (t2 - 1.0)) + 2.0);
+}
+
+// ZoomBlur: radial blur toward screen center, old and new textures crossfaded at each tap as it
+// blurs - see TransitionShaderBuiltInZoomBlurGlsl330.frag. Fewer taps than the original (8, not 20)
+// since this runs per album-art layer, per pixel, only during a transition.
+inline float4 preset_transition_zoom_blur_blend(texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float progressCosine, float2 seedUV)
+{
+    constexpr float kStrengthConst = 0.3;
+    // Sinusoidal_easeInOut(0, kStrengthConst, 0.5, progressCosine) from the original - a half-length
+    // duration against a full 0...1 progress gives two full humps across the transition.
+    float strength = -kStrengthConst * 0.5 * (cos(kPresetTransitionPi * progressCosine / 0.5) - 1.0);
+    float dissolve = preset_transition_exponential_ease_in_out(saturate(progressCosine));
+
+    float2 toCenter = float2(0.5) - uv;
+    float offset = fract(sin(dot(seedUV, float2(12.9898, 78.233))) * 43758.5453) * 0.5;
+
+    float4 color = float4(0.0);
+    float total = 0.0;
+    constexpr int kTaps = 8;
+    for (int t = 0; t < kTaps; t++) {
+        float percent = (float(t) + offset) / float(kTaps);
+        float weight = percent - percent * percent;
+        float2 tapUV = saturate(uv + toCenter * percent * strength);
+        color += mix(oldTex.sample(s, tapUV), newTex.sample(s, tapUV), dissolve) * weight;
+        total += weight;
+    }
+    return total > 0.0001 ? color / total : mix(oldTex.sample(s, uv), newTex.sample(s, uv), dissolve);
+}
+
+// Dispatches to whichever of the six ported effects is active for one album-art layer, given its
+// already-computed "new" (live/current) sample - see this file's own header above. `on` false (no
+// transition) and mask-style effects both just consume `fallbackNewSample` (mask-style blends it
+// against the old sample; warp/zoomBlur ignore it and sample old/new fresh themselves, since they
+// need their own displaced UVs rather than the plain one `fallbackNewSample` was taken at).
+inline float4 preset_transition_apply(
+    bool on, int effect, float reveal, float progressCosine, float4 seeds,
+    texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float2 noiseSeedUV,
+    float4 fallbackNewSample)
+{
+    if (!on) { return fallbackNewSample; }
+    if (effect == 4) { return preset_transition_warp_blend(oldTex, newTex, s, uv, progressCosine, seeds); }
+    if (effect == 5) { return preset_transition_zoom_blur_blend(oldTex, newTex, s, uv, progressCosine, noiseSeedUV); }
+    return mix(oldTex.sample(s, saturate(uv)), fallbackNewSample, reveal);
+}
+
 // Mirrors ProjectMCoordinator's Swift-side AlbumArtUniforms struct field-for-field - keep the two
 // in sync if either changes.
 struct AlbumArtUniforms {
@@ -213,6 +378,14 @@ struct AlbumArtUniforms {
     // - see this file's own header. Always 0 today.
     float outgoingActive;
     float outgoingProgress;
+    // Drives the preset-transition album-art effect - see this file's own header above and
+    // ProjectMCoordinator.PresetTransitionEffect/presetTransitionActiveAndProgress.
+    // presetTransitionRandomSeeds mirrors real projectM's iRandStatic (TransitionShaderHeaderGlsl330
+    // .frag) - four values picked once per transition, held fixed for its whole duration.
+    float presetTransitionActive;
+    float presetTransitionProgress;
+    float presetTransitionEffect;
+    float4 presetTransitionRandomSeeds;
 };
 
 fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[stage_in]],
@@ -222,6 +395,9 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
                                              texture2d<float> subjectArtTexture [[texture(3)]],
                                              texture2d<float> textArtTexture [[texture(4)]],
                                              texture2d<float> outgoingArtTexture [[texture(5)]],
+                                             texture2d<float> oldBackgroundDetailArtTexture [[texture(6)]],
+                                             texture2d<float> oldSubjectArtTexture [[texture(7)]],
+                                             texture2d<float> oldTextArtTexture [[texture(8)]],
                                              constant AlbumArtUniforms &u [[buffer(0)]])
 {
     constexpr sampler waveSampler(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
@@ -255,6 +431,38 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
 
     float3 luma = float3(0.299, 0.587, 0.114);
     float2 waveGradient = sample_wave_gradient(waveTexture, waveSampler, in.texCoord, u.waveTexelSize, luma);
+
+    // Preset-transition album-art effect - see this file's own header above. transitionReveal is
+    // shared by all three layers below (screen-space, so the same wipe/noise/etc. shape lines up
+    // across all of them at a given pixel) - only meaningful for the four mask-style effects
+    // (0-3); warp/zoomBlur (4/5) compute their own per-layer blend entirely inside
+    // preset_transition_apply instead.
+    bool presetTransitionOn = u.presetTransitionActive > 0.5;
+    int transitionEffect = int(round(u.presetTransitionEffect));
+    float transitionProgressCosine = 0.0;
+    float transitionReveal = 0.0;
+    if (presetTransitionOn) {
+        float p = saturate(u.presetTransitionProgress);
+        transitionProgressCosine = (-cos(p * kPresetTransitionPi) + 1.0) * 0.5;
+        if (transitionEffect <= 3) {
+            float screenW = 1.0 / u.waveTexelSize.x;
+            float screenH = 1.0 / u.waveTexelSize.y;
+            float screenAspect = screenH / screenW;
+            // Index order mirrors real projectM's Renderer::TransitionShaderManager construction
+            // order exactly (see PresetTransitionEffect's own doc comment in ProjectMCoordinator.
+            // swift) - 0 Circle, 1 Plasma, 2 SimpleBlend, 3 Sweep - so the index read straight off
+            // the engine needs no remapping here.
+            if (transitionEffect == 0) {
+                transitionReveal = preset_transition_mask_circle(in.texCoord, screenAspect, transitionProgressCosine, u.presetTransitionRandomSeeds);
+            } else if (transitionEffect == 1) {
+                transitionReveal = preset_transition_mask_plasma(in.texCoord, screenAspect, transitionProgressCosine, u.presetTransitionRandomSeeds);
+            } else if (transitionEffect == 2) {
+                transitionReveal = transitionProgressCosine;
+            } else {
+                transitionReveal = preset_transition_mask_sweep(in.texCoord, transitionProgressCosine, u.presetTransitionRandomSeeds);
+            }
+        }
+    }
 
     // Outgoing layer: the previous track, still dissolving away on its own independent clock - see
     // this file's own header. Computed first (and composited underneath everything else) so it
@@ -336,12 +544,18 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // Softens each channel's offset copy (see sample_channel_soft above) rather than leaving it a
     // crisp point/bilinear sample - scaled off chromaticAberrationStrength itself so a bigger split
     // gets a proportionally softer edge instead of a fixed blur that's invisible at large splits or
-    // mushy at small ones.
+    // mushy at small ones. Always computed (even during a warp/zoomBlur transition, which ends up
+    // discarding it) - simpler than threading a second "skip aberration" path through, and the cost
+    // only shows up during the occasional transition.
     float2 aberrationBlur = float2(u.chromaticAberrationStrength * 0.35);
     float backgroundDetailR = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleR * u.chromaticAberrationStrength), aberrationBlur, 0);
     float backgroundDetailG = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleG * u.chromaticAberrationStrength), aberrationBlur, 1);
     float backgroundDetailB = sample_channel_soft(backgroundDetailArtTexture, artSampler, saturate(backgroundDetailUV + aberrationDir * channelScaleB * u.chromaticAberrationStrength), aberrationBlur, 2);
-    float4 backgroundDetailSample = float4(backgroundDetailR, backgroundDetailG, backgroundDetailB, backgroundDetailCenter.a);
+    float4 backgroundDetailNewSample = float4(backgroundDetailR, backgroundDetailG, backgroundDetailB, backgroundDetailCenter.a);
+    float4 backgroundDetailSample = preset_transition_apply(
+        presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
+        oldBackgroundDetailArtTexture, backgroundDetailArtTexture, artSampler, backgroundDetailUV, in.texCoord, backgroundDetailNewSample
+    );
     // Punch a hole through backgroundDetail wherever the wave itself is bright at this pixel,
     // revealing the (usually far more colorful) wave layer beneath instead of just warping this
     // layer's own content there. `wave`/`luma` already sampled/defined above for the rest of this
@@ -354,7 +568,11 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // warps or fringes, just moves with the parallax punch.
     float2 textUV = beat_zoom_uv(artUV, u.beatPulse, u.secondaryBeatZoomStrength);
     bool textInBounds = all(textUV >= 0.0) && all(textUV <= 1.0);
-    float4 textSample = textArtTexture.sample(artSampler, saturate(textUV));
+    float4 textNewSample = textArtTexture.sample(artSampler, saturate(textUV));
+    float4 textSample = preset_transition_apply(
+        presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
+        oldTextArtTexture, textArtTexture, artSampler, textUV, in.texCoord, textNewSample
+    );
     float textA = textInBounds ? textSample.a * u.textVisible : 0.0;
 
     // subject layer: beat zoom only, and the largest of the four when this cover actually has a
@@ -362,7 +580,11 @@ fragment float4 projectm_composite_fragment(ProjectMPassthroughVaryings in [[sta
     // stack, so it punches inward the most.
     float2 subjectUV = beat_zoom_uv(artUV, u.beatPulse, u.primaryBeatZoomStrength);
     bool subjectInBounds = all(subjectUV >= 0.0) && all(subjectUV <= 1.0);
-    float4 subjectSample = subjectArtTexture.sample(artSampler, saturate(subjectUV));
+    float4 subjectNewSample = subjectArtTexture.sample(artSampler, saturate(subjectUV));
+    float4 subjectSample = preset_transition_apply(
+        presetTransitionOn, transitionEffect, transitionReveal, transitionProgressCosine, u.presetTransitionRandomSeeds,
+        oldSubjectArtTexture, subjectArtTexture, artSampler, subjectUV, in.texCoord, subjectNewSample
+    );
     float subjectA = subjectInBounds ? subjectSample.a * u.subjectVisible : 0.0;
 
     // Standard sequential "over" compositing, bottom to top: backgroundDetail, text, subject - so

@@ -234,6 +234,15 @@ final class NowPlayingManager {
     // actually changes, rather than on every 2-second poll.
     private var currentTrackKey: String?
 
+    /// Bumped every time `refresh()` detects an actual track change, synchronously, before any
+    /// artwork fetch for that change (if any) has even started - metadata-only (track/artist/album
+    /// strings), so there's nothing to wait on. ContentView's "select a new preset on track change"
+    /// `onChange` keys off this - preset selection doesn't need to wait on artwork, and
+    /// ProjectMCoordinator's own preset-transition album-art effect (see its own doc comments)
+    /// reacts automatically to whatever preset that selection loads, so nothing else needs to key
+    /// off this directly.
+    private(set) var trackChangeToken = 0
+
     init() {
         loadArtworkPreferences()
     }
@@ -275,6 +284,7 @@ final class NowPlayingManager {
                         self.sourceApp = app.name
                         if key != self.currentTrackKey {
                             self.currentTrackKey = key
+                            self.trackChangeToken += 1
                             // Same-album track change (e.g. skipping to the next song on the same
                             // record) — the art itself isn't changing, so leave cachedRawArtwork/
                             // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
@@ -370,23 +380,26 @@ final class NowPlayingManager {
     // MARK: - Artwork
 
     private func loadArtwork(app: (name: String, bundleID: String), artist: String, album: String) {
-        artwork = nil
-        albumArtText = []
-        cachedRawArtwork = nil
-        cachedColors = nil
-        cachedSubjectMask = nil
-        cachedColorKeyedArtwork = nil
-        cachedSubjectArtwork = nil
-        cachedTextOnlyArtwork = nil
-        cachedBackgroundDetailArtwork = nil
-        cachedBackgroundColorArtwork = nil
+        // Deliberately *not* clearing artwork/cachedRawArtwork/etc. here before kicking off the
+        // fetch below: this fires the instant a new album is detected, but the fetch itself is a
+        // network round trip (hundreds of ms to a couple seconds) — clearing eagerly used to leave
+        // `rawArtwork` (and the rest) nil for that whole window, which ProjectMCoordinator reads as
+        // "the art just changed" and immediately blanks the on-screen layers, then blanks them
+        // *again* moments later when the real new art actually lands — a visible disappear-then-
+        // reappear rather than one clean transition. Leaving the previous track's art in place
+        // until the new art is actually ready means there's only ever one real change for
+        // ProjectMCoordinator to react to. If this fetch fails outright, the previous track's art
+        // just stays on screen (now stale) rather than the screen going blank — an acceptable
+        // trade-off for never flashing empty.
         genre = nil // Reset genre here too
 
         // Apply a saved preference for this album (if any) *before* kicking off the artwork
         // fetch below, so the first composite already uses it instead of the defaults/whatever
         // was left over from whichever album played last. Setting these can trigger `didSet` ->
-        // `recomposite()`, which harmlessly no-ops since `cachedRawArtwork` was just cleared above
-        // — there's nothing to recomposite until the fetch below finishes.
+        // `recomposite()`, which recomposites whatever `cachedRawArtwork` still holds (the previous
+        // track's, per the comment above) using the new preference — a harmless, self-correcting
+        // mismatch, since the fetch below overwrites `cachedRawArtwork` (and recomposites properly
+        // against it) the moment it actually completes.
         currentAlbumKey = Self.albumKey(artist: artist, album: album)
         if let currentAlbumKey, let saved = artworkPreferences[currentAlbumKey] {
             maskingMode = saved.maskingMode

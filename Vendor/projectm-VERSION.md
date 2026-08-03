@@ -70,3 +70,34 @@ drawn. This multiplier only affects the engine's own built-in warp-noise animati
 (`fWarpAnimSpeed`), not arbitrary preset `per_frame` code — see Prism's `projectm_set_fps` call
 site (`ProjectMCoordinator.swift`) for the complementary fix that helps `fps`-normalized presets.
 Exposed to the user via up/down arrow keys in `ContentView.swift`.
+
+## Local patch: exposed preset-transition state (which built-in transition, progress, random seeds)
+
+The patch is checked in at
+`Prism/Vendor/projectm-local-patches/0005-expose-preset-transition-state.patch` (same not-part-of-
+the-submodule's-tracked-commit caveat as above — re-applied by `Prism/Vendor/build-projectm.sh`).
+
+Adds four new read-only C API functions: `projectm_get_preset_transition_active`,
+`projectm_get_preset_transition_progress`, `projectm_get_preset_transition_shader_index`, and
+`projectm_get_preset_transition_random_values`. Threads through `Renderer::
+TransitionShaderManager::LastRandomTransitionIndex()` (new — records which of its 6 built-in
+shaders `RandomTransition()` just picked, by index into its own construction order: 0 Circle,
+1 Plasma, 2 SimpleBlend, 3 Sweep, 4 Warp, 5 ZoomBlur) and `Renderer::PresetTransition::
+ShaderIndex()`/`StaticRandomValues()` (new — the index and per-transition random `ivec4` a given
+`PresetTransition` instance was constructed with) up to matching `ProjectM::
+IsPresetTransitionActive()`/`PresetTransitionProgress()`/`PresetTransitionShaderIndex()`/
+`PresetTransitionRandomValues()` getters.
+
+Motivation: Prism composites its own album-art overlay on top of projectM's rendered output in a
+separate Metal pass (`ProjectMCoordinator`/`ProjectMCompositeShader.metal`) rather than inside
+projectM's own render pass, and wanted that overlay to visibly transition using the *exact same*
+effect (not just "one of the same six algorithms, independently randomized") as whichever
+transition projectM is currently running between two presets — which of the 6 built-in transition
+shaders plays, and its randomized parameters (wipe angle, blend width, etc. — the `iRandStatic`
+uniform each built-in transition shader reads, see `Renderer/TransitionShaders/
+TransitionShaderHeaderGlsl330.frag`), are otherwise fully internal to `Renderer::PresetTransition`/
+`TransitionShaderManager` with no way to observe them from outside the engine. `ProjectMCoordinator`
+polls these once per frame and ports the same 6 shader algorithms
+(`Vendor/projectm/src/libprojectM/Renderer/TransitionShaders/*.frag`) into
+`ProjectMCompositeShader.metal`, driven by the real index/progress/seeds read here, so the album art
+transitions in lockstep with the actual preset transition rather than a separately-randomized guess.

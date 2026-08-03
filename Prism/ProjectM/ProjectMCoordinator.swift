@@ -69,6 +69,15 @@ private struct AlbumArtUniforms {
     // this four-style cycle doesn't touch; outgoingActive is always 0 today (see draw(in:)).
     var outgoingActive: Float
     var outgoingProgress: Float
+    // Drives the album-art preset-transition effect - see PresetTransitionEffect and
+    // presetTransitionActiveAndProgress. presetTransitionRandomSeeds mirrors real projectM's own
+    // iRandStatic (Renderer/TransitionShaders/TransitionShaderHeaderGlsl330.frag) - four values
+    // picked once per transition, held fixed for its whole duration, used by the ported effects to
+    // pick a random angle/direction/blend-width the same way the real shaders do.
+    var presetTransitionActive: Float
+    var presetTransitionProgress: Float
+    var presetTransitionEffect: Float
+    var presetTransitionRandomSeeds: SIMD4<Float>
 }
 
 /// The three stages of the *incoming* track's own choreography (see ProjectMCompositeShader.metal's
@@ -92,6 +101,27 @@ private enum AlbumArtIntroStyle {
     static let slideRight: Float = 2
     static let slideDown: Float = 3
     static let all: [Float] = [forward, reverseScale, slideRight, slideDown]
+}
+
+/// Which of real projectM's 6 built-in preset-transition effects (Vendor/projectm/src/libprojectM/
+/// Renderer/TransitionShaders/*.frag) the *current* preset transition is actually using - raw
+/// Float, same convention as AlbumArtStage/AlbumArtIntroStyle above, since it crosses straight into
+/// AlbumArtUniforms.presetTransitionEffect. Read live from the engine every frame (see
+/// ProjectMEngine.presetTransitionShaderIndex, backed by the PRISM_LOCAL_PATCH documented in
+/// Vendor/projectm-VERSION.md's "exposed preset-transition state" entry) rather than picked
+/// independently here - this constant ordering mirrors Renderer::TransitionShaderManager's own
+/// construction order exactly (TransitionShaderManager.cpp), so the raw index read off the engine
+/// lines up with these names with no remapping. circle/plasma/simpleBlend/sweep are spatial reveal
+/// masks - how much of the *new* album art shows through the old, at a given pixel, in that
+/// effect's own shape; warp/zoomBlur are geometric distortions applied to the album art's own
+/// texture sampling instead - see the shader's own header for the full breakdown.
+private enum PresetTransitionEffect {
+    static let circle: Float = 0
+    static let plasma: Float = 1
+    static let simpleBlend: Float = 2
+    static let sweep: Float = 3
+    static let warp: Float = 4
+    static let zoomBlur: Float = 5
 }
 
 /// ContentView's four-style manual preview cycle ("M") — four independent layers, permanently
@@ -198,6 +228,18 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var textureLoader: MTKTextureLoader?
     private var emptyAlbumArtTexture: MTLTexture?
 
+    // Snapshots of currentBackgroundDetailTexture/currentSubjectOnlyTexture/currentTextOnlyTexture
+    // (below) taken the instant a preset transition starts (see updateModelIfNeeded) and held fixed
+    // for that transition's whole duration - the "old" side of the old->new blend
+    // ProjectMCompositeShader.metal's preset-transition effect plays per layer. The "new" side is
+    // just whatever those three current*Texture fields are *now*, live - if the track hasn't
+    // changed, old and new are the same content and every ported effect is a no-op; if it has,
+    // they'll differ (once the async artwork fetch resolves - see NowPlayingManager.loadArtwork)
+    // and the layer visibly transitions from one to the other in lockstep with the preset.
+    private var transitionOldBackgroundDetailTexture: MTLTexture?
+    private var transitionOldSubjectTexture: MTLTexture?
+    private var transitionOldTextTexture: MTLTexture?
+
     // "Current" track's puzzle pieces - NowPlayingManager.subjectArtwork (Vision's subject cutout
     // with any OCR'd text drawn back on top - the "end graphic," same as NowPlayingManager's
     // `.combined` masking mode produces before its own recentering step), and two versions of the
@@ -296,6 +338,23 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var lastLoadedPresetURL: URL?
     private weak var model: ProjectMVisualizerModel?
 
+    // Identifies a specific real-projectM PresetTransition instance - its shader index plus random
+    // seeds, which are re-picked fresh every time ProjectM::StartPresetTransition constructs a new
+    // one. Used by updatePresetTransitionSnapshotIfNeeded to detect a *new* transition starting -
+    // see that function's own doc comment for why presetTransitionActive alone (true -> false ->
+    // true) isn't a reliable signal for this: skipping to another preset while a transition is
+    // still playing (e.g. rapidly skipping songs) makes real projectM force-complete the old
+    // transition and start a new one in the same call, with presetTransitionActive staying
+    // continuously true across the switch - no false edge to detect at all.
+    private struct PresetTransitionIdentity: Equatable {
+        var shaderIndex: Int32
+        var seedA: Int32
+        var seedB: Int32
+        var seedC: Int32
+        var seedD: Int32
+    }
+    private var lastPresetTransitionIdentity: PresetTransitionIdentity?
+
     // Smoothed FPS for ContentView's on-screen counter - exponential moving average (not raw
     // per-frame 1/dt) so the displayed number doesn't jitter every single frame.
     private var lastFrameTimestamp: CFTimeInterval?
@@ -324,6 +383,51 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         guard let url = model.presetURL, url != lastLoadedPresetURL else { return }
         lastLoadedPresetURL = url
         engine?.loadPreset(at: url, smoothTransition: true)
+    }
+
+    /// Polls the engine for whether a preset transition is running right now and, whenever it's a
+    /// *different* transition than the one already snapshotted (see PresetTransitionIdentity's own
+    /// doc comment - not just "wasn't active last frame", since a rapid skip mid-transition never
+    /// clears presetTransitionActive), snapshots the "old" side of the album-art blend - see
+    /// transitionOldBackgroundDetailTexture's own doc comment. Everything else about the transition
+    /// (its progress) is read fresh into the uniforms every frame in draw(in:) directly from the
+    /// engine - see PresetTransitionEffect and ProjectMEngine's presetTransition* properties.
+    private func updatePresetTransitionSnapshotIfNeeded() {
+        guard let engine, engine.presetTransitionActive else {
+            lastPresetTransitionIdentity = nil
+            return
+        }
+        let identity = PresetTransitionIdentity(
+            shaderIndex: engine.presetTransitionShaderIndex,
+            seedA: engine.presetTransitionRandomSeedA, seedB: engine.presetTransitionRandomSeedB,
+            seedC: engine.presetTransitionRandomSeedC, seedD: engine.presetTransitionRandomSeedD
+        )
+        guard identity != lastPresetTransitionIdentity else { return }
+        lastPresetTransitionIdentity = identity
+        transitionOldBackgroundDetailTexture = currentBackgroundDetailTexture
+        transitionOldSubjectTexture = currentSubjectOnlyTexture
+        transitionOldTextTexture = currentTextOnlyTexture
+    }
+
+    /// Real projectM's own iRandStatic values are raw std::mt19937 output reinterpreted as signed
+    /// int32 (Renderer/PresetTransition.cpp) - routinely in the hundreds of millions to billions,
+    /// either sign. The ported effects (ProjectMCompositeShader.metal) need these reduced down to a
+    /// small range before use (a random *angle*/*blend width*, not the raw seed, is what the actual
+    /// math wants) via a mod-style operation - doing that reduction in Float, as the original GLSL
+    /// shaders themselves do (`mod(float(iRandStatic.x) * .001, .3)` etc.), loses catastrophic
+    /// precision at this magnitude: float32 only represents integers exactly up to 2^24 (~16.7M), so
+    /// `x - y*floor(x/y)` for x in the billions computes as the difference of two nearly-equal huge
+    /// floats, each already off by roughly x's own ULP (~128 near 2 billion) - the "reduced" result
+    /// can land wildly outside the intended [0, y) range, even negative, which is exactly what
+    /// turned smoothstep's edges degenerate and made transitions flip instead of wipe. Reducing here
+    /// first, in Int32 (exact, no precision loss at any magnitude) down to a small range comfortably
+    /// inside float32's exact-integer window, then handing that small value to the shader, sidesteps
+    /// the problem entirely - the shader's own further mod-by-2/mod-by-360/etc. then operates on
+    /// numbers with no precision to lose.
+    private static func reducedPresetTransitionSeed(_ raw: Int32) -> Float {
+        let range: Int32 = 1_000_000
+        let reduced = ((raw % range) + range) % range
+        return Float(reduced)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -369,6 +473,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         updateDisplayFPS(now: now)
         engine.setWarpAnimSpeedMultiplier(Float(model?.warpAnimSpeedMultiplier ?? 1.0))
         advanceAlbumArtAnimation(device: device, now: now)
+        updatePresetTransitionSnapshotIfNeeded()
 
         let width = Int(view.drawableSize.width)
         let height = Int(view.drawableSize.height)
@@ -408,6 +513,19 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // header), disabled before this four-style cycle existed and untouched by it.
         let outgoingActive: Float = 0
         let outgoingProgress: Float = 0
+        // Read live from the engine every frame - see PresetTransitionEffect and
+        // ProjectMEngine.presetTransitionActive's own doc comment for why (that blend, and which
+        // of the 6 built-in effects/what random parameters it's using, is otherwise fully internal
+        // to projectM with nothing else here to derive it from).
+        let presetTransitionActive: Float = (engine.presetTransitionActive) ? 1 : 0
+        let presetTransitionProgress = Float(engine.presetTransitionProgress)
+        let presetTransitionEffect = Float(engine.presetTransitionShaderIndex)
+        let presetTransitionRandomSeeds = SIMD4<Float>(
+            Self.reducedPresetTransitionSeed(engine.presetTransitionRandomSeedA),
+            Self.reducedPresetTransitionSeed(engine.presetTransitionRandomSeedB),
+            Self.reducedPresetTransitionSeed(engine.presetTransitionRandomSeedC),
+            Self.reducedPresetTransitionSeed(engine.presetTransitionRandomSeedD)
+        )
         var uniforms = AlbumArtUniforms(
             waveTexelSize: SIMD2(1.0 / Float(width), 1.0 / Float(height)),
             artCenter: SIMD2(0.5, 0.5),
@@ -437,7 +555,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             secondaryBeatZoomStrength: currentSecondaryBeatZoomStrength,
             primaryBeatZoomStrength: currentPrimaryBeatZoomStrength,
             outgoingActive: outgoingActive,
-            outgoingProgress: outgoingProgress
+            outgoingProgress: outgoingProgress,
+            presetTransitionActive: presetTransitionActive,
+            presetTransitionProgress: presetTransitionProgress,
+            presetTransitionEffect: presetTransitionEffect,
+            presetTransitionRandomSeeds: presetTransitionRandomSeeds
         )
 
         // The four-layer stack's own layers - always bound the same way regardless of the current
@@ -451,6 +573,13 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // Previous track's snapshot, dissolving away as its own layer underneath everything above
         // - see outgoingTexture's own doc comment.
         let outgoingTex = outgoingTexture ?? emptyAlbumArtTexture
+        // "Old" side of the preset-transition blend - see transitionOldBackgroundDetailTexture's
+        // own doc comment. Falls back to the *live* current texture (not emptyAlbumArtTexture) when
+        // there's no snapshot yet, so a transition starting before any track has ever loaded blends
+        // from itself (a no-op) rather than from nothing.
+        let oldBackgroundDetailTex = transitionOldBackgroundDetailTexture ?? backgroundDetailTex
+        let oldSubjectTex = transitionOldSubjectTexture ?? subjectTex
+        let oldTextTex = transitionOldTextTexture ?? textTex
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentTexture(texture, index: 0)
@@ -459,6 +588,9 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         encoder.setFragmentTexture(subjectTex, index: 3)
         encoder.setFragmentTexture(textTex, index: 4)
         encoder.setFragmentTexture(outgoingTex, index: 5)
+        encoder.setFragmentTexture(oldBackgroundDetailTex, index: 6)
+        encoder.setFragmentTexture(oldSubjectTex, index: 7)
+        encoder.setFragmentTexture(oldTextTex, index: 8)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<AlbumArtUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()

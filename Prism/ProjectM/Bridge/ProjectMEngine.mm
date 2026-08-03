@@ -122,4 +122,47 @@ void PresetSwitchFailedTrampoline(const char* presetFilename, const char* messag
     projectm_set_warp_anim_speed_multiplier(_instance, multiplier);
 }
 
+- (BOOL)presetTransitionActive
+{
+    return projectm_get_preset_transition_active(_instance);
+}
+
+- (double)presetTransitionProgress
+{
+    return projectm_get_preset_transition_progress(_instance);
+}
+
+- (int32_t)presetTransitionShaderIndex
+{
+    return projectm_get_preset_transition_shader_index(_instance);
+}
+
+- (int32_t)presetTransitionRandomSeedA
+{
+    int32_t values[4];
+    projectm_get_preset_transition_random_values(_instance, values);
+    return values[0];
+}
+
+- (int32_t)presetTransitionRandomSeedB
+{
+    int32_t values[4];
+    projectm_get_preset_transition_random_values(_instance, values);
+    return values[1];
+}
+
+- (int32_t)presetTransitionRandomSeedC
+{
+    int32_t values[4];
+    projectm_get_preset_transition_random_values(_instance, values);
+    return values[2];
+}
+
+- (int32_t)presetTransitionRandomSeedD
+{
+    int32_t values[4];
+    projectm_get_preset_transition_random_values(_instance, values);
+    return values[3];
+}
+
 @end

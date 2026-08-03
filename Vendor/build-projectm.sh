@@ -8,14 +8,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/projectm"
 BUILD_DIR="${PROJECTM_BUILD_DIR:-$SCRIPT_DIR/.build}"
 OUT_DIR="$SCRIPT_DIR/projectm-build/lib"
-PATCH_MARKER_FILE="$SRC_DIR/src/libprojectM/Renderer/Platform/GladLoader.cpp"
-PATCH_MARKER="PRISM_LOCAL_PATCH"
 
 # Local patches (see Prism/Vendor/projectm-local-patches/) aren't part of the submodule's
-# tracked commit, so `git submodule update` silently drops them. Re-apply idempotently.
+# tracked commit, so `git submodule update` silently drops them. Re-apply idempotently - checked
+# per patch (via `git apply --check`, which fails once a patch's changes are already present) so
+# that applying an earlier patch in the loop never causes a later one to be skipped. (An earlier
+# version of this check only tested a single marker string in one file, which meant only the
+# first not-yet-applied patch in the whole directory ever actually got applied per run - every
+# patch after it in the loop saw the marker from that first one and was skipped outright.)
 for patch in "$SCRIPT_DIR"/projectm-local-patches/*.patch; do
     [ -e "$patch" ] || continue
-    if ! grep -q "$PATCH_MARKER" "$PATCH_MARKER_FILE" 2>/dev/null; then
+    if git -C "$SRC_DIR" apply --check "$patch" 2>/dev/null; then
         echo "Applying local patch: $(basename "$patch")"
         git -C "$SRC_DIR" apply "$patch"
     fi

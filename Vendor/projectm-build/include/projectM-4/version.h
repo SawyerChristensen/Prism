@@ -8,4 +8,4 @@
 #define PROJECTM_VERSION_STRING "4.2.0"
 
 /* VCS version number, e.g. Git commit hash */
-#define PROJECTM_VERSION_VCS "2f244141320f6b97b09bf99964cc72a4efdfcfd3"
+#define PROJECTM_VERSION_VCS "88f234a4678c989131c4b1281850814b02323969"

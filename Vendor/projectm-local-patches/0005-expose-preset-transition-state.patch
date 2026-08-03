@@ -1,0 +1,292 @@
+diff --git a/src/api/include/projectM-4/parameters.h b/src/api/include/projectM-4/parameters.h
+index 616dfca2b..13aac915b 100644
+--- a/src/api/include/projectM-4/parameters.h
++++ b/src/api/include/projectM-4/parameters.h
+@@ -299,6 +299,46 @@ PROJECTM_EXPORT void projectm_set_warp_anim_speed_multiplier(projectm_handle ins
+  */
+ PROJECTM_EXPORT float projectm_get_warp_anim_speed_multiplier(projectm_handle instance);
+ 
++/**
++ * @brief PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): returns whether a preset
++ * transition (soft cut) is currently in progress.
++ *
++ * @param instance The projectM instance handle.
++ * @return True if a transition is currently blending the previous preset into the new one.
++ */
++PROJECTM_EXPORT bool projectm_get_preset_transition_active(projectm_handle instance);
++
++/**
++ * @brief PRISM_LOCAL_PATCH: returns the current preset transition's linear progress.
++ *
++ * @param instance The projectM instance handle.
++ * @return 0.0...1.0, or 0.0 if no transition is currently active.
++ */
++PROJECTM_EXPORT double projectm_get_preset_transition_progress(projectm_handle instance);
++
++/**
++ * @brief PRISM_LOCAL_PATCH: returns which of the built-in transition shaders
++ * (Renderer/TransitionShaderManager.cpp's construction order: 0 Circle, 1 Plasma, 2 SimpleBlend,
++ * 3 Sweep, 4 Warp, 5 ZoomBlur) the current preset transition randomly picked, so the host app can
++ * apply the exact same transition to content it composites outside of projectM's own renderer.
++ *
++ * @param instance The projectM instance handle.
++ * @return The shader index, or -1 if no transition is currently active.
++ */
++PROJECTM_EXPORT int32_t projectm_get_preset_transition_shader_index(projectm_handle instance);
++
++/**
++ * @brief PRISM_LOCAL_PATCH: returns the current preset transition's four per-transition random
++ * seed values (each built-in transition shader uses these to pick e.g. a random wipe angle or
++ * blend width - see the individual TransitionShaders sources), held fixed for the whole
++ * transition. Needed alongside the shader index above to reproduce the *exact* same transition,
++ * not just the same type of transition.
++ *
++ * @param instance The projectM instance handle.
++ * @param outValues Receives the four values. All zero if no transition is currently active.
++ */
++PROJECTM_EXPORT void projectm_get_preset_transition_random_values(projectm_handle instance, int32_t outValues[4]);
++
+ /**
+  * @brief Enabled or disables aspect ratio correction in presets that support it.
+  *
+diff --git a/src/libprojectM/ProjectM.cpp b/src/libprojectM/ProjectM.cpp
+index 8431fa0a3..03a271b08 100644
+--- a/src/libprojectM/ProjectM.cpp
++++ b/src/libprojectM/ProjectM.cpp
+@@ -317,10 +317,48 @@ void ProjectM::StartPresetTransition(std::unique_ptr<Preset>&& preset, bool hard
+     {
+         m_transitioningPreset = std::move(preset);
+         m_timeKeeper->StartSmoothing();
+-        m_transition = std::make_unique<Renderer::PresetTransition>(m_transitionShaderManager->RandomTransition(), m_softCutDuration, m_timeKeeper->GetFrameTime());
++        // PRISM_LOCAL_PATCH: RandomTransition() must be called before LastRandomTransitionIndex()
++        // is read, so the two calls can't be combined into one expression (evaluation order of
++        // function arguments/subexpressions in C++ is unspecified) - captured into a local first.
++        auto transitionShader = m_transitionShaderManager->RandomTransition();
++        auto transitionShaderIndex = m_transitionShaderManager->LastRandomTransitionIndex();
++        m_transition = std::make_unique<Renderer::PresetTransition>(transitionShader, m_softCutDuration, m_timeKeeper->GetFrameTime(), transitionShaderIndex);
+     }
+ }
+ 
++// PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): lets the host app read the currently
++// running preset transition's state (if any), so it can apply the same transition - same effect,
++// same timing, same random parameters - to content it composites outside of projectM's own
++// renderer (e.g. Prism's album art overlay) instead of guessing independently.
++auto ProjectM::IsPresetTransitionActive() const -> bool
++{
++    return m_transition != nullptr && m_transitioningPreset != nullptr;
++}
++
++auto ProjectM::PresetTransitionProgress() const -> double
++{
++    if (!m_transition)
++    {
++        return 0.0;
++    }
++    return m_transition->Progress(m_timeKeeper->GetFrameTime());
++}
++
++auto ProjectM::PresetTransitionShaderIndex() const -> int
++{
++    return m_transition ? m_transition->ShaderIndex() : -1;
++}
++
++auto ProjectM::PresetTransitionRandomValues() const -> std::array<int, 4>
++{
++    if (!m_transition)
++    {
++        return {0, 0, 0, 0};
++    }
++    auto values = m_transition->StaticRandomValues();
++    return {values.x, values.y, values.z, values.w};
++}
++
+ auto ProjectM::WindowWidth() -> int
+ {
+     return m_windowWidth;
+diff --git a/src/libprojectM/ProjectM.hpp b/src/libprojectM/ProjectM.hpp
+index 1d7f92683..ec51b3c3e 100644
+--- a/src/libprojectM/ProjectM.hpp
++++ b/src/libprojectM/ProjectM.hpp
+@@ -27,6 +27,7 @@
+ 
+ #include <Audio/PCM.hpp>
+ 
++#include <array>
+ #include <cstdint>
+ #include <istream>
+ #include <memory>
+@@ -186,6 +187,18 @@ public:
+ 
+     void SetWarpAnimSpeedMultiplier(float multiplier);
+ 
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): lets the host app read the
++    // currently running preset transition's state - which of the built-in transition shaders is
++    // playing, its progress, and its per-transition random parameters - so it can apply the exact
++    // same transition to content it composites outside of projectM's own renderer.
++    auto IsPresetTransitionActive() const -> bool;
++
++    auto PresetTransitionProgress() const -> double;
++
++    auto PresetTransitionShaderIndex() const -> int;
++
++    auto PresetTransitionRandomValues() const -> std::array<int, 4>;
++
+     auto AspectCorrection() const -> bool;
+ 
+     void SetAspectCorrection(bool enabled);
+diff --git a/src/libprojectM/ProjectMCWrapper.cpp b/src/libprojectM/ProjectMCWrapper.cpp
+index 09e1e75a8..5ff003e98 100644
+--- a/src/libprojectM/ProjectMCWrapper.cpp
++++ b/src/libprojectM/ProjectMCWrapper.cpp
+@@ -379,6 +379,35 @@ void projectm_set_warp_anim_speed_multiplier(projectm_handle instance, float mul
+     projectMInstance->SetWarpAnimSpeedMultiplier(multiplier);
+ }
+ 
++// PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md)
++bool projectm_get_preset_transition_active(projectm_handle instance)
++{
++    auto projectMInstance = handle_to_instance(instance);
++    return projectMInstance->IsPresetTransitionActive();
++}
++
++double projectm_get_preset_transition_progress(projectm_handle instance)
++{
++    auto projectMInstance = handle_to_instance(instance);
++    return projectMInstance->PresetTransitionProgress();
++}
++
++int32_t projectm_get_preset_transition_shader_index(projectm_handle instance)
++{
++    auto projectMInstance = handle_to_instance(instance);
++    return projectMInstance->PresetTransitionShaderIndex();
++}
++
++void projectm_get_preset_transition_random_values(projectm_handle instance, int32_t outValues[4])
++{
++    auto projectMInstance = handle_to_instance(instance);
++    auto values = projectMInstance->PresetTransitionRandomValues();
++    outValues[0] = values[0];
++    outValues[1] = values[1];
++    outValues[2] = values[2];
++    outValues[3] = values[3];
++}
++
+ void projectm_set_aspect_correction(projectm_handle instance, bool enabled)
+ {
+     auto projectMInstance = handle_to_instance(instance);
+diff --git a/src/libprojectM/Renderer/PresetTransition.cpp b/src/libprojectM/Renderer/PresetTransition.cpp
+index e7060861e..00d4471af 100644
+--- a/src/libprojectM/Renderer/PresetTransition.cpp
++++ b/src/libprojectM/Renderer/PresetTransition.cpp
+@@ -10,11 +10,12 @@ namespace Renderer {
+ 
+ constexpr double PI = 3.14159265358979323846;
+ 
+-PresetTransition::PresetTransition(const std::shared_ptr<Shader>& transitionShader, double durationSeconds, double transitionStartTime)
++PresetTransition::PresetTransition(const std::shared_ptr<Shader>& transitionShader, double durationSeconds, double transitionStartTime, int shaderIndex)
+     : m_mesh(VertexBufferUsage::StaticDraw)
+     , m_transitionShader(transitionShader)
+     , m_durationSeconds(durationSeconds)
+     , m_transitionStartTime(transitionStartTime)
++    , m_shaderIndex(shaderIndex) // PRISM_LOCAL_PATCH
+ {
+     m_mesh.SetRenderPrimitiveType(Mesh::PrimitiveType::TriangleStrip);
+ 
+diff --git a/src/libprojectM/Renderer/PresetTransition.hpp b/src/libprojectM/Renderer/PresetTransition.hpp
+index 1822811a7..2fe718ba8 100644
+--- a/src/libprojectM/Renderer/PresetTransition.hpp
++++ b/src/libprojectM/Renderer/PresetTransition.hpp
+@@ -25,10 +25,16 @@ public:
+      * @param transitionShader The transition shader program.
+      * @param durationSeconds Transition duration in seconds.
+      * @param transitionStartTime The time in seconds since start of projectM.
++     * @param shaderIndex PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): the shader's
++     *        index in TransitionShaderManager's list (TransitionShaderManager::
++     *        LastRandomTransitionIndex() at the moment this transition was created), so the host
++     *        app can identify which built-in transition this is - see ShaderIndex() below. -1 if
++     *        not known.
+      */
+     explicit PresetTransition(const std::shared_ptr<Shader>& transitionShader,
+                               double durationSeconds,
+-                              double transitionStartTime);
++                              double transitionStartTime,
++                              int shaderIndex = -1);
+ 
+     /**
+      * @brief Returns true if the transition is done.
+@@ -44,6 +50,20 @@ public:
+      */
+     auto Progress(double currentFrameTime) const -> double;
+ 
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): identifies which built-in
++    // transition shader this instance is using and its per-transition random parameters, so the
++    // host app can apply the same transition to content it composites outside of projectM's own
++    // renderer (e.g. an overlay layer) instead of guessing independently.
++    auto ShaderIndex() const -> int
++    {
++        return m_shaderIndex;
++    }
++
++    auto StaticRandomValues() const -> glm::ivec4
++    {
++        return m_staticRandomValues;
++    }
++
+     /**
+      * @brief Updates the transition variables and renders the shader quad to the current FBO.
+      * @param oldPreset A reference to the old (fading out) preset.
+@@ -77,6 +97,7 @@ private:
+     double m_durationSeconds{3.0};  //!< Transition duration in seconds.
+     double m_transitionStartTime{}; //!< Start time of this transition. Duration is measured from this point.
+     double m_lastFrameTime{};       //!< Time when the previous frame was rendered.
++    int m_shaderIndex{-1};          //!< PRISM_LOCAL_PATCH: index into TransitionShaderManager's shader list.
+ 
+     glm::ivec4 m_staticRandomValues{}; //!< Four random integers, remaining static during the whole transition.
+ 
+diff --git a/src/libprojectM/Renderer/TransitionShaderManager.cpp b/src/libprojectM/Renderer/TransitionShaderManager.cpp
+index 638e3c841..702d6b87e 100644
+--- a/src/libprojectM/Renderer/TransitionShaderManager.cpp
++++ b/src/libprojectM/Renderer/TransitionShaderManager.cpp
+@@ -20,10 +20,12 @@ auto TransitionShaderManager::RandomTransition() -> std::shared_ptr<Shader>
+ {
+     if (m_transitionShaders.empty())
+     {
++        m_lastRandomTransitionIndex = -1; // PRISM_LOCAL_PATCH
+         return {};
+     }
+ 
+-    return m_transitionShaders.at(m_mersenneTwister() % m_transitionShaders.size());
++    m_lastRandomTransitionIndex = static_cast<int>(m_mersenneTwister() % m_transitionShaders.size()); // PRISM_LOCAL_PATCH
++    return m_transitionShaders.at(m_lastRandomTransitionIndex);
+ }
+ 
+ auto TransitionShaderManager::CompileTransitionShader(const std::string& shaderBodyCode) -> std::shared_ptr<Shader>
+diff --git a/src/libprojectM/Renderer/TransitionShaderManager.hpp b/src/libprojectM/Renderer/TransitionShaderManager.hpp
+index cc5c3b0ed..eb3fd6940 100644
+--- a/src/libprojectM/Renderer/TransitionShaderManager.hpp
++++ b/src/libprojectM/Renderer/TransitionShaderManager.hpp
+@@ -21,6 +21,15 @@ public:
+      */
+     auto RandomTransition() -> std::shared_ptr<Shader>;
+ 
++    // PRISM_LOCAL_PATCH (see Prism/Vendor/projectm-VERSION.md): index into m_transitionShaders
++    // picked by the most recent RandomTransition() call, so the host app can identify which
++    // built-in transition is currently playing (there's no other way to observe this - the choice
++    // is otherwise fully internal). -1 before the first call or if the shader list is empty.
++    auto LastRandomTransitionIndex() const -> int
++    {
++        return m_lastRandomTransitionIndex;
++    }
++
+ private:
+     /**
+      * @brief Compiles a single transition shader program.
+@@ -32,6 +41,8 @@ private:
+ 
+     std::random_device m_randomDevice; //!< Seed for the random number generator
+     std::mt19937 m_mersenneTwister; //!< Random engine to select shader
++
++    int m_lastRandomTransitionIndex{-1}; //!< PRISM_LOCAL_PATCH: index picked by the last RandomTransition() call.
+ };
+ 
+ } // namespace Renderer

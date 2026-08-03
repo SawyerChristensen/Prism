@@ -54,6 +54,33 @@ NS_ASSUME_NONNULL_BEGIN
 /// PerPixelMesh.cpp. 1.0 = unmodified. Safe to call every frame.
 - (void)setWarpAnimSpeedMultiplier:(float)multiplier NS_SWIFT_NAME(setWarpAnimSpeedMultiplier(_:));
 
+/// Whether projectM is currently blending the previous preset's render into the new one
+/// (PRISM_LOCAL_PATCH - see Prism/Vendor/projectm-VERSION.md's "exposed preset-transition state"
+/// entry). That blend happens entirely inside projectM's own render pass, so this - and the four
+/// properties below - are the only way to observe it from outside: ProjectMCoordinator polls these
+/// every frame to drive its own album-art overlay through the *exact same* transition (not just
+/// the same kind of transition) in lockstep with whatever's actually happening to the preset.
+@property(nonatomic, readonly) BOOL presetTransitionActive;
+
+/// The current transition's linear progress, 0...1. 0 (not `presetTransitionActive`) when no
+/// transition is running.
+@property(nonatomic, readonly) double presetTransitionProgress;
+
+/// Which of projectM's 6 built-in transition shaders this transition is using - see
+/// Renderer::TransitionShaderManager's construction order (Vendor/projectm/src/libprojectM/
+/// Renderer/TransitionShaderManager.cpp): 0 Circle, 1 Plasma, 2 SimpleBlend, 3 Sweep, 4 Warp,
+/// 5 ZoomBlur. -1 when no transition is running.
+@property(nonatomic, readonly) int32_t presetTransitionShaderIndex;
+
+/// The current transition's four per-transition random seed values (each built-in transition
+/// shader reads these as `iRandStatic` to pick e.g. a random wipe angle or blend width - see
+/// Renderer/TransitionShaders/TransitionShaderHeaderGlsl330.frag), held fixed for its whole
+/// duration. All 0 when no transition is running.
+@property(nonatomic, readonly) int32_t presetTransitionRandomSeedA;
+@property(nonatomic, readonly) int32_t presetTransitionRandomSeedB;
+@property(nonatomic, readonly) int32_t presetTransitionRandomSeedC;
+@property(nonatomic, readonly) int32_t presetTransitionRandomSeedD;
+
 @end
 
 NS_ASSUME_NONNULL_END
