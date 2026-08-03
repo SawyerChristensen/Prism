@@ -13,7 +13,7 @@
   - [ ] Album art frames limits how much they can warp. There is a frame around every album that clips the edges. They should have no frame
   - [ ] The intro preset does not transition well into the first song once it is played. the first song simply flashes in. we should always wait until we have the next album art retrieved to initiate a transition into the next preset. this goes for the intro preset on application start transitioning into the first preset and for every other transition in between songs.
   - [ ] Some transitions seem to have no effect and instantly despawn/spawn to the next one
-    - [ ] The expanding/shrinking circle transition seem to do this sometimes^
+    - [ ] The expanding circle transition seem to do this sometimes^
   - [ ] Remove dead AlbumArtIntroStyle code (ProjectMCoordinator.swift) — the forward/reverseScale/slideRight/slideDown intro system is fully disabled ("Album transition code temporarily disabled" blocks) and no longer wired into the shader at all.
 
 ### Song-Preset Matching
