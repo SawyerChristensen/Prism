@@ -559,3 +559,47 @@ per this project's testing policy, `xcodebuild test`/launching the real Music.ap
 here — see `TO DO.md` for what's still needed: installing the built bundle and confirming it
 actually renders inside a live Music.app, plus shipping real presets into the plugin's empty
 `Presets/` folder).
+
+### 2026-08-03 — a second unwatchably-slow preset (num_inst, not pixel shaders), and a runtime watchdog
+User-reported: "amandio c - the climbing - shf fab slow downward headfirst crawl to psychological
+terminus" renders at a couple fps, and `MilkdropPresetComplexityAnalyzer` — added 2026-07-27 for
+the *first* "amandio c" slow preset — wasn't catching it. Two separate reasons:
+
+1. That analyzer only ever scanned `warp_N=`/`comp_N=` (the pixel shader). This preset's real cost
+   is `shapecode_2`/`shapecode_3` at `num_inst=1024` each — ~2,174 total shape instances/frame,
+   each running ~85-100 trig-heavy `shape_N_per_frame` equation lines, every frame. Pure CPU-side
+   expression-evaluation cost with no pixel shader involved at all; the analyzer had zero
+   visibility into `shapecode_N_num_inst`/`shape_N_per_frame` (or the wave equivalent,
+   `wavecode_N_samples`/`wave_N_per_point`).
+2. Even the pixel-shader checks it does run don't hold up: the noise lookup here is
+   `tex2D(sampler_noise_hq, ...)`, not `tex3D`, and the neighbor-sample check looked for the exact
+   substring `"getblur("` — which never appears in real presets, since the actual MilkDrop/
+   projectM intrinsics are always numbered (`GetBlur1`/`GetBlur2`/`GetBlur3`). This preset's `comp`
+   shader calls all three and still scored 0 neighbor samples. That half of the check was
+   effectively dead code against any real-world corpus.
+
+Fixed both: the neighbor-sample regex now matches `getblur\d*\(` (still requires 3+ combined
+GetPixel/GetBlur calls to flag, per the original heuristic), and a new
+`equationEvaluationsPerFrame` scan sums `num_inst × per_frame line count` across every enabled
+shapecode and `samples × per_point line count` across every enabled wavecode, flagging anything
+≥50,000 (this preset totals ~233,000; typical presets are low hundreds to low thousands). Added
+`MilkdropPresetComplexityAnalyzerTests.swift` covering both fixed paths plus the original tex3D/
+GetPixel cases — verified via `xcodebuild build-for-testing` (compiles) and a standalone `swift`
+script exercising the analyzer directly against real fixture text, including this exact preset
+file, rather than `xcodebuild test` (which hosts `PrismTests` inside `Prism.app` — see this
+project's testing policy in `PROJECT.md`'s own file guide).
+
+That static-scan approach is still fundamentally guesswork over a Turing-complete expression
+language, though — this is the *second* pattern it's needed patching for, and it only ever runs
+before a load on paths that consult it (sequential stepping/auto-cycle/song-matching); explicit
+loads (⌘O, drag-and-drop, history, launch-restore) bypass it by design (see the 2026-07-27 entry).
+Rather than keep chasing new patterns, `ProjectMCoordinator` also gained a runtime watchdog
+(`updateSlowPresetWatchdog`, called from `updateDisplayFPS` where the existing `smoothedFPS` EMA
+already lives): if measured fps stays below 15 for 2.5 seconds straight, the current preset —
+whatever it is, however it was loaded — gets reported once via a new
+`ProjectMVisualizerModel.slowPresetDetected` property, which `ContentView` consumes the same way
+it already consumes `presetLoadError`: step to the next preset and clear the flag. This is
+empirical rather than predictive, so it catches every real case (including this one, and whatever
+the next one turns out to be) regardless of cause or load path — the static analyzer stays in
+place as a fast pre-filter for the load paths that already used it, but the watchdog is now the
+actual backstop.

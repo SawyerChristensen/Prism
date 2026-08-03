@@ -21,6 +21,14 @@ final class ProjectMVisualizerModel {
     /// ProjectMCoordinator once per frame — read by ContentView's on-screen performance counter.
     var displayFPS: Double = 60
 
+    /// Set once by ProjectMCoordinator's runtime watchdog (see updateSlowPresetWatchdog) when
+    /// displayFPS has stayed unwatchably low for several seconds straight — the empirical backstop
+    /// for MilkdropPresetComplexityAnalyzer's static text guard, which only ever runs before a
+    /// load and only on paths that consult it (sequential stepping/auto-cycle/song-matching, not
+    /// explicit ⌘O/drag-and-drop/history/launch-restore). ContentView reacts by stepping to the
+    /// next preset and clearing this back to nil, same as presetLoadError.
+    var slowPresetDetected: URL?
+
     /// Multiplier on top of each preset's own `fWarpAnimSpeed`, adjusted via ContentView's
     /// up/down arrow handling and applied every frame by ProjectMCoordinator
     /// (engine.setWarpAnimSpeedMultiplier) — see PRISM_LOCAL_PATCH in

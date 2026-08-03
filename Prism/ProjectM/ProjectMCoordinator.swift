@@ -285,6 +285,13 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var lastFrameTimestamp: CFTimeInterval?
     private var smoothedFPS: Double = 60
 
+    // Runtime slow-preset watchdog state - see updateSlowPresetWatchdog.
+    private var watchdogPresetURL: URL?
+    private var slowFrameAccumulatedSeconds: Double = 0
+    private var reportedSlowPresetURL: URL?
+    private static let slowFPSThreshold: Double = 15
+    private static let slowPresetGracePeriodSeconds: Double = 2.5
+
     init(audioEngine: CoreAudioTapEngine) {
         engine = ProjectMEngine()
         self.audioEngine = audioEngine
@@ -731,6 +738,36 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // presets would still animate ~3x too fast on a 120Hz display. See PerFrameContext.cpp's
         // `fps`/`frame` builtins for why this only fixes presets that actually use `fps`.
         engine?.setTargetFPS(Int32(max(1, min(1000, smoothedFPS.rounded()))))
+        updateSlowPresetWatchdog(dt: dt)
+    }
+
+    /// Empirical backstop for MilkdropPresetComplexityAnalyzer's static text-based guard - any
+    /// such heuristic will always miss patterns it doesn't already know to look for (the
+    /// 1024-instance shapecode that made "amandio c - the climbing ..." unwatchable isn't visible
+    /// to a warp_N=/comp_N= pixel-shader scan at all, and the guard is also only consulted on
+    /// sequential-stepping/auto-cycle/song-matching loads to begin with - explicit ⌘O/drag-and-
+    /// drop/history/launch-restore bypass it entirely by design). This instead reacts to what's
+    /// actually being measured every frame: if smoothedFPS stays under slowFPSThreshold for
+    /// slowPresetGracePeriodSeconds straight, the current preset is unwatchable regardless of why
+    /// or how it was loaded, and gets reported once via model.slowPresetDetected so ContentView
+    /// can step past it. The grace period absorbs the transient dip every fresh preset load causes
+    /// (shader compile, transition ramp-up) without needing to special-case it here.
+    private func updateSlowPresetWatchdog(dt: Double) {
+        guard let currentURL = lastLoadedPresetURL else { return }
+        if currentURL != watchdogPresetURL {
+            watchdogPresetURL = currentURL
+            slowFrameAccumulatedSeconds = 0
+        }
+        guard smoothedFPS < Self.slowFPSThreshold else {
+            slowFrameAccumulatedSeconds = 0
+            return
+        }
+        slowFrameAccumulatedSeconds += dt
+        guard slowFrameAccumulatedSeconds >= Self.slowPresetGracePeriodSeconds else { return }
+        guard reportedSlowPresetURL != currentURL else { return }
+        reportedSlowPresetURL = currentURL
+        NSLog("ProjectMCoordinator: preset stuck at ~\(Int(smoothedFPS.rounded()))fps for \(String(format: "%.1f", slowFrameAccumulatedSeconds))s, flagging as slow: \(currentURL.lastPathComponent)")
+        model?.slowPresetDetected = currentURL
     }
 
     private static func buildPipelineState(device: MTLDevice, pixelFormat: MTLPixelFormat) -> MTLRenderPipelineState? {

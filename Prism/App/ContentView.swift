@@ -415,6 +415,17 @@ struct ContentView: View {
             PrismDebug.trace("preset: late-arriving match for \"\(nowPlaying.trackName ?? "?")\" - upgrading from fallback")
             loadBestMatchedPreset(for: songTraits)
         }
+        // ProjectMCoordinator's runtime watchdog (updateSlowPresetWatchdog) - fires when measured
+        // fps has stayed unwatchably low for several seconds straight, regardless of how the
+        // preset was loaded (unlike MilkdropPresetComplexityAnalyzer's static pre-load scan, this
+        // also catches explicit ⌘O/drag-and-drop/history/launch-restore loads). Steps forward the
+        // same way auto-cycle would, then clears the flag so it can fire again for the next preset.
+        .onChange(of: visualizerModel.slowPresetDetected) { _, newValue in
+            guard let newValue else { return }
+            PrismDebug.trace("preset: runtime watchdog flagged \(newValue.lastPathComponent) as too slow - advancing")
+            visualizerModel.slowPresetDetected = nil
+            loadNextSequentialPreset()
+        }
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(
