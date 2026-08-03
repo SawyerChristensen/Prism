@@ -9,11 +9,12 @@
   - [ ] The extension should skip the starting screen — cause not confirmed yet (likely projectM's own built-in default/idle state showing for a moment before the first `loadPresetAtURL` call takes effect); untested in a real running Music.app
 - [ ] Better album overlays
   - [x] Different layers of the album should be on different layers of the visualizer
-  - [ ] Improve chromatic aberation
-  - [ ] Make base reactivity mellow out of if the song is a relaxing one
-  - [ ] Improve the test mask! Sometimes theres artifcats around the edges not connected to the text (see Once Twice Melody)
+  - [x] Improve chromatic aberation
+  - [x] Improve the test mask! Sometimes theres artifcats around the edges not connected to the text (see Once Twice Melody)
+  - [ ] Make base reactivity react less to mids and more to bass
   - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
 - [ ] Make own presets?
+  - [ ] TonyMilkdrop - Vroom!!! [MashUp]   - that takes an input color and changes its colors to that color and nearby colors
 - [ ] Slow down all visuals
   - [ ] Most presets take the previous frame and do some math to it so a higher frame rate (such as 120) actually speeds up all animations buy 2x. Going to 60fps does not reduce the reactivity of the audio, but it DOES decrease the speed at which the preset animates.
   - [ ] Set preferred fps to whatever the device's max refresh rate is

@@ -67,21 +67,27 @@ extension NSImage {
     }
 
     /// Returns a copy of this image with only the actual glyph pixels within `lines`' bounding
-    /// boxes kept opaque — everything else, including the *background fill inside each padded
-    /// box* (not just outside it), goes transparent. This is a real ink/background separation
+    /// boxes kept opaque — everything else, including the *background fill inside each box*
+    /// (not just outside it), goes transparent. This is a real ink/background separation
     /// (Otsu's method — a standard automatic-thresholding technique — run independently per line
     /// on that line's own local luminance histogram), not a rectangular cutout: an earlier version
-    /// of this function just pasted back the whole padded box, background fill and all, which
-    /// looked like a solid block sitting on the art rather than clean text.
+    /// of this function just pasted back the whole box, background fill and all, which looked
+    /// like a solid block sitting on the art rather than clean text.
     ///
     /// Per-line (not one global threshold) because different lines can sit on different local
     /// backgrounds within the same cover (e.g. one line over a dark patch, another over a lighter
     /// one) — a single whole-image threshold couldn't adapt to both.
     ///
+    /// `padding` defaults to 0 (Vision's own box, unexpanded) — an earlier version padded 15% to
+    /// give Otsu more background sample around tight boxes, but that padding was wide enough to
+    /// pull in nearby non-text art (e.g. a decorative rule flanking a title) that shared the ink's
+    /// luminance range, which Otsu then kept as "text" since it has no notion of glyph shape,
+    /// just minority-luminance-population. Left as a parameter in case a future cover needs it.
+    ///
     /// Takes precomputed lines rather than running OCR itself so callers that also want the
     /// recognized strings (see NowPlayingManager) don't pay for Vision's text request twice. Nil
     /// if `lines` is empty or this image has no usable CGImage representation.
-    nonisolated func maskingOutBackgroundByText(_ lines: [RecognizedTextLine], padding: CGFloat = 0.15) -> NSImage? {
+    nonisolated func maskingOutBackgroundByText(_ lines: [RecognizedTextLine], padding: CGFloat = 0) -> NSImage? {
         guard !lines.isEmpty, let cgImage = self.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let width = cgImage.width, height = cgImage.height
         guard width > 0, height > 0 else { return nil }
@@ -139,8 +145,7 @@ extension NSImage {
 
             let threshold = Self.otsuThreshold(histogram: histogram, totalCount: sampleCount)
             // Text ink is assumed to be the minority population — thin glyph strokes cover less
-            // area than the box's own background fill, even after padding trims some of the
-            // surrounding margin.
+            // area than the box's own background fill.
             let belowCount = histogram[0...threshold].reduce(0, +)
             let textIsAtOrBelowThreshold = belowCount <= sampleCount - belowCount
 
