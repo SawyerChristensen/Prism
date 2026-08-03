@@ -316,7 +316,19 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// clears presetTransitionActive), snapshots the "old" side of the album-art blend - see
     /// transitionOldBackgroundDetailTexture's own doc comment. Everything else about the transition
     /// (its progress) is read fresh into the uniforms every frame in draw(in:) directly from the
-    /// engine - see PresetTransitionEffect and ProjectMEngine's presetTransition* properties.
+    /// engine - see PresetTransitionEffect and ProjectMEngine's presetTransition* properties - so the
+    /// album art's own reveal always stays in lockstep with the wave's, start to finish, with no
+    /// separate clock of its own.
+    ///
+    /// Must run before advanceAlbumArtAnimation in draw(in:) - see that call site's own comment.
+    /// ContentView only ever triggers the auto-advance-on-track-change preset load
+    /// (loadNextSequentialPreset, from the trackChangeToken/artworkSettledToken onChange - see
+    /// NowPlayingManager.artworkSettledToken's own doc comment) once the new track's artwork has
+    /// already finished loading, so by the time this function sees a *new* identity here, the new
+    /// art is already sitting in NowPlayingManager's public artwork properties, about to be fed into
+    /// `latest*Image` this same SwiftUI update and promoted by advanceAlbumArtAnimation - possibly
+    /// this same frame. Snapshotting "old" here first is what keeps that promotion from clobbering it
+    /// before it's captured.
     private func updatePresetTransitionSnapshotIfNeeded() {
         guard let engine, engine.presetTransitionActive else {
             lastPresetTransitionIdentity = nil
@@ -332,6 +344,18 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         transitionOldBackgroundDetailTexture = currentBackgroundDetailTexture
         transitionOldSubjectTexture = currentSubjectOnlyTexture
         transitionOldTextTexture = currentTextOnlyTexture
+        // Logging only, to verify in practice (see ContentView's artworkSettledToken-gated preset
+        // advance) whether album art is actually ready by the time a transition starts: if
+        // latestRawImage already differs from currentRawImage here, this frame's advanceAlbumArtAnimation
+        // (which runs right after this function returns) is about to promote *during* this transition
+        // rather than having already settled before it - i.e. a real old-vs-new wipe either way, but
+        // worth distinguishing "already current" from "changing right on the first frame" while
+        // confirming this fix actually closes the race.
+        let artAlreadyCurrent = latestRawImage === currentRawImage
+        let artStatus = artAlreadyCurrent
+            ? "already matches current track (no-op or already settled)"
+            : "about to promote new art THIS transition (racing)"
+        NSLog("ProjectMCoordinator: new preset transition (shader=\(identity.shaderIndex)) - album art \(artStatus)")
     }
 
     /// Real projectM's own iRandStatic values are raw std::mt19937 output reinterpreted as signed
@@ -397,8 +421,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let now = CACurrentMediaTime()
         updateDisplayFPS(now: now)
         engine.setWarpAnimSpeedMultiplier(Float(model?.warpAnimSpeedMultiplier ?? 1.0))
-        advanceAlbumArtAnimation(device: device, now: now)
+        // Must run before advanceAlbumArtAnimation: a new transition's "old" snapshot has to be
+        // taken from whatever current*Texture still is *before* this same frame's art promotion (if
+        // any) could overwrite it - see updatePresetTransitionSnapshotIfNeeded's own doc comment.
         updatePresetTransitionSnapshotIfNeeded()
+        advanceAlbumArtAnimation(device: device, now: now)
 
         let width = Int(view.drawableSize.width)
         let height = Int(view.drawableSize.height)

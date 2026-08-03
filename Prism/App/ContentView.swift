@@ -351,11 +351,16 @@ struct ContentView: View {
         // (ProjectMCoordinator.updateModelIfNeeded's smoothTransition), and that same preset load
         // also drives ProjectMCoordinator's own preset-transition album-art effect (see its doc
         // comments), so nothing else needs to be triggered here for the art to follow along.
+        // Keyed off `artworkSettledToken`, not `trackChangeToken` - see the former's own doc comment:
+        // this preset load is what starts the transition ProjectMCoordinator times its album-art
+        // reveal against, so it needs to fire once the *art* is actually ready, not the instant the
+        // track metadata itself changes (which can be well before the art finishes loading) - the
+        // two only race apart when the track and the art it's waiting on are already in sync.
         // `oldValue != 0` skips the very first token change (0 -> the first track detected this
         // launch) — that's "music started playing," not "a song ended," and this launch's own
         // preset restore (onAppear/waitForMusicSignal) already owns picking the very first preset;
         // racing this against it would fight over presetURL.
-        .onChange(of: nowPlaying.trackChangeToken) { oldValue, _ in
+        .onChange(of: nowPlaying.artworkSettledToken) { oldValue, _ in
             guard oldValue != 0, presetLibrary.isConfigured else { return }
             loadNextSequentialPreset()
         }

@@ -234,14 +234,44 @@ final class NowPlayingManager {
     // actually changes, rather than on every 2-second poll.
     private var currentTrackKey: String?
 
+    // When the artwork fetch driving the *current* pending artworkSettledToken bump actually
+    // started - logging only (see the settle-latency log lines in loadSpotifyArtwork/
+    // loadArtworkFromiTunes), so real-world fetch/Vision latency can be read straight out of the
+    // system log rather than guessed at.
+    private var artworkFetchStartTime: Date?
+
     /// Bumped every time `refresh()` detects an actual track change, synchronously, before any
     /// artwork fetch for that change (if any) has even started - metadata-only (track/artist/album
-    /// strings), so there's nothing to wait on. ContentView's "select a new preset on track change"
-    /// `onChange` keys off this - preset selection doesn't need to wait on artwork, and
-    /// ProjectMCoordinator's own preset-transition album-art effect (see its own doc comments)
-    /// reacts automatically to whatever preset that selection loads, so nothing else needs to key
-    /// off this directly.
+    /// strings), so there's nothing to wait on. Exposed for anything that only cares "the track
+    /// changed" and doesn't need to wait for artwork - see `artworkSettledToken` below for the one
+    /// that does.
     private(set) var trackChangeToken = 0
+
+    /// Bumped once per track change, but only once whatever artwork will actually be shown for it is
+    /// truly final - either immediately, synchronously, right alongside `trackChangeToken` (same-
+    /// album track change - see `refresh()`'s own comment on why that case leaves the cached artwork
+    /// untouched, so there's nothing to wait for), or later, once the fetch/Vision/OCR pipeline for a
+    /// genuinely new album's art actually finishes - success *or* failure, so a network hiccup can't
+    /// leave this stuck low forever (see `settleArtwork`'s own doc comment).
+    ///
+    /// On the success path, loadSpotifyArtwork/loadArtworkFromiTunes call `settleArtwork` as the
+    /// *last statement inside the same* `MainActor.run` block that updates `cachedRawArtwork`/calls
+    /// `recomputeDerivedAlbumArtLayers()` - not a separate hop afterwards. That ordering is load-
+    /// bearing: `@Observable` publishes each mutation as it happens, and if the token bump landed in
+    /// a later, separate `MainActor.run`/`Task`, SwiftUI could (and did, in practice) re-render off
+    /// the artwork mutation alone first - the new art would already be sitting in `rawArtwork` and get
+    /// promoted into ProjectMCoordinator's `current*Texture` with no transition active yet, popping in
+    /// unanimated, before this token ever bumped to trigger the transition that was supposed to reveal
+    /// it.
+    ///
+    /// ContentView's "select a new preset on track change" `onChange` keys off *this*, not
+    /// `trackChangeToken` - triggering the preset load (and so, in lockstep, ProjectMCoordinator's own
+    /// preset-transition album-art effect - see that type's own doc comment) only once new art is
+    /// actually sitting in `rawArtwork`/`subjectOnlyArtwork`/etc. is what lets
+    /// `updatePresetTransitionSnapshotIfNeeded`'s "old" snapshot and the live "new" side genuinely
+    /// differ from the first frame of the transition, instead of racing an in-flight fetch that might
+    /// still be showing the previous track's art when the transition's own reveal window passes.
+    private(set) var artworkSettledToken = 0
 
     init() {
         loadArtworkPreferences()
@@ -298,7 +328,15 @@ final class NowPlayingManager {
                             // way, so it always falls through to a normal fetch.
                             let newAlbumKey = Self.albumKey(artist: info.artist, album: info.album)
                             if newAlbumKey == nil || newAlbumKey != self.currentAlbumKey {
+                                logger.debug("track change: new album (key=\(newAlbumKey ?? "nil", privacy: .public)) - fetching artwork, artworkSettledToken will wait")
+                                self.artworkFetchStartTime = Date()
                                 self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                            } else {
+                                // Nothing to wait for - the art on screen already matches this track,
+                                // so the settle signal can fire in the same tick as the track change
+                                // itself (see artworkSettledToken's own doc comment).
+                                logger.debug("track change: same album (key=\(newAlbumKey ?? "nil", privacy: .public)) - artwork already settled, no fetch needed")
+                                self.artworkSettledToken += 1
                             }
                         }
                     }
@@ -425,6 +463,7 @@ final class NowPlayingManager {
     // AppleScript round-trip (same hazard as queryNowPlaying), so the whole thing — script call
     // included — runs detached, not just the network fetch.
     private func loadSpotifyArtwork() {
+        let fetchStart = Date()
         Task.detached(priority: .userInitiated) { [weak self] in
             // `self?.x = ...` inside the nested MainActor.run closure below trips "reference to
             // captured var 'self' in concurrently-executing code" — a weak-optional capture reads
@@ -441,11 +480,16 @@ final class NowPlayingManager {
             guard let result = Self.runScript(script, appName: "Spotify"),
                   let urlString = result.stringValue,
                   let url = URL(string: urlString) else {
+                // No artwork mutation happened on this path - settling on its own is safe (there's
+                // nothing for it to race against). See artworkSettledToken's own doc comment for why
+                // this must fire even on failure.
+                await MainActor.run { self.settleArtwork(source: "Spotify", startedAt: fetchStart) }
                 return
             }
 
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = NSImage(data: data) else {
+                await MainActor.run { self.settleArtwork(source: "Spotify", startedAt: fetchStart) }
                 return
             }
 
@@ -467,6 +511,13 @@ final class NowPlayingManager {
                 self.cachedColors = colors
                 self.cachedSubjectMask = subjectMasked
                 self.recomputeDerivedAlbumArtLayers()
+                // Must be in this *same* MainActor.run block, not a separate hop after it returns -
+                // otherwise SwiftUI can (and, observed in practice, does) re-render off the artwork
+                // mutation above before this bump ever reaches ContentView's onChange, so the new art
+                // pops in on its own and the preset transition it triggers moments later finds
+                // old==new already and plays with no visible album-art effect at all. See
+                // artworkSettledToken's own doc comment.
+                self.settleArtwork(source: "Spotify", startedAt: fetchStart)
             }
         }
     }
@@ -485,7 +536,14 @@ final class NowPlayingManager {
     // sources (like Spotify) that don't expose it — in the latter case `updateArtwork` is
     // false so this can't overwrite artwork/colors already fetched from the real source.
     private func loadArtworkFromiTunes(artist: String, album: String, updateArtwork: Bool) {
-        guard !album.isEmpty || !artist.isEmpty else { return }
+        let fetchStart = Date()
+        // Only the updateArtwork:true (Music) path owns settling artworkSettledToken - the
+        // updateArtwork:false (Spotify genre-only) call never touches artwork, so it must never
+        // touch the settle signal either (loadSpotifyArtwork, run alongside it, already owns that).
+        guard !album.isEmpty || !artist.isEmpty else {
+            if updateArtwork { settleArtwork(source: "iTunes", startedAt: fetchStart) }
+            return
+        }
 
         var components = URLComponents(string: "https://itunes.apple.com/search")
         components?.queryItems = [
@@ -493,13 +551,22 @@ final class NowPlayingManager {
             URLQueryItem(name: "entity", value: "album"),
             URLQueryItem(name: "limit", value: "1"),
         ]
-        guard let url = components?.url else { return }
+        guard let url = components?.url else {
+            if updateArtwork { settleArtwork(source: "iTunes", startedAt: fetchStart) }
+            return
+        }
 
         Task { [weak self] in
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let response = try? JSONDecoder().decode(iTunesSearchResponse.self, from: data),
                   let firstResult = response.results.first, // 👈 Grab the whole result first
                   let thumbURL = firstResult.artworkUrl100 else {
+                // No artwork mutation happened on this path (regardless of updateArtwork) - settling
+                // on its own is safe here, unlike the success path below. See artworkSettledToken's
+                // own doc comment for why this must fire even on failure.
+                if updateArtwork {
+                    await MainActor.run { self?.settleArtwork(source: "iTunes", startedAt: fetchStart) }
+                }
                 return
             }
 
@@ -517,6 +584,7 @@ final class NowPlayingManager {
             guard let artURL = URL(string: highResURL),
                   let (imageData, _) = try? await URLSession.shared.data(from: artURL),
                   let image = NSImage(data: imageData) else {
+                await MainActor.run { self?.settleArtwork(source: "iTunes", startedAt: fetchStart) }
                 return
             }
 
@@ -540,8 +608,35 @@ final class NowPlayingManager {
                 self?.cachedColors = colors
                 self?.cachedSubjectMask = subjectMasked
                 self?.recomputeDerivedAlbumArtLayers()
+                // Must be in this *same* MainActor.run block - see loadSpotifyArtwork's matching
+                // comment for why a separate hop after this block returns lets SwiftUI re-render off
+                // the artwork mutation above before the settle bump ever lands.
+                self?.settleArtwork(source: "iTunes", startedAt: fetchStart)
             }
         }
+    }
+
+    /// Bumps `artworkSettledToken` (see its own doc comment) and logs how long the just-finished
+    /// fetch/Vision/OCR pipeline actually took, measured against `artworkFetchStartTime` (set once,
+    /// in `refresh()`, when the fetch that's *currently* pending was kicked off) - not `startedAt`
+    /// itself, which is really just this specific call's own local timing and, for the Spotify case,
+    /// races the separate genre-only iTunes lookup that shares the same `loadArtwork` call. Called
+    /// from whichever of loadSpotifyArtwork/loadArtworkFromiTunes(updateArtwork: true) actually owns
+    /// updating artwork for this fetch, on every exit path - success or failure - so a network
+    /// hiccup can never leave ContentView's preset-advance-on-track-change waiting forever.
+    ///
+    /// Deliberately *not* `@MainActor` (unlike most state mutation in this file, which stays plain/
+    /// nonisolated and relies on `await MainActor.run` hops at call sites instead - see e.g.
+    /// `applyRecomposited`) - this is called both from contexts already known to be on the main
+    /// actor at runtime but not statically annotated as such (loadArtworkFromiTunes's own synchronous
+    /// early-return guards) and from genuine background-thread contexts that must hop first (the
+    /// `Task { @MainActor in ... }` wrapping at this function's other two call sites) - marking it
+    /// `@MainActor` would make the former fail to compile.
+    private func settleArtwork(source: String, startedAt: Date) {
+        let elapsedThisCall = Date().timeIntervalSince(startedAt)
+        let elapsedSinceTrackChange = artworkFetchStartTime.map { Date().timeIntervalSince($0) }
+        logger.debug("artwork settled via \(source, privacy: .public) - this call took \(elapsedThisCall, format: .fixed(precision: 2))s, \(elapsedSinceTrackChange.map { String(format: "%.2f", $0) } ?? "?", privacy: .public)s since track change")
+        artworkSettledToken += 1
     }
 
     /// Turns `includesTextOverlay` off when `lines` is nothing but the RIAA Parental Advisory
