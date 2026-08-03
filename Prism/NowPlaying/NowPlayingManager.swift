@@ -153,13 +153,10 @@ final class NowPlayingManager {
     /// nil if ReccoBeats' catalog doesn't have a match. Reset to nil on every track change (unlike
     /// artwork, this is keyed to the *track*, not the album, so it can't be left over from a
     /// previous song on the same record the way stale album art would at least still be correct).
+    /// Written only by `commitIfReady()`, alongside `trackReadySettledToken` bumping — see that
+    /// token's own doc comment for why this can't just be assigned the instant the ReccoBeats
+    /// lookup resolves.
     private(set) var songTraits: SongAudioTraits?
-    /// Bumped once per track once the ReccoBeats lookup for it has settled — success, cache hit,
-    /// cached/fresh miss, or outright failure all count as "settled" (same "must fire even on
-    /// failure" rule as `artworkSettledToken`, so a network hiccup can't leave a matched-preset
-    /// swap waiting forever). ContentView keys its Phase 2 "swap to the best-matched preset" step
-    /// off this, separately from Phase 1's instant fallback pick on `artworkSettledToken`.
-    private(set) var songTraitsSettledToken = 0
     private let songAudioTraitsCache = SongAudioTraitsCache()
     private(set) var sourceApp: String?
     private(set) var albumBackgroundColor: NSColor?
@@ -247,44 +244,68 @@ final class NowPlayingManager {
     // actually changes, rather than on every 2-second poll.
     private var currentTrackKey: String?
 
-    // When the artwork fetch driving the *current* pending artworkSettledToken bump actually
-    // started - logging only (see the settle-latency log lines in loadSpotifyArtwork/
-    // loadArtworkFromiTunes), so real-world fetch/Vision latency can be read straight out of the
-    // system log rather than guessed at.
+    // When the artwork fetch driving the *current* pending commit actually started - logging only
+    // (see the settle-latency log lines in loadSpotifyArtwork/loadArtworkFromiTunes), so real-world
+    // fetch/Vision latency can be read straight out of the system log rather than guessed at.
     private var artworkFetchStartTime: Date?
 
     /// Bumped every time `refresh()` detects an actual track change, synchronously, before any
-    /// artwork fetch for that change (if any) has even started - metadata-only (track/artist/album
+    /// artwork/traits fetch for that change has even started - metadata-only (track/artist/album
     /// strings), so there's nothing to wait on. Exposed for anything that only cares "the track
-    /// changed" and doesn't need to wait for artwork - see `artworkSettledToken` below for the one
-    /// that does.
+    /// changed" and doesn't need to wait for artwork or traits - see `trackReadySettledToken` below
+    /// for the one that does. Also doubles as the "ready gate" generation counter (see
+    /// `readyGateGeneration`) - every staging/commit function below guards against a stale
+    /// generation the same way `loadSongTraits`'s own `generation` capture always has.
     private(set) var trackChangeToken = 0
 
-    /// Bumped once per track change, but only once whatever artwork will actually be shown for it is
-    /// truly final - either immediately, synchronously, right alongside `trackChangeToken` (same-
-    /// album track change - see `refresh()`'s own comment on why that case leaves the cached artwork
-    /// untouched, so there's nothing to wait for), or later, once the fetch/Vision/OCR pipeline for a
-    /// genuinely new album's art actually finishes - success *or* failure, so a network hiccup can't
-    /// leave this stuck low forever (see `settleArtwork`'s own doc comment).
+    /// Staged inputs to a pending commit - the artwork-phase result (nil if this track's art hasn't
+    /// changed, or the fetch failed and the previous track's art is staying up) and the traits-phase
+    /// result, held here rather than written straight to `cachedRawArtwork`/`songTraits` until
+    /// `commitIfReady()` actually promotes them - see `trackReadySettledToken`'s own doc comment for
+    /// why. `nil` `stagedArtwork.result` still means "artwork phase is done", distinct from
+    /// `artworkPhaseSettled == false` meaning "still waiting" - see `StagedArtwork`.
+    private struct StagedArtwork {
+        let artwork: NSImage
+        let albumArtText: [RecognizedTextLine]
+        let backgroundColor: NSColor?
+        let foregroundColor: NSColor?
+        let rawArtwork: NSImage
+        let colors: (background: NSColor, foreground: NSColor)?
+        let subjectMask: NSImage?
+    }
+    private var readyGateGeneration = 0
+    private var artworkPhaseSettled = false
+    private var traitsPhaseSettled = false
+    private var stagedArtwork: StagedArtwork?
+    private var stagedSongTraits: SongAudioTraits?
+    // Cancelled/replaced every time a new track starts a fresh ready gate (see `refresh()`) - forces
+    // a commit with whatever's ready if the slower of the two phases (almost always ReccoBeats -
+    // see SongAudioTraits's own doc comment on why that round-trip can't be made to reliably finish
+    // in under a second) hasn't reported in by then, so a network hiccup can never hold the album
+    // art hostage indefinitely.
+    private var readyGateTimeoutTask: Task<Void, Never>?
+    private static let readyGateTimeoutInterval: TimeInterval = 3.5
+
+    /// Bumped once per track, but only once *both* the album art and the ReccoBeats song-traits
+    /// lookup for it have settled - success, cache hit/miss, or outright failure all count as
+    /// "settled" for each phase (see `markArtworkPhaseSettled`/`markTraitsPhaseSettled`) - or once
+    /// `readyGateTimeoutInterval` has passed since the track changed, whichever comes first (see
+    /// `readyGateTimeoutTask`), so a slow/hung ReccoBeats round-trip can never hold this up forever.
     ///
-    /// On the success path, loadSpotifyArtwork/loadArtworkFromiTunes call `settleArtwork` as the
-    /// *last statement inside the same* `MainActor.run` block that updates `cachedRawArtwork`/calls
-    /// `recomputeDerivedAlbumArtLayers()` - not a separate hop afterwards. That ordering is load-
-    /// bearing: `@Observable` publishes each mutation as it happens, and if the token bump landed in
-    /// a later, separate `MainActor.run`/`Task`, SwiftUI could (and did, in practice) re-render off
-    /// the artwork mutation alone first - the new art would already be sitting in `rawArtwork` and get
-    /// promoted into ProjectMCoordinator's `current*Texture` with no transition active yet, popping in
-    /// unanimated, before this token ever bumped to trigger the transition that was supposed to reveal
-    /// it.
-    ///
-    /// ContentView's "select a new preset on track change" `onChange` keys off *this*, not
-    /// `trackChangeToken` - triggering the preset load (and so, in lockstep, ProjectMCoordinator's own
-    /// preset-transition album-art effect - see that type's own doc comment) only once new art is
-    /// actually sitting in `rawArtwork`/`subjectOnlyArtwork`/etc. is what lets
-    /// `updatePresetTransitionSnapshotIfNeeded`'s "old" snapshot and the live "new" side genuinely
-    /// differ from the first frame of the transition, instead of racing an in-flight fetch that might
-    /// still be showing the previous track's art when the transition's own reveal window passes.
-    private(set) var artworkSettledToken = 0
+    /// This replaces what used to be two separate tokens (`artworkSettledToken`,
+    /// `songTraitsSettledToken`): ContentView fired its "advance to a new preset" pick off
+    /// `artworkSettledToken` alone, falling back to a sequential pick if traits weren't ready yet,
+    /// then fired a *second*, later preset load off `songTraitsSettledToken` if a better match
+    /// showed up afterward - two independent, real `ProjectMCoordinator` preset transitions for one
+    /// song change instead of one. `commitIfReady()` is the single place that promotes staged
+    /// artwork/traits into the public `cachedRawArtwork`/`songTraits` properties and bumps this
+    /// token, together, in the same `MainActor` tick - same load-bearing ordering the old
+    /// `artworkSettledToken` doc comment described (an `@Observable` mutation landing in an earlier,
+    /// separate tick than its settle-token bump lets SwiftUI re-render off it unanimated before any
+    /// transition exists to reveal it) - so ContentView's single "pick a preset for this track"
+    /// `onChange` sees a track whose art *and* best-known traits are both already final, and only
+    /// ever fires one transition per song.
+    private(set) var trackReadySettledToken = 0
 
     init() {
         loadArtworkPreferences()
@@ -328,8 +349,24 @@ final class NowPlayingManager {
                         if key != self.currentTrackKey {
                             self.currentTrackKey = key
                             self.trackChangeToken += 1
+                            let generation = self.trackChangeToken
                             self.songTraits = nil
-                            self.loadSongTraits(artist: info.artist, title: info.track)
+                            // Fresh ready gate for this track - see trackReadySettledToken's own doc
+                            // comment. Both phases start unsettled; whichever of the artwork fetch/
+                            // ReccoBeats lookup finishes second is the one that actually triggers
+                            // commitIfReady()'s single, combined commit.
+                            self.readyGateGeneration = generation
+                            self.artworkPhaseSettled = false
+                            self.traitsPhaseSettled = false
+                            self.stagedArtwork = nil
+                            self.stagedSongTraits = nil
+                            self.readyGateTimeoutTask?.cancel()
+                            self.readyGateTimeoutTask = Task { [weak self] in
+                                try? await Task.sleep(for: .seconds(Self.readyGateTimeoutInterval))
+                                guard !Task.isCancelled else { return }
+                                self?.forceCommitIfStillPending(generation: generation)
+                            }
+                            self.loadSongTraits(artist: info.artist, title: info.track, generation: generation)
                             // Same-album track change (e.g. skipping to the next song on the same
                             // record) — the art itself isn't changing, so leave cachedRawArtwork/
                             // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
@@ -343,15 +380,16 @@ final class NowPlayingManager {
                             // way, so it always falls through to a normal fetch.
                             let newAlbumKey = Self.albumKey(artist: info.artist, album: info.album)
                             if newAlbumKey == nil || newAlbumKey != self.currentAlbumKey {
-                                logger.debug("track change: new album (key=\(newAlbumKey ?? "nil", privacy: .public)) - fetching artwork, artworkSettledToken will wait")
+                                logger.debug("track change: new album (key=\(newAlbumKey ?? "nil", privacy: .public)) - fetching artwork, ready gate will wait")
                                 self.artworkFetchStartTime = Date()
-                                self.loadArtwork(app: app, artist: info.artist, album: info.album)
+                                self.loadArtwork(app: app, artist: info.artist, album: info.album, generation: generation)
                             } else {
-                                // Nothing to wait for - the art on screen already matches this track,
-                                // so the settle signal can fire in the same tick as the track change
-                                // itself (see artworkSettledToken's own doc comment).
-                                logger.debug("track change: same album (key=\(newAlbumKey ?? "nil", privacy: .public)) - artwork already settled, no fetch needed")
-                                self.artworkSettledToken += 1
+                                // Nothing new to stage - the art on screen already matches this track -
+                                // but the artwork phase still has to report in through the same gate as
+                                // a real fetch would, so a same-album track change doesn't skip ahead of
+                                // a still-pending traits lookup and commit (and settle) on its own.
+                                logger.debug("track change: same album (key=\(newAlbumKey ?? "nil", privacy: .public)) - artwork phase settled, no fetch needed")
+                                self.markArtworkPhaseSettled(nil, source: "same-album", startedAt: Date(), generation: generation)
                             }
                         }
                     }
@@ -435,27 +473,24 @@ final class NowPlayingManager {
     /// Looks the just-detected track up — cache first (see SongAudioTraitsCache's own doc comment
     /// on why that's the difference between an instant matched-preset swap and a 200ms-2s network
     /// wait), ReccoBeats itself on a cache miss — and logs whatever comes back. Fire-and-forget
-    /// like `loadArtwork`'s own fetches: a slow/failed lookup just leaves `songTraits` nil rather
-    /// than blocking anything else in `refresh()`. Called with `trackChangeToken` already bumped
-    /// for this track, so capturing it up front and checking it again once the fetch resolves is
-    /// enough to detect "the user has since skipped past this track" and skip the stale write —
-    /// same generation-counter shape as `recompositeGeneration`/`applyRecomposited`. Bumps
-    /// `songTraitsSettledToken` on every exit path, cache hit or miss or fresh network result or
-    /// outright failure alike — ContentView's Phase 2 matched-preset swap waits on that token, and
-    /// (same reasoning as `settleArtwork`) it must never be left waiting forever.
-    private func loadSongTraits(artist: String, title: String) {
-        let generation = trackChangeToken
-
+    /// like `loadArtwork`'s own fetches: a slow/failed lookup just leaves the staged traits nil
+    /// rather than blocking anything else in `refresh()`. `generation` is `trackChangeToken` at the
+    /// moment this track's ready gate was opened (see `refresh()`) - capturing it up front and
+    /// checking it again once the fetch resolves is enough to detect "the user has since skipped
+    /// past this track" and skip the stale write, same generation-counter shape as
+    /// `recompositeGeneration`/`applyRecomposited`. Reports into `markTraitsPhaseSettled` on every
+    /// exit path, cache hit or miss or fresh network result or outright failure alike, so a network
+    /// hiccup can never leave the ready gate waiting forever on its own (the timeout in `refresh()`
+    /// is the other backstop, for when this task itself never resolves at all).
+    private func loadSongTraits(artist: String, title: String, generation: Int) {
         switch songAudioTraitsCache.lookup(artist: artist, title: title) {
         case .cachedHit(let traits):
             logger.debug("ReccoBeats (cached): \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
-            songTraits = traits
-            songTraitsSettledToken += 1
+            markTraitsPhaseSettled(traits, generation: generation)
             return
         case .cachedMiss:
             logger.debug("ReccoBeats (cached miss): \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
-            songTraits = nil
-            songTraitsSettledToken += 1
+            markTraitsPhaseSettled(nil, generation: generation)
             return
         case .notCached:
             break
@@ -468,9 +503,7 @@ final class NowPlayingManager {
             guard let traits else {
                 logger.debug("ReccoBeats: no match for \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
                 await MainActor.run {
-                    guard let self, self.trackChangeToken == generation else { return }
-                    self.songTraits = nil
-                    self.songTraitsSettledToken += 1
+                    self?.markTraitsPhaseSettled(nil, generation: generation)
                 }
                 return
             }
@@ -487,16 +520,24 @@ final class NowPlayingManager {
                 key=\(traits.key) mode=\(traits.mode) loudness=\(traits.loudness, format: .fixed(precision: 1))
                 """)
             await MainActor.run {
-                guard let self, self.trackChangeToken == generation else { return }
-                self.songTraits = traits
-                self.songTraitsSettledToken += 1
+                self?.markTraitsPhaseSettled(traits, generation: generation)
             }
         }
     }
 
+    /// Stages the traits-phase result (`nil` for a genuine miss/failure) and tries to commit - see
+    /// `trackReadySettledToken`'s own doc comment. `generation != readyGateGeneration` means a newer
+    /// track has already superseded this lookup, so it's silently dropped rather than staged.
+    private func markTraitsPhaseSettled(_ traits: SongAudioTraits?, generation: Int) {
+        guard generation == readyGateGeneration else { return }
+        stagedSongTraits = traits
+        traitsPhaseSettled = true
+        commitIfReady(generation: generation)
+    }
+
     // MARK: - Artwork
 
-    private func loadArtwork(app: (name: String, bundleID: String), artist: String, album: String) {
+    private func loadArtwork(app: (name: String, bundleID: String), artist: String, album: String, generation: Int) {
         // Deliberately *not* clearing artwork/cachedRawArtwork/etc. here before kicking off the
         // fetch below: this fires the instant a new album is detected, but the fetch itself is a
         // network round trip (hundreds of ms to a couple seconds) — clearing eagerly used to leave
@@ -526,13 +567,13 @@ final class NowPlayingManager {
 
         switch app.bundleID {
         case "com.spotify.client":
-            loadSpotifyArtwork()
+            loadSpotifyArtwork(generation: generation)
             // Only the genre is wanted here — the iTunes lookup must not touch artwork/colors,
             // since it runs as a separate detached task and could otherwise race with
             // loadSpotifyArtwork() and overwrite Spotify's own artwork with Apple Music's.
-            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: false)
+            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: false, generation: generation)
         case "com.apple.Music":
-            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: true)
+            loadArtworkFromiTunes(artist: artist, album: album, updateArtwork: true, generation: generation)
         default:
             break
         }
@@ -541,7 +582,7 @@ final class NowPlayingManager {
     // Spotify exposes the artwork as a remote URL. Fetching that URL is itself another blocking
     // AppleScript round-trip (same hazard as queryNowPlaying), so the whole thing — script call
     // included — runs detached, not just the network fetch.
-    private func loadSpotifyArtwork() {
+    private func loadSpotifyArtwork(generation: Int) {
         let fetchStart = Date()
         Task.detached(priority: .userInitiated) { [weak self] in
             // `self?.x = ...` inside the nested MainActor.run closure below trips "reference to
@@ -559,16 +600,16 @@ final class NowPlayingManager {
             guard let result = Self.runScript(script, appName: "Spotify"),
                   let urlString = result.stringValue,
                   let url = URL(string: urlString) else {
-                // No artwork mutation happened on this path - settling on its own is safe (there's
-                // nothing for it to race against). See artworkSettledToken's own doc comment for why
-                // this must fire even on failure.
-                await MainActor.run { self.settleArtwork(source: "Spotify", startedAt: fetchStart) }
+                // No artwork mutation happened on this path - staging nothing and reporting the
+                // phase settled is safe (there's nothing for it to race against). See
+                // trackReadySettledToken's own doc comment for why this must fire even on failure.
+                await MainActor.run { self.markArtworkPhaseSettled(nil, source: "Spotify", startedAt: fetchStart, generation: generation) }
                 return
             }
 
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = NSImage(data: data) else {
-                await MainActor.run { self.settleArtwork(source: "Spotify", startedAt: fetchStart) }
+                await MainActor.run { self.markArtworkPhaseSettled(nil, source: "Spotify", startedAt: fetchStart, generation: generation) }
                 return
             }
 
@@ -581,22 +622,16 @@ final class NowPlayingManager {
             }
             let composited = Self.compositeArtwork(image, colors: colors, subjectMasked: subjectMasked, textLines: textLines, mode: mode, includeText: includeText, processingEnabled: processing)
 
+            let staged = StagedArtwork(
+                artwork: composited, albumArtText: textLines,
+                backgroundColor: colors?.background, foregroundColor: colors?.foreground,
+                rawArtwork: image, colors: colors, subjectMask: subjectMasked
+            )
             await MainActor.run {
-                self.artwork = composited
-                self.albumArtText = textLines
-                self.albumBackgroundColor = colors?.background
-                self.albumForegroundColor = colors?.foreground
-                self.cachedRawArtwork = image
-                self.cachedColors = colors
-                self.cachedSubjectMask = subjectMasked
-                self.recomputeDerivedAlbumArtLayers()
-                // Must be in this *same* MainActor.run block, not a separate hop after it returns -
-                // otherwise SwiftUI can (and, observed in practice, does) re-render off the artwork
-                // mutation above before this bump ever reaches ContentView's onChange, so the new art
-                // pops in on its own and the preset transition it triggers moments later finds
-                // old==new already and plays with no visible album-art effect at all. See
-                // artworkSettledToken's own doc comment.
-                self.settleArtwork(source: "Spotify", startedAt: fetchStart)
+                // Staged here, not written to cachedRawArtwork/etc. directly - see
+                // trackReadySettledToken's own doc comment for why the actual promotion has to wait
+                // for commitIfReady() rather than happening the instant this fetch finishes.
+                self.markArtworkPhaseSettled(staged, source: "Spotify", startedAt: fetchStart, generation: generation)
             }
         }
     }
@@ -614,13 +649,13 @@ final class NowPlayingManager {
     // (like Music) whose artwork can't be read directly, and to fetch genre metadata for
     // sources (like Spotify) that don't expose it — in the latter case `updateArtwork` is
     // false so this can't overwrite artwork/colors already fetched from the real source.
-    private func loadArtworkFromiTunes(artist: String, album: String, updateArtwork: Bool) {
+    private func loadArtworkFromiTunes(artist: String, album: String, updateArtwork: Bool, generation: Int) {
         let fetchStart = Date()
-        // Only the updateArtwork:true (Music) path owns settling artworkSettledToken - the
+        // Only the updateArtwork:true (Music) path owns settling the artwork phase - the
         // updateArtwork:false (Spotify genre-only) call never touches artwork, so it must never
-        // touch the settle signal either (loadSpotifyArtwork, run alongside it, already owns that).
+        // touch the phase either (loadSpotifyArtwork, run alongside it, already owns that).
         guard !album.isEmpty || !artist.isEmpty else {
-            if updateArtwork { settleArtwork(source: "iTunes", startedAt: fetchStart) }
+            if updateArtwork { markArtworkPhaseSettled(nil, source: "iTunes", startedAt: fetchStart, generation: generation) }
             return
         }
 
@@ -631,7 +666,7 @@ final class NowPlayingManager {
             URLQueryItem(name: "limit", value: "1"),
         ]
         guard let url = components?.url else {
-            if updateArtwork { settleArtwork(source: "iTunes", startedAt: fetchStart) }
+            if updateArtwork { markArtworkPhaseSettled(nil, source: "iTunes", startedAt: fetchStart, generation: generation) }
             return
         }
 
@@ -640,11 +675,11 @@ final class NowPlayingManager {
                   let response = try? JSONDecoder().decode(iTunesSearchResponse.self, from: data),
                   let firstResult = response.results.first, // 👈 Grab the whole result first
                   let thumbURL = firstResult.artworkUrl100 else {
-                // No artwork mutation happened on this path (regardless of updateArtwork) - settling
-                // on its own is safe here, unlike the success path below. See artworkSettledToken's
-                // own doc comment for why this must fire even on failure.
+                // No artwork mutation happened on this path (regardless of updateArtwork) - staging
+                // nothing and settling the phase is safe here, unlike the success path below. See
+                // trackReadySettledToken's own doc comment for why this must fire even on failure.
                 if updateArtwork {
-                    await MainActor.run { self?.settleArtwork(source: "iTunes", startedAt: fetchStart) }
+                    await MainActor.run { self?.markArtworkPhaseSettled(nil, source: "iTunes", startedAt: fetchStart, generation: generation) }
                 }
                 return
             }
@@ -663,7 +698,7 @@ final class NowPlayingManager {
             guard let artURL = URL(string: highResURL),
                   let (imageData, _) = try? await URLSession.shared.data(from: artURL),
                   let image = NSImage(data: imageData) else {
-                await MainActor.run { self?.settleArtwork(source: "iTunes", startedAt: fetchStart) }
+                await MainActor.run { self?.markArtworkPhaseSettled(nil, source: "iTunes", startedAt: fetchStart, generation: generation) }
                 return
             }
 
@@ -677,45 +712,92 @@ final class NowPlayingManager {
             }
             let composited = Self.compositeArtwork(image, colors: colors, subjectMasked: subjectMasked, textLines: textLines, mode: mode ?? .combined, includeText: includeText ?? true, processingEnabled: processing ?? true)
 
+            let staged = StagedArtwork(
+                artwork: composited, albumArtText: textLines,
+                backgroundColor: colors?.background, foregroundColor: colors?.foreground,
+                rawArtwork: image, colors: colors, subjectMask: subjectMasked
+            )
             await MainActor.run {
-                self?.artwork = composited
-                self?.albumArtText = textLines
+                // genre is set eagerly here (not staged) - it's display-only metadata, not part of
+                // the art/preset transition, so there's no reason to hold it back with the rest.
                 self?.genre = fetchedGenre
-                self?.albumBackgroundColor = colors?.background
-                self?.albumForegroundColor = colors?.foreground
-                self?.cachedRawArtwork = image
-                self?.cachedColors = colors
-                self?.cachedSubjectMask = subjectMasked
-                self?.recomputeDerivedAlbumArtLayers()
-                // Must be in this *same* MainActor.run block - see loadSpotifyArtwork's matching
-                // comment for why a separate hop after this block returns lets SwiftUI re-render off
-                // the artwork mutation above before the settle bump ever lands.
-                self?.settleArtwork(source: "iTunes", startedAt: fetchStart)
+                // Staged, not written directly - see loadSpotifyArtwork's matching comment.
+                self?.markArtworkPhaseSettled(staged, source: "iTunes", startedAt: fetchStart, generation: generation)
             }
         }
     }
 
-    /// Bumps `artworkSettledToken` (see its own doc comment) and logs how long the just-finished
-    /// fetch/Vision/OCR pipeline actually took, measured against `artworkFetchStartTime` (set once,
-    /// in `refresh()`, when the fetch that's *currently* pending was kicked off) - not `startedAt`
-    /// itself, which is really just this specific call's own local timing and, for the Spotify case,
-    /// races the separate genre-only iTunes lookup that shares the same `loadArtwork` call. Called
-    /// from whichever of loadSpotifyArtwork/loadArtworkFromiTunes(updateArtwork: true) actually owns
-    /// updating artwork for this fetch, on every exit path - success or failure - so a network
-    /// hiccup can never leave ContentView's preset-advance-on-track-change waiting forever.
+    /// Stages the artwork-phase result (`nil` for "nothing new - fetch failed, or this was the
+    /// same-album fast path" - see `StagedArtwork`) and tries to commit - see
+    /// `trackReadySettledToken`'s own doc comment. Also logs how long the just-finished fetch/
+    /// Vision/OCR pipeline actually took, measured against `artworkFetchStartTime` (set once, in
+    /// `refresh()`, when the fetch that's *currently* pending was kicked off) - not `startedAt`
+    /// itself, which is really just this specific call's own local timing and, for the Spotify
+    /// case, races the separate genre-only iTunes lookup that shares the same `loadArtwork` call.
+    /// `generation != readyGateGeneration` means a newer track has already superseded this fetch,
+    /// so it's silently dropped rather than staged.
     ///
     /// Deliberately *not* `@MainActor` (unlike most state mutation in this file, which stays plain/
     /// nonisolated and relies on `await MainActor.run` hops at call sites instead - see e.g.
     /// `applyRecomposited`) - this is called both from contexts already known to be on the main
     /// actor at runtime but not statically annotated as such (loadArtworkFromiTunes's own synchronous
     /// early-return guards) and from genuine background-thread contexts that must hop first (the
-    /// `Task { @MainActor in ... }` wrapping at this function's other two call sites) - marking it
+    /// `Task { @MainActor in ... }` wrapping at this function's other call sites) - marking it
     /// `@MainActor` would make the former fail to compile.
-    private func settleArtwork(source: String, startedAt: Date) {
+    private func markArtworkPhaseSettled(_ staged: StagedArtwork?, source: String, startedAt: Date, generation: Int) {
+        guard generation == readyGateGeneration else { return }
         let elapsedThisCall = Date().timeIntervalSince(startedAt)
         let elapsedSinceTrackChange = artworkFetchStartTime.map { Date().timeIntervalSince($0) }
-        logger.debug("artwork settled via \(source, privacy: .public) - this call took \(elapsedThisCall, format: .fixed(precision: 2))s, \(elapsedSinceTrackChange.map { String(format: "%.2f", $0) } ?? "?", privacy: .public)s since track change")
-        artworkSettledToken += 1
+        logger.debug("artwork phase settled via \(source, privacy: .public) - this call took \(elapsedThisCall, format: .fixed(precision: 2))s, \(elapsedSinceTrackChange.map { String(format: "%.2f", $0) } ?? "?", privacy: .public)s since track change")
+        stagedArtwork = staged
+        artworkPhaseSettled = true
+        commitIfReady(generation: generation)
+    }
+
+    /// The single place that promotes staged artwork/traits into the public, observed properties
+    /// and bumps `trackReadySettledToken` - see that token's own doc comment for why both phases
+    /// (or the timeout) have to converge here rather than each firing its own preset transition
+    /// independently. `forced` is set only by `forceCommitIfStillPending` (the timeout backstop) -
+    /// it commits with whatever's staged so far even if one phase never reported in, rather than
+    /// waiting on it forever.
+    private func commitIfReady(generation: Int, forced: Bool = false) {
+        guard generation == readyGateGeneration else { return }
+        guard forced || (artworkPhaseSettled && traitsPhaseSettled) else { return }
+        readyGateTimeoutTask?.cancel()
+        readyGateTimeoutTask = nil
+
+        if let staged = stagedArtwork {
+            artwork = staged.artwork
+            albumArtText = staged.albumArtText
+            albumBackgroundColor = staged.backgroundColor
+            albumForegroundColor = staged.foregroundColor
+            cachedRawArtwork = staged.rawArtwork
+            cachedColors = staged.colors
+            cachedSubjectMask = staged.subjectMask
+            recomputeDerivedAlbumArtLayers()
+        }
+        songTraits = stagedSongTraits
+        stagedArtwork = nil
+        stagedSongTraits = nil
+
+        // Must bump last, after every other mutation above - same "publish the token in the same
+        // tick as the state it's guarding" ordering the old artworkSettledToken doc comment
+        // described, so ContentView's onChange never sees the token change before rawArtwork/
+        // songTraits actually reflect this track.
+        trackReadySettledToken += 1
+    }
+
+    /// Timeout backstop for `commitIfReady` - fired once, `readyGateTimeoutInterval` after this
+    /// track's ready gate opened (see `refresh()`), only if that gate hasn't already committed
+    /// naturally by then. Whichever phase is still missing commits as "not ready" (nil staged
+    /// artwork keeps the previous track's stale art up, nil staged traits falls back to the
+    /// sequential pick) rather than leaving the track's preset pick stalled indefinitely on a
+    /// slow/hung network call.
+    private func forceCommitIfStillPending(generation: Int) {
+        guard generation == readyGateGeneration else { return }
+        guard !(artworkPhaseSettled && traitsPhaseSettled) else { return }
+        logger.debug("ready gate timed out after \(Self.readyGateTimeoutInterval, format: .fixed(precision: 1))s (artwork settled=\(self.artworkPhaseSettled), traits settled=\(self.traitsPhaseSettled)) - committing whatever is ready")
+        commitIfReady(generation: generation, forced: true)
     }
 
     /// Turns `includesTextOverlay` off when `lines` is nothing but the RIAA Parental Advisory

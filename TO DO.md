@@ -1,5 +1,9 @@
 # Prism — To Do
 ---
+### Transitions
+- [ ] There is some lag moving between songs/presets sometimes
+- [ ] Someties the album covers immediately flip between old/new
+
 ### Apple Music Plugin
 - [x] Tell Apple Music this app is a visualizer extension under Window > Visualizer Settings
 - [x] Ship/point at real `.milk` presets — falls back to scanning `~/Documents/PrismCollection/BestMilkdropPresetsPack/Presets` (same source Prism.app's own bundling script uses) when the plugin's own bundled `Presets/` folder is empty
@@ -16,7 +20,7 @@
 ### Misc
 - [ ] The starting screen should only display if there is nothing playing already. if a song is playing and the app opens, the starting screen should be skipped entirely and never display. while the app is opening (bobbing in dock), it should get the song thats playing, do the album photo ops, match it to a preset, and then start displaying everything immediately when the first window appears. This should also work for the Apple Music plugin. If there is nothing playing in apple music, display the starting screen. if there is something playing, immediately move to display the album art and a matching preset.
 - [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton.
-- [ ] The transition "presets" should never be viewed just by themselves. This results in a black screen. This should only be used as transitions
+- [ ] The transition "presets" should never be viewed just by themselves. This results in a black screen. This should only be used as transitions. Make sure they are out of consideratino of the search function
 
 ## Post Launch
 ---

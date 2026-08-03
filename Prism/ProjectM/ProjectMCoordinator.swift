@@ -249,6 +249,11 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     // is currently driving the animation.
     private var globalAlpha: Float = 0
     private var lastAlbumArtTimestamp: CFTimeInterval?
+    // When latestRawImage first started differing from currentRawImage while no preset transition
+    // was active yet to reveal it - see advanceAlbumArtAnimation's own doc comment. nil whenever
+    // there's nothing pending (art already promoted, or hasn't changed).
+    private var awaitingTransitionSince: CFTimeInterval?
+    private static let albumArtPromotionFallbackDelay: CFTimeInterval = 1.5
     // Beat-driven "punch" envelope for the zoom applied in ProjectMCompositeShader.metal (see
     // primaryBeatZoomStrength) - a simple peak-and-decay follower over
     // audioEngine.levels' lowest bands (~60-130Hz, the kick-drum/bass range), not real tempo/
@@ -329,8 +334,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     ///
     /// Must run before advanceAlbumArtAnimation in draw(in:) - see that call site's own comment.
     /// ContentView only ever triggers the auto-advance-on-track-change preset load
-    /// (loadNextSequentialPreset, from the trackChangeToken/artworkSettledToken onChange - see
-    /// NowPlayingManager.artworkSettledToken's own doc comment) once the new track's artwork has
+    /// (loadNextSequentialPreset/loadBestMatchedPreset, from the trackReadySettledToken onChange -
+    /// see NowPlayingManager.trackReadySettledToken's own doc comment) once the new track's artwork has
     /// already finished loading, so by the time this function sees a *new* identity here, the new
     /// art is already sitting in NowPlayingManager's public artwork properties, about to be fed into
     /// `latest*Image` this same SwiftUI update and promoted by advanceAlbumArtAnimation - possibly
@@ -351,7 +356,7 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         transitionOldBackgroundDetailTexture = currentBackgroundDetailTexture
         transitionOldSubjectTexture = currentSubjectOnlyTexture
         transitionOldTextTexture = currentTextOnlyTexture
-        // Logging only, to verify in practice (see ContentView's artworkSettledToken-gated preset
+        // Logging only, to verify in practice (see ContentView's trackReadySettledToken-gated preset
         // advance) whether album art is actually ready by the time a transition starts: if
         // latestRawImage already differs from currentRawImage here, this frame's advanceAlbumArtAnimation
         // (which runs right after this function returns) is about to promote *during* this transition
@@ -547,20 +552,58 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    /// Detects a new track's artwork and promotes it to `current` immediately. Cheap when nothing's
-    /// changing - the common case is just updating the beat pulse and easing globalAlpha.
+    /// Detects a new track's artwork and promotes it to `current` - but only once a preset
+    /// transition is actually active to reveal it (see `awaitingTransitionSince`), not the instant
+    /// `latestRawImage`'s identity changes. `updateAlbumArt` and `updateModelIfNeeded` (which is
+    /// what actually calls `engine.loadPreset`, starting the transition) are always called together
+    /// from the same `ProjectMMetalView.updateNSView` tick, fed by the same SwiftUI update - but
+    /// SwiftUI doesn't guarantee `nowPlaying`'s artwork mutation and `visualizerModel.presetURL`'s
+    /// mutation (set from ContentView's `trackReadySettledToken` `onChange`, a separate side effect
+    /// that runs *after* the view update, not synchronously inside it) land in the same `body`
+    /// evaluation - if they land a tick apart, `updateNSView` can run once with the new art but the
+    /// still-old presetURL, and `latestRawImage` would already differ from `currentRawImage` with no
+    /// transition active yet to gate against. Reading `engine.presetTransitionActive` fresh here -
+    /// the exact same ground truth draw(in:)'s own uniforms read every frame for the crossfade - is
+    /// what makes this deterministic instead of a timing race: the previous track's art stays the
+    /// `current*` texture, genuinely on screen, until the wave that's supposed to carry it away has
+    /// actually started.
     private func advanceAlbumArtAnimation(device: MTLDevice, now: CFTimeInterval) {
         if emptyAlbumArtTexture == nil {
             emptyAlbumArtTexture = Self.makeEmptyTexture(device: device)
         }
 
         if latestRawImage !== currentRawImage {
-            promoteToCurrentTrack(
-                device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
-                subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,
-                textOnlyImage: latestTextOnlyImage, backgroundDetailImage: latestBackgroundDetailImage,
-                backgroundColorImage: latestBackgroundColorImage
-            )
+            // currentRawImage == nil - nothing on screen yet (this launch's very first track) -
+            // there's nothing to crossfade away from, so promote immediately rather than waiting on
+            // a transition that this app-launch preset restore never necessarily triggers.
+            if currentRawImage == nil || engine?.presetTransitionActive == true {
+                promoteToCurrentTrack(
+                    device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
+                    subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,
+                    textOnlyImage: latestTextOnlyImage, backgroundDetailImage: latestBackgroundDetailImage,
+                    backgroundColorImage: latestBackgroundColorImage
+                )
+                awaitingTransitionSince = nil
+            } else {
+                // Waiting on the paired transition to start - see this function's own doc comment.
+                // Bounded so a track change whose picked preset happens to already be the one
+                // loaded (updateModelIfNeeded's URL-diff guard then never calls engine.loadPreset,
+                // so presetTransitionActive never flips true for this art) can't leave the previous
+                // track's art on screen forever - a rare, hard-cut fallback rather than a stuck UI.
+                let waitStart = awaitingTransitionSince ?? now
+                awaitingTransitionSince = waitStart
+                if now - waitStart > Self.albumArtPromotionFallbackDelay {
+                    promoteToCurrentTrack(
+                        device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
+                        subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,
+                        textOnlyImage: latestTextOnlyImage, backgroundDetailImage: latestBackgroundDetailImage,
+                        backgroundColorImage: latestBackgroundColorImage
+                    )
+                    awaitingTransitionSince = nil
+                }
+            }
+        } else {
+            awaitingTransitionSince = nil
         }
 
         defer { lastAlbumArtTimestamp = now }

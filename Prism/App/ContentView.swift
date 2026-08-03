@@ -30,28 +30,6 @@ struct ContentView: View {
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
     @State private var presetVisualTraitsStore = MilkdropPresetVisualTraitsStore()
-    // Song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching" section) MUST
-    // fire the preset load the instant artworkSettledToken fires - not delayed to also wait for
-    // song traits (an earlier version of this did exactly that, joining both signals, and it broke
-    // the album-art crossfade entirely). Why: ProjectMCoordinator.advanceAlbumArtAnimation promotes
-    // `latestRawImage` (which tracks nowPlaying.rawArtwork directly) into the on-screen texture
-    // unconditionally, every single frame, the instant artwork settles - completely independent of
-    // any preset load. The only reason there's ever a crossfade at all is that
-    // updatePresetTransitionSnapshotIfNeeded snapshots the *previous* on-screen texture as "old"
-    // right before that promotion, but only at the exact moment it detects a *new* preset
-    // transition starting (see that function's own doc comment). Delay the preset load past
-    // artwork settling by even one frame and the art has already silently promoted, uncrossfaded,
-    // before any transition exists to snapshot against - which is exactly what "album art instantly
-    // switches, doesn't wait for the transition" was.
-    //
-    // So this uses the match only if it's *already* resolved by the moment artwork settles (true
-    // for basically all cache hits - the cache check is synchronous, happening the instant the
-    // track changes, well before any network-bound artwork fetch can finish) and falls back
-    // otherwise, with a separate late-arrival upgrade if traits resolve afterward - safe for album
-    // art specifically because that second load doesn't touch nowPlaying.rawArtwork at all (same
-    // track, same image), so it's just a second, harmless preset crossfade with static art
-    // underneath, not a repeat of the same bug.
-    @State private var matchAppliedForTrackToken = 0
     // Drag-and-drop counterpart to File > "Import Milk Preset…"'s file picker — true only while a drag
     // carrying a `.milk` file is actually hovering the window, driven by
     // `PresetDroppableMTKView.onDropTargetChanged` via `handlePresetDrop`'s sibling wiring below,
@@ -374,46 +352,29 @@ struct ContentView: View {
         // (ProjectMCoordinator.updateModelIfNeeded's smoothTransition), and that same preset load
         // also drives ProjectMCoordinator's own preset-transition album-art effect (see its doc
         // comments), so nothing else needs to be triggered here for the art to follow along.
-        // Keyed off `artworkSettledToken`, not `trackChangeToken` - see the former's own doc comment:
-        // this preset load is what starts the transition ProjectMCoordinator times its album-art
-        // reveal against, so it needs to fire once the *art* is actually ready, not the instant the
-        // track metadata itself changes (which can be well before the art finishes loading) - the
-        // two only race apart when the track and the art it's waiting on are already in sync.
+        // Keyed off `trackReadySettledToken`, not `trackChangeToken` - see the former's own doc
+        // comment: this preset load is what starts the transition ProjectMCoordinator times its
+        // album-art reveal against, so it needs to fire once *both* the art and (if ReccoBeats has
+        // one) the song-trait match are actually ready, not the instant the track metadata itself
+        // changes, and not piecemeal as each one trickles in separately - a track change used to
+        // fire this twice (once on art alone with a sequential fallback pick, then again moments
+        // later once traits caught up with the real match), which played as two back-to-back
+        // transitions for one song change; NowPlayingManager's ready gate (see
+        // `trackReadySettledToken`) now holds both artwork and traits back until they're both
+        // settled (or a timeout gives up waiting on traits) so there's only ever one.
         // `oldValue != 0` skips the very first token change (0 -> the first track detected this
         // launch) — that's "music started playing," not "a song ended," and this launch's own
         // preset restore (onAppear/waitForMusicSignal) already owns picking the very first preset;
         // racing this against it would fight over presetURL.
-        // Song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching" section,
-        // and matchAppliedForTrackToken's own doc comment above for why this fires the instant
-        // artwork settles rather than waiting for song traits too). `songTraits` is guaranteed
-        // non-stale here even though this fires off artworkSettledToken, not songTraitsSettledToken
-        // - NowPlayingManager clears it to nil the instant a new track is detected, before either
-        // its cache check or network fetch runs, so a non-nil value here can only be for *this*
-        // track. `oldValue != 0` - skip the very first settle this launch, that's "music started
-        // playing," not "a song ended" (onAppear/waitForMusicSignal already owns picking the very
-        // first preset).
-        .onChange(of: nowPlaying.artworkSettledToken) { oldValue, _ in
+        .onChange(of: nowPlaying.trackReadySettledToken) { oldValue, _ in
             guard oldValue != 0, presetLibrary.isConfigured else { return }
             if let songTraits = nowPlaying.songTraits {
-                matchAppliedForTrackToken = nowPlaying.trackChangeToken
-                PrismDebug.trace("preset: traits already known for \"\(nowPlaying.trackName ?? "?")\" when art settled - matching now")
+                PrismDebug.trace("preset: matching \"\(nowPlaying.trackName ?? "?")\" against its ReccoBeats traits")
                 loadBestMatchedPreset(for: songTraits)
             } else {
-                PrismDebug.trace("preset: FALLBACK pick for \"\(nowPlaying.trackName ?? "?")\" - song traits not ready yet")
+                PrismDebug.trace("preset: sequential pick for \"\(nowPlaying.trackName ?? "?")\" - no ReccoBeats match")
                 loadNextSequentialPreset()
             }
-        }
-        // Late-arrival upgrade: only fires if the handler above already had to fall back (traits
-        // weren't ready yet at that point) for *this* track - guarded by matchAppliedForTrackToken
-        // so a cache-hit track that already got its matched pick up there doesn't get a redundant
-        // second transition. Safe for album art specifically (see matchAppliedForTrackToken's own
-        // doc comment) - this only ever swaps the preset, never touches artwork.
-        .onChange(of: nowPlaying.songTraitsSettledToken) { oldValue, _ in
-            guard oldValue != 0, presetLibrary.isConfigured, let songTraits = nowPlaying.songTraits else { return }
-            guard matchAppliedForTrackToken != nowPlaying.trackChangeToken else { return }
-            matchAppliedForTrackToken = nowPlaying.trackChangeToken
-            PrismDebug.trace("preset: late-arriving match for \"\(nowPlaying.trackName ?? "?")\" - upgrading from fallback")
-            loadBestMatchedPreset(for: songTraits)
         }
         // ProjectMCoordinator's runtime watchdog (updateSlowPresetWatchdog) - fires when measured
         // fps has stayed unwatchably low for several seconds straight, regardless of how the
@@ -641,8 +602,8 @@ struct ContentView: View {
         return firstCandidate
     }
 
-    /// Phase 2 of song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching"
-    /// section, and the songTraitsSettledToken onChange handler above that calls this): ranks
+    /// Song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching"
+    /// section, and the trackReadySettledToken onChange handler above that calls this): ranks
     /// every preset MilkdropPresetVisualTraitsStore has precomputed traits for against `songTraits`
     /// and jumps to a random pick among the top matches, rather than always the single highest-
     /// scoring one — a deterministic argmax would show the exact same preset on every replay of the
@@ -819,9 +780,9 @@ struct ContentView: View {
         // Every preset load funnels through here regardless of source (manual pick, history nav,
         // sequential/random fallback, song-matched pick, ...) - tracing here, not at each call
         // site, is what actually confirms *which* preset ends up on screen, complementing the
-        // "why" trace lines the song-matching call sites (the artworkSettledToken/
-        // songTraitsSettledToken onChange handlers, loadBestMatchedPreset) log right before calling
-        // this - see PrismDebug.swift's own doc comment on why startupTracing is on by default.
+        // "why" trace lines the song-matching call site (the trackReadySettledToken onChange
+        // handler, loadBestMatchedPreset) log right before calling this - see PrismDebug.swift's
+        // own doc comment on why startupTracing is on by default.
         PrismDebug.trace("loadPresetAndTrack: \(url.lastPathComponent)")
         // Real projectM's own load failures surface asynchronously (see ProjectMCoordinator's
         // presetLoadFailureHandler wiring) rather than as a synchronous parse result here, so
