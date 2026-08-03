@@ -10,11 +10,12 @@
       - [ ] Allow for disabling of text detection in this new artwork preferences. the text should just be picked up by background detail. (see Once Twice Melody)
   - [ ] If an album art is noisy, expand the breadth of the color bucket that should be taken out. See Beach House's "Depression Cherry" (not all reds removed) and Djo's "Chateau" (blue is not taken out). This requires defining what "noisy" is...
 ### Transitions
-  - [ ] Album art frames limits how much they can warp. There is a frame around every album that clips the edges. They should have no frame
+  - [x] Album art frames limits how much they can warp. There is a frame around every album that clips the edges. They should have no frame
+    - [ ] Fixed for wave & circle. Review if other transitions should exceed their bounds (havent seen any)
   - [ ] The intro preset does not transition well into the first song once it is played. the first song simply flashes in. we should always wait until we have the next album art retrieved to initiate a transition into the next preset. this goes for the intro preset on application start transitioning into the first preset and for every other transition in between songs.
   - [ ] Some transitions seem to have no effect and instantly despawn/spawn to the next one
     - [ ] The expanding circle transition seem to do this sometimes^
-  - [ ] Remove dead AlbumArtIntroStyle code (ProjectMCoordinator.swift) — the forward/reverseScale/slideRight/slideDown intro system is fully disabled ("Album transition code temporarily disabled" blocks) and no longer wired into the shader at all.
+  - [x] Remove dead AlbumArtIntroStyle code (ProjectMCoordinator.swift) — the forward/reverseScale/slideRight/slideDown intro system is fully disabled ("Album transition code temporarily disabled" blocks) and no longer wired into the shader at all.
 
 ### Song-Preset Matching
 - [ ] Test what audio brainz actually returns. Set up API retrieval and print values for now so we can move on to the preset grading/matching mechanism
