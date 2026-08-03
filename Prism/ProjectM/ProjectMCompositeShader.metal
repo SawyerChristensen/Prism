@@ -167,11 +167,30 @@ inline float wave_dissolve_edge_alpha(float2 walkedUV)
 
 // --- Preset-transition album-art effect ---
 // Ports real projectM's own built-in preset-transition shaders (Vendor/projectm/src/libprojectM/
-// Renderer/TransitionShaders/*Glsl330.frag) onto the album art layer, so it visibly reacts in the
-// same style as whatever real projectM is doing to the wave underneath during a preset transition
-// (see ProjectMCoordinator.PresetTransitionEffect's own doc comment for why this is Prism's own
-// independent pick from the same six algorithms rather than a literal mirror of projectM's - that
-// choice is fully internal to the engine with no way to observe it from outside).
+// Renderer/TransitionShaders/*Glsl330.frag) onto the album art layer, so it visibly plays the exact
+// same transition (not just the same kind of transition) as whatever real projectM is doing to the
+// wave underneath - which of the 6 built-in shaders, its progress, and its per-transition random
+// seeds are all read live off the engine every frame (see AlbumArtUniforms.presetTransition* below
+// and ProjectMEngine's presetTransition* properties, backed by the PRISM_LOCAL_PATCH documented in
+// Vendor/projectm-VERSION.md's "exposed preset-transition state" entry - that state is otherwise
+// fully internal to the engine with no way to observe it from outside).
+//
+// Two things need to match real projectM exactly, not just approximately, for this to actually look
+// like the same transition rather than a coincidentally-similar one:
+//   - The seed math. Each formula below multiplies its seed by the *same* scale factor the original
+//     GLSL does before its own mod() (e.g. Circle's `mod(float(iRandStatic.x) * .01, 2.)`) - these
+//     aren't cosmetic; dropping or changing them computes a genuinely different parameter (a
+//     different wipe angle, a different warp direction - occasionally its exact mirror) from the
+//     same seed, not just a differently-distributed one. See
+//     ProjectMCoordinator.reducedPresetTransitionSeed's own doc comment for the exact-reduction math
+//     backing this.
+//   - The coordinate convention. Real projectM's shaders compute their own spatial math from GLSL
+//     fragCoord (bottom-left origin, Y up, by default absent an origin_upper_left layout qualifier -
+//     which projectM's GLES-targeting shaders don't use); this file's in.texCoord is Metal's
+//     top-left origin, Y down (see ProjectMPassthroughVaryings' own vertex-shader comment - that's
+//     about the wave *texture's* row order, a separate concern from this independently-computed
+//     rotation math). Where that difference actually changes the on-screen result (Sweep's
+//     atan2-based rotation - see preset_transition_mask_sweep), Y is flipped back to match.
 //
 // The originals blend an "old" (outgoing) and "new" (incoming) full-screen preset render together;
 // album art gets the literal same treatment here, blending whatever art was on screen the instant
@@ -202,9 +221,13 @@ inline float preset_transition_glsl_mod(float x, float y)
 
 inline float preset_transition_mask_circle(float2 uv, float aspect, float progressCosine, float4 seeds)
 {
-    float inOrOut = preset_transition_glsl_mod(seeds.x, 2.0);
+    // *.01/*.001 scale factors match TransitionShaderBuiltInCircleGlsl330.frag exactly (mod(float
+    // (iRandStatic.x) * .01, 2.) / mod(float(iRandStatic.y) * .001, .1)) - dropping them doesn't
+    // just change the *distribution*, it computes a different parameter than real projectM did
+    // from the same seed (see ProjectMCoordinator.reducedPresetTransitionSeed's own doc comment).
+    float inOrOut = preset_transition_glsl_mod(seeds.x * 0.01, 2.0);
     float progress = inOrOut < 1.0 ? progressCosine : 1.0 - progressCosine;
-    float blendWidth = preset_transition_glsl_mod(seeds.y, 0.1) + 0.05;
+    float blendWidth = preset_transition_glsl_mod(seeds.y * 0.001, 0.1) + 0.05;
     progress = progress * (1.0 + blendWidth) - blendWidth;
 
     float2 center = float2(0.5);
@@ -221,7 +244,8 @@ inline float preset_transition_mask_circle(float2 uv, float aspect, float progre
 
 inline float preset_transition_sin_noise(float2 uv, float seed)
 {
-    return fract(abs(sin(uv.x * 0.018 + uv.y * 0.3077) * (seed * 0.1)));
+    // *.001 matches the original's sinNoise (TransitionShaderBuiltInPlasmaGlsl330.frag) exactly.
+    return fract(abs(sin(uv.x * 0.018 + uv.y * 0.3077) * (seed * 0.001)));
 }
 
 inline float preset_transition_value_noise(float2 uv, float scale, float seed)
@@ -239,7 +263,7 @@ inline float preset_transition_mask_plasma(float2 uv, float aspect, float progre
 {
     float2 puv = uv;
     puv.y *= aspect;
-    float scale = preset_transition_glsl_mod(seeds.y, 7.0) * 4.0 + 4.0;
+    float scale = preset_transition_glsl_mod(seeds.y * 0.01, 7.0) * 4.0 + 4.0;
     float fractValue = 0.0;
     float amp = 1.0;
     for (int i = 0; i < 16; i++) {
@@ -252,8 +276,11 @@ inline float preset_transition_mask_plasma(float2 uv, float aspect, float progre
 
 inline float preset_transition_mask_sweep(float2 uv, float progressCosine, float4 seeds)
 {
+    // currentAngle: no scale factor in the original (mod(float(iRandStatic.x), 360.)) - blendWidth
+    // does (*.001) - see TransitionShaderBuiltInSweepGlsl330.frag and this file's own header on why
+    // dropping either changes which parameter this computes, not just its spread.
     float currentAngle = preset_transition_glsl_mod(seeds.x, 360.0);
-    float blendWidth = preset_transition_glsl_mod(seeds.y, 0.3) + 0.1;
+    float blendWidth = preset_transition_glsl_mod(seeds.y * 0.001, 0.3) + 0.1;
 
     float2 c = uv - 0.5;
     constexpr float kDegToRad = kPresetTransitionPi / 180.0;
@@ -270,7 +297,10 @@ inline float preset_transition_mask_sweep(float2 uv, float progressCosine, float
 // (unwarped); at x=1, 100% newSample (also unwarped) - the zoom itself only shows up in between.
 inline float4 preset_transition_warp_blend(texture2d<float> oldTex, texture2d<float> newTex, sampler s, float2 uv, float progressCosine, float4 seeds)
 {
-    float direction = preset_transition_glsl_mod(seeds.x, 4.0);
+    // *.01 matches the original exactly (mod(float(iRandStatic.x) * .01, 4.)) - see this file's own
+    // header on why dropping it picks a different (occasionally mirrored) direction branch below,
+    // not just a differently-distributed one.
+    float direction = preset_transition_glsl_mod(seeds.x * 0.01, 4.0);
     float coord = direction < 1.0 ? uv.x : (direction < 2.0 ? 1.0 - uv.x : (direction < 3.0 ? uv.y : 1.0 - uv.y));
     float x = smoothstep(0.0, 1.0, progressCosine * 2.0 + coord - 1.0);
     float4 oldSample = oldTex.sample(s, saturate((uv - 0.5) * (1.0 - x) + 0.5));

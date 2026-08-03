@@ -411,23 +411,23 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
 
     /// Real projectM's own iRandStatic values are raw std::mt19937 output reinterpreted as signed
     /// int32 (Renderer/PresetTransition.cpp) - routinely in the hundreds of millions to billions,
-    /// either sign. The ported effects (ProjectMCompositeShader.metal) need these reduced down to a
-    /// small range before use (a random *angle*/*blend width*, not the raw seed, is what the actual
-    /// math wants) via a mod-style operation - doing that reduction in Float, as the original GLSL
-    /// shaders themselves do (`mod(float(iRandStatic.x) * .001, .3)` etc.), loses catastrophic
-    /// precision at this magnitude: float32 only represents integers exactly up to 2^24 (~16.7M), so
-    /// `x - y*floor(x/y)` for x in the billions computes as the difference of two nearly-equal huge
-    /// floats, each already off by roughly x's own ULP (~128 near 2 billion) - the "reduced" result
-    /// can land wildly outside the intended [0, y) range, even negative, which is exactly what
-    /// turned smoothstep's edges degenerate and made transitions flip instead of wipe. Reducing here
-    /// first, in Int32 (exact, no precision loss at any magnitude) down to a small range comfortably
-    /// inside float32's exact-integer window, then handing that small value to the shader, sidesteps
-    /// the problem entirely - the shader's own further mod-by-2/mod-by-360/etc. then operates on
-    /// numbers with no precision to lose.
+    /// either sign - and its own GLSL transition shaders compute directly on that raw magnitude
+    /// (`mod(float(iRandStatic.x) * .001, .3)` etc.), in float32, with whatever precision loss that
+    /// entails. That imprecision is baked into what real projectM actually renders - two IEEE754
+    /// float32 environments (Metal, GLSL) computing the *identical* sequence of operations on the
+    /// *identical* input are deterministic and agree, so replicating that same raw-value computation
+    /// here (this function does nothing but the int32->float32 cast) reproduces the same on-screen
+    /// result real projectM's own shader draws from this seed - matching it exactly, imprecision
+    /// included, rather than computing a mathematically "cleaner" value that happens to diverge from
+    /// what's actually on screen. (An earlier version of this function pre-reduced raw into a small
+    /// range with exact Int32 arithmetic specifically to *avoid* that imprecision - which fixed a
+    /// real, separate bug (smoothstep edges going degenerate from mod() returning the wrong *sign*
+    /// for a negative raw - see preset_transition_glsl_mod for that fix, which is still needed) but
+    /// also meant computing a different, cleaner number than what real projectM's own imprecise
+    /// arithmetic actually produces - matching only by chance, not by construction, which is exactly
+    /// the "matches sometimes, not others" behavior that gave this away.)
     private static func reducedPresetTransitionSeed(_ raw: Int32) -> Float {
-        let range: Int32 = 1_000_000
-        let reduced = ((raw % range) + range) % range
-        return Float(reduced)
+        Float(raw)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
