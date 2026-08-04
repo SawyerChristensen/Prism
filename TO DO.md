@@ -1,17 +1,5 @@
 # Prism — To Do
 ---
-### Transitions
-- [ ] There is some lag moving between songs/presets sometimes
-- [ ] Someties the album covers immediately flip between old/new
-
-### Apple Music Plugin
-- [x] Tell Apple Music this app is a visualizer extension under Window > Visualizer Settings
-- [x] Ship/point at real `.milk` presets — falls back to scanning `~/Documents/PrismCollection/BestMilkdropPresetsPack/Presets` (same source Prism.app's own bundling script uses) when the plugin's own bundled `Presets/` folder is empty
-  - [ ] Make sure this works with whatever the actual app ships with. (it wont be some external folder)
-- [x] Change a preset every song — wired `kVisualPluginChangeTrackMessage` to pick a new random preset (smooth crossfade)
-  - [ ] Reevaluate with the new album art transitioning framework above 
-- [ ] Spotify plugin? Research is it is possible to add an option under Spotify's View Menu
-
 ### Screen Saver Plugin
 - [ ] Add a screen saver target in settings
 - [ ] Have the starting screen be the only option (for now)
@@ -24,6 +12,7 @@
 
 ## Post Launch
 ---
+- [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
 - [ ] Better background removal
   - [ ] Allow for background color to be shown for certain albums defined in a new v2 "Artwork Preferences"
       - [ ] Allow for disabling of text detection in this new artwork preferences. the text should just be picked up by background detail. (see Once Twice Melody)

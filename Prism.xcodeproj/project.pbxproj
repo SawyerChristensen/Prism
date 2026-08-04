@@ -325,6 +325,7 @@
 				ACB7F39D157A3EDEFB63E4CB /* Frameworks */,
 				F983CF737A000C7357602B57 /* Resources */,
 				AA3C2D70E3F2382E4373A324 /* Embed Vendor Libraries */,
+				6CD7F17E032B4C5CAFF3574D /* Bundle Milkdrop Presets (.milk only) */,
 			);
 			buildRules = (
 			);
@@ -509,6 +510,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		6CD7F17E032B4C5CAFF3574D /* Bundle Milkdrop Presets (.milk only) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Milkdrop Presets (.milk only)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "exec \"${SRCROOT}/Prism/Scripts/copy_bundled_presets.sh\"";
+			showEnvVarsInLog = 0;
+		};
 		211CCFF14AFAFEF7D67740C5 /* Bundle Milkdrop Presets (.milk only) */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

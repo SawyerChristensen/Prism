@@ -6,11 +6,20 @@
 #import "PrismVisualizerView.h"
 #import "ProjectMEngine.h"
 #import <QuartzCore/QuartzCore.h>
+#import <os/log.h>
+
+// See PrismVisualizerPlugin.mm's matching PrismLog macro/comment - plain NSLog's dynamic
+// arguments get privacy-redacted to "<private>" in the unified log by default.
+#define PrismLog(fmt, ...) os_log(OS_LOG_DEFAULT, "[Prism Visualizer] " fmt, ##__VA_ARGS__)
 
 @implementation PrismVisualizerView {
     id<MTLDevice> _device;
     id<MTLCommandQueue> _commandQueue;
     CAMetalLayer *_metalLayer;
+    // Diagnostic-only: renderFrame fires up to 60x/sec, so state is logged at most once every
+    // ~2s (see renderFrame) rather than every call, to stay legible while still surfacing a
+    // persistently-broken pipeline (blank/grey output) within a couple seconds of it starting.
+    CFTimeInterval _lastDiagnosticLogTime;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -59,7 +68,18 @@
 }
 
 - (void)renderFrame {
+    // Diagnostic-only throttle (see _lastDiagnosticLogTime's doc comment) - decided once per call
+    // so every early-return branch below can log its own specific reason without re-checking the
+    // clock itself, and the final success path can log a heartbeat confirming frames are actually
+    // reaching nextDrawable/commit.
+    CFTimeInterval now = CACurrentMediaTime();
+    BOOL shouldLog = (now - _lastDiagnosticLogTime) >= 2.0;
+    if (shouldLog) {
+        _lastDiagnosticLogTime = now;
+    }
+
     if (self.engine == nil) {
+        if (shouldLog) PrismLog("renderFrame: no engine set on view yet");
         return;
     }
 
@@ -67,11 +87,16 @@
     size_t width = (size_t)drawableSize.width;
     size_t height = (size_t)drawableSize.height;
     if (width == 0 || height == 0) {
+        if (shouldLog) {
+            PrismLog("renderFrame: drawableSize is zero (%{public}g x %{public}g) - layer.bounds=%{public}@ contentsScale=%{public}g",
+                      drawableSize.width, drawableSize.height, NSStringFromRect(self.bounds), _metalLayer.contentsScale);
+        }
         return;
     }
 
     IOSurfaceRef ioSurface = [self.engine renderFrameWithWidth:width height:height];
     if (ioSurface == NULL) {
+        if (shouldLog) PrismLog("renderFrame: engine returned NULL IOSurface for %{public}zux%{public}zu", width, height);
         return;
     }
 
@@ -84,12 +109,18 @@
 
     id<MTLTexture> sourceTexture = [_device newTextureWithDescriptor:descriptor iosurface:ioSurface plane:0];
     if (sourceTexture == nil) {
+        if (shouldLog) PrismLog("renderFrame: newTextureWithDescriptor:iosurface: returned nil");
         return;
     }
 
     id<CAMetalDrawable> drawable = [_metalLayer nextDrawable];
     if (drawable == nil) {
+        if (shouldLog) PrismLog("renderFrame: nextDrawable returned nil (layer possibly not in a live window)");
         return;
+    }
+
+    if (shouldLog) {
+        PrismLog("renderFrame: OK, presenting %{public}zux%{public}zu", width, height);
     }
 
     id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];

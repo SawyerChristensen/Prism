@@ -23,6 +23,14 @@
 #import "ProjectMEngine.h"
 
 #import <Cocoa/Cocoa.h>
+#import <os/log.h>
+
+// Diagnostic-only, temporary: plain NSLog's "%@"/"%s" arguments get privacy-redacted to
+// "<private>" in the unified log by default (confirmed empirically - every diagnostic line came
+// back as "<private>" during the "blank grey screen" investigation, useless for figuring out what
+// Music.app/VisualizerService was actually sending). os_log with an explicit {public} modifier
+// bypasses that redaction. See the "stuck on first preset" / "blank grey" investigation.
+#define PrismLog(fmt, ...) os_log(OS_LOG_DEFAULT, "[Prism Visualizer] " fmt, ##__VA_ARGS__)
 
 #define kPrismVisualPluginName CFSTR("Prism")
 #define kPrismVisualPluginCreator 'prsm'
@@ -36,7 +44,12 @@ typedef struct {
 
     __unsafe_unretained NSView *destView; // owned by Music.app; only valid while active
 
-    Boolean playing;
+    // CFBridgingRetain'd NSString* - identifies the track last seen via kVisualPluginPlayMessage
+    // (see PrismTrackIdentity), so a genuine track change can be told apart from a resume-after-
+    // pause that also sends Play with no track change. NULL until the first Play message arrives.
+    // See the kVisualPluginPlayMessage case's own comment for why this exists instead of using
+    // kVisualPluginChangeTrackMessage ('Ctrk') directly.
+    void *lastTrackIdentity;
 } PrismPluginData;
 
 extern "C" OSStatus iTunesPluginMainMachO(OSType inMessage, PluginMessageInfo *inMessageInfoPtr, void *refCon)
@@ -95,12 +108,47 @@ static NSArray<NSURL *> *PrismPresetCandidates(void) {
         candidates = PrismScanForMilkPresets(kPrismDefaultPresetPackPath);
     }
     if (candidates.count == 0) {
-        NSLog(@"[Prism Visualizer] No .milk presets found in %@ or %@ — rendering blank until presets are available.",
-              bundledPresetsDir, kPrismDefaultPresetPackPath);
+        PrismLog("No .milk presets found in %{public}@ or %{public}@ — rendering blank until presets are available.",
+                  bundledPresetsDir, kPrismDefaultPresetPackPath);
+    } else {
+        PrismLog("Found %{public}lu candidate presets (bundled dir: %{public}@)",
+                  (unsigned long)candidates.count, bundledPresetsDir);
     }
 
     PrismCachedPresetCandidates = candidates;
     return candidates;
+}
+
+#pragma mark - Track identity (see kVisualPluginPlayMessage's own comment)
+
+/// `ITUniStr255` is a Pascal-style string: `str[0]` holds the length, `str[1...]` the characters
+/// (same convention `PrismGetVisualName` below already uses the other direction). Returns `nil`
+/// for a zero-length string, so callers can tell "field present but empty" apart from "field
+/// absent" without an extra length check of their own.
+static NSString *PrismStringFromITUniStr255(const UniChar *str) {
+    UniChar length = str[0];
+    if (length == 0) {
+        return nil;
+    }
+    return [NSString stringWithCharacters:&str[1] length:length];
+}
+
+/// A string identifying *this specific track*, built from whichever of name/artist/album
+/// `ITTrackInfo.validFields` actually reports as present - not just `name` alone, since two
+/// different tracks sharing a bare title (e.g. two different artists' "Intro") would otherwise
+/// look identical. `nil` only when `trackInfo` itself is NULL or reports none of the three fields
+/// valid - genuinely no identity to compare.
+static NSString *PrismTrackIdentity(const ITTrackInfo *trackInfo) {
+    if (trackInfo == NULL) {
+        return nil;
+    }
+    NSString *name = (trackInfo->validFields & kITTINameFieldMask) ? PrismStringFromITUniStr255(trackInfo->name) : nil;
+    NSString *artist = (trackInfo->validFields & kITTIArtistFieldMask) ? PrismStringFromITUniStr255(trackInfo->artist) : nil;
+    NSString *album = (trackInfo->validFields & kITTIAlbumFieldMask) ? PrismStringFromITUniStr255(trackInfo->album) : nil;
+    if (name == nil && artist == nil && album == nil) {
+        return nil;
+    }
+    return [NSString stringWithFormat:@"%@|%@|%@", name ?: @"", artist ?: @"", album ?: @""];
 }
 
 /// Picks and loads a random preset. Called on activate (hard cut - nothing to crossfade *from*
@@ -113,8 +161,45 @@ static void PrismLoadRandomPreset(ProjectMEngine *engine, BOOL smoothTransition)
     }
 
     NSURL *presetURL = candidates[arc4random_uniform((uint32_t)candidates.count)];
-    NSLog(@"[Prism Visualizer] Loading preset: %@", presetURL.path);
+    PrismLog("Loading preset (smooth=%{public}d): %{public}@", smoothTransition, presetURL.path);
     [engine loadPresetAtURL:presetURL smoothTransition:smoothTransition];
+}
+
+/// Advances to a new random preset iff `trackInfo` identifies a genuinely different track than
+/// `data->lastTrackIdentity` (see `PrismTrackIdentity`) - called from both
+/// `kVisualPluginPlayMessage` and `kVisualPluginChangeTrackMessage`, sharing this one de-dup path
+/// so getting both for the same track change (however unlikely) still only loads one preset.
+///
+/// This exists because `kVisualPluginChangeTrackMessage` ('Ctrk') - which this plugin originally
+/// (and, per Apple's own iTunes Visual SDK sample/Tech Note 2016 and the open-source projectM
+/// Music plugin this file is modeled on, "correctly") relied on exclusively - was empirically
+/// confirmed to never arrive at all from the modern Music.app/VisualizerService host on macOS:
+/// logging every message this plugin receives (excluding the high-frequency Pulse/Draw ones) over
+/// a full session, including a real track skip, showed only 'null' (Idle), 'Vfrm' (resize),
+/// 'vstp' (Stop) and 'Vply' (Play) - Stop immediately followed by Play is exactly what a real
+/// track skip looks like in this host, with no 'Ctrk' anywhere. Comparing track identity across
+/// Play messages (rather than just reloading unconditionally on every Play) is what keeps a
+/// resume-after-pause - which also sends Play with no track change - from picking a new preset
+/// every single time, the exact failure mode the original ChangeTrack-only design was trying to
+/// avoid by not wiring this to Play in the first place.
+static void PrismHandlePossibleTrackChange(PrismPluginData *data, const ITTrackInfo *trackInfo) {
+    if (data == NULL || data->enginePtr == NULL) {
+        return;
+    }
+    NSString *identity = PrismTrackIdentity(trackInfo);
+    if (identity == nil) {
+        return;
+    }
+    NSString *lastIdentity = (__bridge NSString *)data->lastTrackIdentity;
+    if ([identity isEqualToString:lastIdentity]) {
+        return;
+    }
+    if (data->lastTrackIdentity != NULL) {
+        CFBridgingRelease(data->lastTrackIdentity);
+    }
+    data->lastTrackIdentity = (void *)CFBridgingRetain(identity);
+    PrismLog("Track identity changed to %{public}@ - advancing preset", identity);
+    PrismLoadRandomPreset((__bridge ProjectMEngine *)data->enginePtr, /*smoothTransition=*/YES);
 }
 
 #pragma mark - Visual lifecycle
@@ -122,12 +207,15 @@ static void PrismLoadRandomPreset(ProjectMEngine *engine, BOOL smoothTransition)
 static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW destView, OptionBits options) {
     (void)options;
 
+    PrismLog("Activate: destView=%{public}@ bounds=%{public}@ window=%{public}@",
+              destView, NSStringFromRect(destView.bounds), destView.window);
+
     data->destView = destView;
 
     if (data->enginePtr == NULL) {
         ProjectMEngine *engine = [[ProjectMEngine alloc] init];
         if (engine == nil) {
-            NSLog(@"[Prism Visualizer] Failed to create ProjectMEngine (EGL/projectM init failed) — see log above.");
+            PrismLog("Failed to create ProjectMEngine (EGL/projectM init failed) — see log above.");
             return memFullErr;
         }
         data->enginePtr = (void *)CFBridgingRetain(engine);
@@ -140,6 +228,8 @@ static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW 
         view.engine = (__bridge ProjectMEngine *)data->enginePtr;
         [destView addSubview:view];
         data->viewPtr = (void *)CFBridgingRetain(view);
+        PrismLog("Created PrismVisualizerView with frame=%{public}@, added to destView (subviews now %{public}lu)",
+                  NSStringFromRect(view.frame), (unsigned long)destView.subviews.count);
     }
 
     return noErr;
@@ -158,6 +248,14 @@ static OSStatus PrismDeactivateVisual(PrismPluginData *data) {
         data->enginePtr = NULL;
     }
 
+    // A fresh engine on the next Activate has no preset history of its own - dropping this means
+    // that engine's first Play message always advances (matching Activate's own hard-cut load),
+    // rather than potentially comparing against a track identity from a now-destroyed engine.
+    if (data->lastTrackIdentity != NULL) {
+        CFBridgingRelease(data->lastTrackIdentity);
+        data->lastTrackIdentity = NULL;
+    }
+
     data->destView = nil;
 
     return noErr;
@@ -167,6 +265,7 @@ static OSStatus PrismResizeVisual(PrismPluginData *data) {
     if (data->viewPtr != NULL && data->destView != nil) {
         PrismVisualizerView *view = (__bridge PrismVisualizerView *)data->viewPtr;
         view.frame = data->destView.bounds;
+        PrismLog("Resize: destView.bounds=%{public}@", NSStringFromRect(data->destView.bounds));
     }
     return noErr;
 }
@@ -236,9 +335,31 @@ static OSStatus PrismRegisterVisualPlugin(PluginMessageInfo *initMessageInfo) {
 
 #pragma mark - Message dispatch
 
+/// Diagnostic-only: renders an OSType message code back into its 4-char literal (e.g. 'Vpls') so
+/// log lines read the same as the kVisualPlugin*Message names in iTunesVisualAPI.h, instead of a
+/// bare decimal. Temporary aid for confirming which messages Music.app actually sends this plugin
+/// at runtime (see the "stuck on first preset" investigation) - safe to leave in, cheap, and only
+/// invoked at most once per message excluding the high-frequency Pulse/Draw ones (see below).
+static NSString *PrismFourCharCodeString(OSType code) {
+    char chars[5] = {
+        (char)((code >> 24) & 0xFF), (char)((code >> 16) & 0xFF),
+        (char)((code >> 8) & 0xFF), (char)(code & 0xFF), 0
+    };
+    return [NSString stringWithUTF8String:chars];
+}
+
 static OSStatus PrismVisualPluginHandler(OSType message, VisualPluginMessageInfo *messageInfo, void *refCon) {
     PrismPluginData *data = (PrismPluginData *)refCon;
     OSStatus status = noErr;
+
+    // Every message except the two that fire dozens of times a second (Pulse at up to 60Hz, Draw
+    // alongside it) - logging those would drown out everything else. This is what tells us
+    // definitively whether kVisualPluginChangeTrackMessage ('chtr') is actually arriving from
+    // Music.app at all, and in what order relative to Activate/Play, rather than guessing.
+    if (message != kVisualPluginPulseMessage && message != kVisualPluginDrawMessage) {
+        PrismLog("Message: '%{public}@' (engine=%{public}s)", PrismFourCharCodeString(message),
+                  (data != NULL && data->enginePtr != NULL) ? "alive" : "nil");
+    }
 
     switch (message) {
         case kVisualPluginInitMessage: {
@@ -264,22 +385,27 @@ static OSStatus PrismVisualPluginHandler(OSType message, VisualPluginMessageInfo
         case kVisualPluginDisableMessage:
         case kVisualPluginIdleMessage:
         case kVisualPluginConfigureMessage:
-        case kVisualPluginPlayMessage:
         case kVisualPluginCoverArtMessage:
         case kVisualPluginSetPositionMessage: {
             // Not used: Prism doesn't overlay track metadata/artwork in the visualizer itself.
             break;
         }
 
+        case kVisualPluginPlayMessage: {
+            // The actual, empirically-confirmed source of track-change detection in this host -
+            // see PrismHandlePossibleTrackChange's own doc comment for why
+            // kVisualPluginChangeTrackMessage alone (below) isn't enough. Track-identity
+            // comparison inside that function is what keeps a resume-after-pause (which also
+            // sends Play with no track change) from picking a new preset every time.
+            PrismHandlePossibleTrackChange(data, messageInfo->u.playMessage.trackInfo);
+            break;
+        }
+
         case kVisualPluginChangeTrackMessage: {
-            // Fires on every track change (including the very first track, right after Activate
-            // already picked one - a second pick this soon just means song #1 sometimes gets two
-            // presets back to back, harmless). Deliberately not wired to kVisualPluginPlayMessage
-            // too, which also fires on resume-after-pause with no track change - that would pick
-            // a new preset on every pause/resume, not just real song changes.
-            if (data->enginePtr != NULL) {
-                PrismLoadRandomPreset((__bridge ProjectMEngine *)data->enginePtr, /*smoothTransition=*/YES);
-            }
+            // Kept as a harmless secondary path in case some Music/iTunes version does send this
+            // after all - PrismHandlePossibleTrackChange's own de-dup (by track identity) means
+            // this can never double-advance for a track kVisualPluginPlayMessage already handled.
+            PrismHandlePossibleTrackChange(data, messageInfo->u.changeTrackMessage.trackInfo);
             break;
         }
 
@@ -314,7 +440,8 @@ static OSStatus PrismVisualPluginHandler(OSType message, VisualPluginMessageInfo
         }
 
         case kVisualPluginStopMessage: {
-            data->playing = false;
+            // Not used: no playback-state bookkeeping needed here - track-change detection reads
+            // trackInfo directly off kVisualPluginPlayMessage (see PrismHandlePossibleTrackChange).
             break;
         }
 
