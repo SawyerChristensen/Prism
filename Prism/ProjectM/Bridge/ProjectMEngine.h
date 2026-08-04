@@ -1,5 +1,6 @@
 #pragma once
 
+#import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import <IOSurface/IOSurface.h>
 
@@ -22,6 +23,35 @@ NS_ASSUME_NONNULL_BEGIN
 /// currently displayed preset keeps rendering (this matches projectm_load_preset_file's
 /// own behavior). Failures are reported asynchronously via -presetLoadFailureHandler.
 - (void)loadPresetAtURL:(NSURL *)url smoothTransition:(BOOL)smoothTransition NS_SWIFT_NAME(loadPreset(at:smoothTransition:));
+
+/// Loads projectM's own built-in idle preset (Prism's branded logo/headphones feedback loop -
+/// see Vendor/projectm-local-patches/0002-custom-idle-logo.patch) via the special "idle://" URI
+/// real projectM's PresetFactory reserves for it (Factory.cpp) - the same preset the core engine
+/// falls back to on its own whenever no preset is active (ProjectM.cpp's RenderFrame). Exposed as
+/// its own method rather than routed through -loadPresetAtURL:smoothTransition: because that one
+/// builds its filename from NSURL.fileSystemRepresentation, which only makes sense for real file
+/// URLs - "idle://..." isn't one.
+- (void)loadIdlePresetWithSmoothTransition:(BOOL)smoothTransition NS_SWIFT_NAME(loadIdlePreset(smoothTransition:));
+
+/// Loads a preset directly from in-memory Milkdrop preset text (projectm_load_preset_data) rather
+/// than a file on disk. Used for building per-target idle-preset variants that swap in a different
+/// texture than projectM's own compiled-in "idlem"/"idleheadphones" (see
+/// -setTextureOverrideImage:forName: below) without needing a real file anywhere - e.g.
+/// PrismVisualizerPlugin's own idle preset, a copy of the real idle preset's text with its two
+/// shapecode image names pointed at a texture name Prism.app never uses.
+- (void)loadPresetFromData:(NSString *)presetText smoothTransition:(BOOL)smoothTransition NS_SWIFT_NAME(loadPreset(data:smoothTransition:));
+
+/// Registers raw pixel data projectM should hand back the next time some preset's shapecode/
+/// texture reference asks for a texture named `name`, instead of resolving it from the filesystem
+/// - backed by projectM's own texture-load-event callback (Vendor/projectm/src/api/include/
+/// projectM-4/callbacks.h), lazily installed on the underlying instance the first time this is
+/// called. Only ever consulted for names projectM doesn't already have preloaded -
+/// TextureManager::Preload unconditionally registers "idlem"/"idleheadphones"/the noise textures
+/// at construction time, before any preset ever asks for them, so this can't override *those* by
+/// name; give a custom preset its own distinct texture name instead (see -loadPresetFromData:
+/// smoothTransition: above). Pass a nil image to clear a previously-registered override for that
+/// name. Safe to call at any time; takes effect the next time a preset actually requests that name.
+- (void)setTextureOverrideImage:(nullable NSImage *)image forName:(NSString *)name NS_SWIFT_NAME(setTextureOverride(_:forName:));
 
 /// Called when projectM reports a preset failed to load. Runs on whatever thread
 /// projectM's callback fires on (in practice, the same thread that calls

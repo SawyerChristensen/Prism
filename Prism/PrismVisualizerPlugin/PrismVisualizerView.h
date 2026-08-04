@@ -24,6 +24,18 @@ NS_ASSUME_NONNULL_BEGIN
 /// Vpls (pulse) message — see PrismVisualizerPlugin.mm's VisualPluginHandler.
 - (void)renderFrame;
 
+/// Starts an internal timer that calls -renderFrame on its own, independent of Music.app's Vpls
+/// (pulse) messages. Music only sends those while a track is actually playing, so without this,
+/// renderFrame was never called at all while paused/stopped or before the first Play - the layer
+/// just sat on whatever NSView draws by default (a blank/grey view), even after loading the idle
+/// preset onto the engine, since nothing ever asked it to actually draw a frame. Idempotent - a
+/// second call while already running is a no-op. See PrismVisualizerPlugin.mm's Activate/
+/// Deactivate.
+- (void)startRendering;
+
+/// Stops the timer started by -startRendering. Safe to call even if it was never started.
+- (void)stopRendering;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -20,6 +20,9 @@
     // ~2s (see renderFrame) rather than every call, to stay legible while still surfacing a
     // persistently-broken pipeline (blank/grey output) within a couple seconds of it starting.
     CFTimeInterval _lastDiagnosticLogTime;
+    // See -startRendering's doc comment - drives renderFrame independent of Music.app's own Vpls
+    // cadence, which only arrives during actual playback.
+    NSTimer *_renderTimer;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -51,6 +54,30 @@
 
 - (BOOL)wantsUpdateLayer {
     return YES;
+}
+
+- (void)dealloc {
+    [self stopRendering];
+}
+
+- (void)startRendering {
+    if (_renderTimer != nil) {
+        return;
+    }
+    // matches the 60Hz pulseRateInHz Music.app is asked for at registration - see
+    // PrismRegisterVisualPlugin. Scheduled in the common run loop modes so it keeps firing while
+    // Music.app's own UI is tracking a mouse/menu, not just the default mode.
+    _renderTimer = [NSTimer timerWithTimeInterval:(1.0 / 60.0)
+                                            target:self
+                                          selector:@selector(renderFrame)
+                                          userInfo:nil
+                                           repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_renderTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopRendering {
+    [_renderTimer invalidate];
+    _renderTimer = nil;
 }
 
 - (void)setFrameSize:(NSSize)newSize {

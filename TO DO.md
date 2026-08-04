@@ -6,12 +6,16 @@
   - [ ] Remove the headphones and glyph from the animation and replace with an apple logo (set this as the default glyph (without headphones) in the apple music plugin too?)
 
 ### Misc
-- [ ] The starting screen should only display if there is nothing playing already. if a song is playing and the app opens, the starting screen should be skipped entirely and never display. while the app is opening (bobbing in dock), it should get the song thats playing, do the album photo ops, match it to a preset, and then start displaying everything immediately when the first window appears. This should also work for the Apple Music plugin. If there is nothing playing in apple music, display the starting screen. if there is something playing, immediately move to display the album art and a matching preset.
-- [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton.
+- [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton. Comment out log statements
 - [ ] The transition "presets" should never be viewed just by themselves. This results in a black screen. This should only be used as transitions. Make sure they are out of consideratino of the search function
+- [ ] remove the transition names in the upper left and strip all profanity from being displayed in the titles
+  - [ ] review questionable names
 
 ## Post Launch
 ---
+- [x] Make the Apple Music plugin default to the built in starting animation "Geiss & Sperl - Feedback (projectM idle HDR mix).milk" if nothing is playing. Else, if something is playing, match a preset to it and display it
+  - [ ] Add the preset matching algorithm to the apple music plugin
+  - [ ] Add a moving album cover to the apple music plugin?
 - [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
 - [ ] Better background removal
   - [ ] Allow for background color to be shown for certain albums defined in a new v2 "Artwork Preferences"
