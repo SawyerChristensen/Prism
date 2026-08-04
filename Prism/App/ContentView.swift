@@ -381,12 +381,14 @@ struct ContentView: View {
         // preset was loaded (including explicit ⌘O/drag-and-drop/history/launch-restore loads, which
         // bypass the curated-corpus guarantee that ships in Resources/Presets). Steps forward the
         // same way auto-cycle would, then clears the flag so it can fire again for the next preset.
-        .onChange(of: visualizerModel.slowPresetDetected) { _, newValue in
-            guard let newValue else { return }
-            PrismDebug.trace("preset: runtime watchdog flagged \(newValue.lastPathComponent) as too slow - advancing")
-            visualizerModel.slowPresetDetected = nil
-            loadNextSequentialPreset()
-        }
+        // Disabled for now (see ProjectMCoordinator.updateSlowPresetWatchdog's own call site) - all
+        // bundled presets already measure 60fps+, so commented out rather than removed.
+        // .onChange(of: visualizerModel.slowPresetDetected) { _, newValue in
+        //     guard let newValue else { return }
+        //     PrismDebug.trace("preset: runtime watchdog flagged \(newValue.lastPathComponent) as too slow - advancing")
+        //     visualizerModel.slowPresetDetected = nil
+        //     loadNextSequentialPreset()
+        // }
         .alert(
             "Couldn't Load Preset",
             isPresented: Binding(

@@ -1,9 +1,13 @@
 #!/bin/bash
 # Run Script build phase: stages the .milk preset pack straight into the built app's
 # Resources/Presets, skipping the pack's per-preset .jpg thumbnails (NestDrop preview images
-# Prism never renders — see MilkdropPresetLibrary.swift). Keeps the pack out of git and out of
-# Xcode's own file list (both would be painful at this file count) while still landing in every
-# local build/archive, so an exported app has a working preset library out of the box.
+# Prism never renders — see MilkdropPresetLibrary.swift) and its "! Transition" folder (NestDrop's
+# convention for presets meant only for brief manual triggering as a VJ transition effect, never
+# for full-song display — MilkdropPresetLibrary.rescan() already filters these out of any library
+# at runtime too, this just keeps them from being staged into the bundle at all). Keeps the pack
+# out of git and out of Xcode's own file list (both would be painful at this file count) while
+# still landing in every local build/archive, so an exported app has a working preset library out
+# of the box.
 #
 # Defaults to the curated 60fps+ subset (dev-notes/preset-fps-benchmark-2026-08-04) of the full
 # ~9,795-file BestMilkdropPresetsPack, not that full pack itself — every preset in it already
@@ -23,6 +27,7 @@ fi
 mkdir -p "$DEST"
 rsync -a --delete \
     --exclude='*.jpg' --exclude='*.jpeg' --exclude='.DS_Store' \
+    --exclude='! Transition/' \
     "$SRC/" "$DEST/"
 
 count=$(find "$DEST" -name '*.milk' | wc -l | tr -d ' ')

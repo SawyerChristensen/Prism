@@ -53,8 +53,18 @@ guard let enumerator = FileManager.default.enumerator(at: presetPackDir, includi
 var traitsByFilename: [String: MilkdropPresetVisualTraits] = [:]
 var duplicateFilenames: [String] = []
 
+let presetPackDirComponentCount = presetPackDir.standardizedFileURL.pathComponents.count
+
 for case let url as URL in enumerator {
     guard url.pathExtension.lowercased() == "milk" else { continue }
+    // Skip NestDrop's "!"-prefixed folders (e.g. "! Transition") — presets meant only for brief
+    // manual triggering as a VJ transition effect, never for full-song display. See
+    // MilkdropPresetLibrary.isUnderBangPrefixedFolder's own doc comment for the full story on why
+    // these need an explicit name-based skip (a pure FPS-threshold curation pass, which is what
+    // built PerformantMilkdropPresetsPack, let them straight through — they're some of the
+    // fastest-rendering presets in the whole corpus).
+    let relativeComponents = url.standardizedFileURL.pathComponents.dropFirst(presetPackDirComponentCount).dropLast()
+    guard !relativeComponents.contains(where: { $0.hasPrefix("!") }) else { continue }
     guard let traits = MilkdropPresetVisualTraitsAnalyzer.analyze(url) else {
         FileHandle.standardError.write("warning: couldn't read \(url.path) — skipping\n".data(using: .utf8)!)
         continue

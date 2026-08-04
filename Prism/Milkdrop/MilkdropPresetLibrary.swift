@@ -150,9 +150,23 @@ final class MilkdropPresetLibrary {
             presetURLs = []
             return
         }
+        let rootComponentCount = rootURL.standardizedFileURL.pathComponents.count
         scannedPresetURLs = enumerator.compactMap { $0 as? URL }
             .filter { $0.pathExtension.lowercased() == "milk" }
+            .filter { !Self.isUnderBangPrefixedFolder($0, rootComponentCount: rootComponentCount) }
             .sorted { $0.path < $1.path }
         presetURLs = scannedPresetURLs
+    }
+
+    /// NestDrop packs use a leading "!" on a top-level folder (e.g. "! Transition") to mark
+    /// presets meant only for brief manual triggering as a VJ transition effect, not for normal
+    /// display — see BestMilkdropPresetsPack's own "! Transition" folder, 4 near-instant
+    /// fade-to-black presets that measured as the *fastest*-rendering presets in the whole corpus
+    /// (dev-notes/preset-fps-benchmark-2026-08-04), so a pure FPS-threshold curation pass let them
+    /// straight through into PerformantMilkdropPresetsPack. Checked against every path component
+    /// under the root (not just the immediate parent) so a "!"-prefixed folder nested deeper than
+    /// top-level is caught too.
+    private static func isUnderBangPrefixedFolder(_ url: URL, rootComponentCount: Int) -> Bool {
+        url.standardizedFileURL.pathComponents.dropFirst(rootComponentCount).dropLast().contains { $0.hasPrefix("!") }
     }
 }

@@ -1,10 +1,7 @@
 # Prism — To Do
 ---
 ### Misc
-- [ ] Deprecate the performance scanner "MilkdropPresetComplexityAnalyzer.swift"
-  - [ ] Write a script that goes through all presets, runs them for 5 seconds and records their performance so that we can include/exclude presets over/under a certain fps
 - [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton. Comment out log statements
-- [ ] The transition "presets" should never be viewed just by themselves. This results in a black screen. This should only be used as transitions. Make sure they are out of consideratino of the search function
 - [ ] Remove the transition names in the upper left and strip all profanity from being displayed in the titles
   - [ ] Review questionable names
 

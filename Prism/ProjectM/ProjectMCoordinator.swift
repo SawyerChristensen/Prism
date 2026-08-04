@@ -781,7 +781,10 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         // presets would still animate ~3x too fast on a 120Hz display. See PerFrameContext.cpp's
         // `fps`/`frame` builtins for why this only fixes presets that actually use `fps`.
         engine?.setTargetFPS(Int32(max(1, min(1000, smoothedFPS.rounded()))))
-        updateSlowPresetWatchdog(dt: dt)
+        // Disabled for now (all bundled presets already measure 60fps+ per the curated-corpus
+        // benchmark below) — commented out rather than removed so it can come back if non-bundled
+        // presets (⌘O/drag-and-drop/history/launch-restore) turn out to need the live backstop again.
+        // updateSlowPresetWatchdog(dt: dt)
     }
 
     /// Empirical backstop for the curated-corpus guarantee that ships in Resources/Presets (see
@@ -795,23 +798,24 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     /// or how it was loaded, and gets reported once via model.slowPresetDetected so ContentView
     /// can step past it. The grace period absorbs the transient dip every fresh preset load causes
     /// (shader compile, transition ramp-up) without needing to special-case it here.
-    private func updateSlowPresetWatchdog(dt: Double) {
-        guard let currentURL = lastLoadedPresetURL else { return }
-        if currentURL != watchdogPresetURL {
-            watchdogPresetURL = currentURL
-            slowFrameAccumulatedSeconds = 0
-        }
-        guard smoothedFPS < Self.slowFPSThreshold else {
-            slowFrameAccumulatedSeconds = 0
-            return
-        }
-        slowFrameAccumulatedSeconds += dt
-        guard slowFrameAccumulatedSeconds >= Self.slowPresetGracePeriodSeconds else { return }
-        guard reportedSlowPresetURL != currentURL else { return }
-        reportedSlowPresetURL = currentURL
-        NSLog("ProjectMCoordinator: preset stuck at ~\(Int(smoothedFPS.rounded()))fps for \(String(format: "%.1f", slowFrameAccumulatedSeconds))s, flagging as slow: \(currentURL.lastPathComponent)")
-        model?.slowPresetDetected = currentURL
-    }
+    //
+    // private func updateSlowPresetWatchdog(dt: Double) {
+    //     guard let currentURL = lastLoadedPresetURL else { return }
+    //     if currentURL != watchdogPresetURL {
+    //         watchdogPresetURL = currentURL
+    //         slowFrameAccumulatedSeconds = 0
+    //     }
+    //     guard smoothedFPS < Self.slowFPSThreshold else {
+    //         slowFrameAccumulatedSeconds = 0
+    //         return
+    //     }
+    //     slowFrameAccumulatedSeconds += dt
+    //     guard slowFrameAccumulatedSeconds >= Self.slowPresetGracePeriodSeconds else { return }
+    //     guard reportedSlowPresetURL != currentURL else { return }
+    //     reportedSlowPresetURL = currentURL
+    //     NSLog("ProjectMCoordinator: preset stuck at ~\(Int(smoothedFPS.rounded()))fps for \(String(format: "%.1f", slowFrameAccumulatedSeconds))s, flagging as slow: \(currentURL.lastPathComponent)")
+    //     model?.slowPresetDetected = currentURL
+    // }
 
     private static func buildPipelineState(device: MTLDevice, pixelFormat: MTLPixelFormat) -> MTLRenderPipelineState? {
         guard let library = device.makeDefaultLibrary(),
