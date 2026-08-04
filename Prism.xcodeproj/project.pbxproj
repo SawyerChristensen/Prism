@@ -9,20 +9,33 @@
 /* Begin PBXBuildFile section */
 		070D225266B646B00099D9AA /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
 		0CA3166A5B4FE7D54556817E /* ProjectMEGLContext.mm in Sources */ = {isa = PBXBuildFile; fileRef = ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */; };
+		0D9211B77735E2DBCA94286E /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
+		0FE630F43EF1C1F5BDDB1904 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */; };
+		130EF1A181DEA5F2D9B53FFF /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
+		21C6C9C832B3058E7062CFE0 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		2A5549CFA303D1A4092A2C57 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		2C0D0C22A3AAF3AFCB619734 /* ProjectMEGLContext.mm in Sources */ = {isa = PBXBuildFile; fileRef = ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */; };
 		3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		3825490B1DEE668ADCD42AE3 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
+		3E98E8CE91AD8AD09A1CE3C4 /* ScreenSaver.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8B49BCC83E0DF6CF19D5084 /* ScreenSaver.framework */; };
 		4006B4EBE01A1EA73FF2BFB9 /* PrismVisualizerPlugin.mm in Sources */ = {isa = PBXBuildFile; fileRef = 26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */; };
+		50D8E41BDC4CE5A177CD4422 /* ProjectMEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = 49AF7952B8A7DA5D1E6967E0 /* ProjectMEngine.mm */; };
 		54E6E9D3DEF29FB951CEA585 /* IOSurface.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */; };
 		589124ADE8E728D124B03C91 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
+		5E93D7BA0DE579E1D93C5719 /* PrismScreenSaverView.mm in Sources */ = {isa = PBXBuildFile; fileRef = A82BF0ECEE9494FCC8A3BA67 /* PrismScreenSaverView.mm */; };
 		62F28C248C9EDB552DB5DFA6 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		66BC70B57978750B8BC585AE /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		6ABE56BD81B4897FBE8B5A1F /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		6FCA5057353640E09DDB1BB5 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		76C8DF108D27DE361E91048B /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
+		80C21BC3A9BE5886F3D2D830 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		8869823D97EF537A43DF7581 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
 		962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */; };
+		96BD263678E83EA41F6023CE /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
 		9A772EE971EE68F26A25766F /* iTunesAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */; };
 		A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */; };
+		A2A9D0B423B0A785B86CCAA6 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
 		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 		BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
@@ -30,10 +43,13 @@
 		C11A6D2720BC2714F7BCDF40 /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
 		D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		D7B97A958DF952647C0F710F /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
+		DBC328D778D0E1F4F0A21F99 /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
 		E07F78A5C684AAC09A11EB73 /* Presets in Resources */ = {isa = PBXBuildFile; fileRef = 16138E62CBECE155E2886C7B /* Presets */; };
 		EB6A4113E5D80C6295263942 /* ProjectMEngine.mm in Sources */ = {isa = PBXBuildFile; fileRef = 49AF7952B8A7DA5D1E6967E0 /* ProjectMEngine.mm */; };
 		F3F4447B3645E2C8194F5607 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 802566EE0A89521879877FAC /* QuartzCore.framework */; };
+		F48E5798C8AB9A04CE1E8132 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 802566EE0A89521879877FAC /* QuartzCore.framework */; };
 		FC5D65803B2FE1E851BA881F /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		FE1FBF2D5D64E2CFC79E3A42 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +114,19 @@
 			name = "Embed Vendor Libraries";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C5ACE588BA39170B4EBC4F06 /* Embed Vendor Libraries */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				21C6C9C832B3058E7062CFE0 /* libprojectM-4.dylib in Embed Vendor Libraries */,
+				76C8DF108D27DE361E91048B /* libEGL.dylib in Embed Vendor Libraries */,
+				2A5549CFA303D1A4092A2C57 /* libGLESv2.dylib in Embed Vendor Libraries */,
+			);
+			name = "Embed Vendor Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +134,7 @@
 		16138E62CBECE155E2886C7B /* Presets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Presets; sourceTree = "<group>"; };
 		16EE0B28541A385507882EDB /* MilkQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MilkQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEngine.h; path = Prism/ProjectM/Bridge/ProjectMEngine.h; sourceTree = SOURCE_ROOT; };
+		25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */ = {isa = PBXFileReference; explicitFileType = "wrapper.plug-in"; includeInIndex = 0; name = PrismScreenSaver.bundle; path = PrismScreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
 		26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerPlugin.mm; sourceTree = "<group>"; };
 		3454D9F9C1E7A67D6E72B2C8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = iTunesAPI.cpp; sourceTree = "<group>"; };
@@ -114,16 +144,20 @@
 		66DECD745A5A6D582CF50763 /* libEGL.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libEGL.dylib; path = Vendor/angle/lib/libEGL.dylib; sourceTree = SOURCE_ROOT; };
 		68CBBCF102DF19A60175B98F /* MilkQuickLook.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = MilkQuickLook.entitlements; sourceTree = "<group>"; };
 		70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerView.mm; sourceTree = "<group>"; };
+		742BFF4793B84DF6FB67EA3C /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = image.icns; name = MilkDocumentIcon.icns; path = ../MilkDocumentIcon.icns; sourceTree = "<group>"; };
+		77133F83944300082AC1F72A /* PrismScreenSaverView.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = PrismScreenSaverView.h; sourceTree = "<group>"; };
 		7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = "libprojectM-4.dylib"; path = "Vendor/projectm-build/lib/libprojectM-4.dylib"; sourceTree = SOURCE_ROOT; };
 		802566EE0A89521879877FAC /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/QuartzCore.framework; sourceTree = DEVELOPER_DIR; };
 		88B6666289C463A73A719C34 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		A82BF0ECEE9494FCC8A3BA67 /* PrismScreenSaverView.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismScreenSaverView.mm; sourceTree = "<group>"; };
 		ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = ProjectMEGLContext.mm; path = Prism/ProjectM/Bridge/ProjectMEGLContext.mm; sourceTree = SOURCE_ROOT; };
 		AD4811541FD25BCDA0AD02D1 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Metal.framework; sourceTree = DEVELOPER_DIR; };
 		BE0D51DF3013C06900F41558 /* TO DO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "TO DO.md"; sourceTree = "<group>"; };
 		BEAB8FDD3012B50A005F68B6 /* Prism.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Prism.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FEC3012B50C005F68B6 /* PrismTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C8B49BCC83E0DF6CF19D5084 /* ScreenSaver.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenSaver.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/ScreenSaver.framework; sourceTree = DEVELOPER_DIR; };
 		CB63489DA355B802D3656A96 /* libGLESv2.dylib */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = "compiled.mach-o.dylib"; name = libGLESv2.dylib; path = Vendor/angle/lib/libGLESv2.dylib; sourceTree = SOURCE_ROOT; };
 		CEF603000C93038CE77196F6 /* iTunesAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iTunesAPI.h; sourceTree = "<group>"; };
 		D0EADEB2D32B6E8674831D5A /* PrismVisualizerView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PrismVisualizerView.h; sourceTree = "<group>"; };
@@ -137,6 +171,8 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				PrismScreenSaver/Info.plist,
+				PrismScreenSaver/PrismScreenSaverView.mm,
 				PrismVisualizerPlugin/Info.plist,
 				PrismVisualizerPlugin/iTunesSDK/iTunesAPI.cpp,
 				PrismVisualizerPlugin/Presets/README.md,
@@ -158,11 +194,15 @@
 		};
 		BEAB8FEF3012B50C005F68B6 /* PrismTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = PrismTests;
 			sourceTree = "<group>";
 		};
 		BEAB8FF93012B50C005F68B6 /* PrismUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = PrismUITests;
 			sourceTree = "<group>";
 		};
@@ -174,6 +214,22 @@
 			buildActionMask = 2147483647;
 			files = (
 				BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		86F30DABBABA24A2636B88DE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE1FBF2D5D64E2CFC79E3A42 /* Cocoa.framework in Frameworks */,
+				A2A9D0B423B0A785B86CCAA6 /* libprojectM-4.dylib in Frameworks */,
+				80C21BC3A9BE5886F3D2D830 /* libEGL.dylib in Frameworks */,
+				DBC328D778D0E1F4F0A21F99 /* libGLESv2.dylib in Frameworks */,
+				0D9211B77735E2DBCA94286E /* Cocoa.framework in Frameworks */,
+				96BD263678E83EA41F6023CE /* Metal.framework in Frameworks */,
+				F48E5798C8AB9A04CE1E8132 /* QuartzCore.framework in Frameworks */,
+				0FE630F43EF1C1F5BDDB1904 /* IOSurface.framework in Frameworks */,
+				3E98E8CE91AD8AD09A1CE3C4 /* ScreenSaver.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -255,6 +311,7 @@
 				AD4811541FD25BCDA0AD02D1 /* Metal.framework */,
 				802566EE0A89521879877FAC /* QuartzCore.framework */,
 				E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */,
+				C8B49BCC83E0DF6CF19D5084 /* ScreenSaver.framework */,
 			);
 			name = "OS X";
 			sourceTree = "<group>";
@@ -299,6 +356,7 @@
 				8F631662F44AB053F8B8219F /* Frameworks */,
 				3C1AB62A39F5C2E0B9079290 /* MilkQuickLook */,
 				1AD4912198480A0651ABB5F5 /* PrismVisualizerPlugin */,
+				DF1E80AAF34E66EE5C4787B1 /* PrismScreenSaver */,
 			);
 			sourceTree = "<group>";
 		};
@@ -310,13 +368,43 @@
 				BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */,
 				16EE0B28541A385507882EDB /* MilkQuickLook.appex */,
 				D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */,
+				25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		DF1E80AAF34E66EE5C4787B1 /* PrismScreenSaver */ = {
+			isa = PBXGroup;
+			children = (
+				77133F83944300082AC1F72A /* PrismScreenSaverView.h */,
+				A82BF0ECEE9494FCC8A3BA67 /* PrismScreenSaverView.mm */,
+				742BFF4793B84DF6FB67EA3C /* Info.plist */,
+			);
+			name = PrismScreenSaver;
+			path = Prism/PrismScreenSaver;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		3D78C2D736F06E3BF0674D4C /* PrismScreenSaver */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 415704F75083658E58633FB2 /* Build configuration list for PBXNativeTarget "PrismScreenSaver" */;
+			buildPhases = (
+				FF2E57C2C5A7CA47EAACC29A /* Sources */,
+				86F30DABBABA24A2636B88DE /* Frameworks */,
+				271641AA902A1518643827C7 /* Resources */,
+				C5ACE588BA39170B4EBC4F06 /* Embed Vendor Libraries */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PrismScreenSaver;
+			productName = PrismScreenSaver;
+			productReference = 25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */;
+			productType = "com.apple.product-type.bundle";
+		};
 		730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 267DD69EF9C7114584812E11 /* Build configuration list for PBXNativeTarget "PrismVisualizerPlugin" */;
@@ -464,11 +552,19 @@
 				BEAB8FF53012B50C005F68B6 /* PrismUITests */,
 				DC96B834FF4D53DE75CA32AC /* MilkQuickLook */,
 				730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */,
+				3D78C2D736F06E3BF0674D4C /* PrismScreenSaver */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		271641AA902A1518643827C7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		809E32A81176AD6D3E25C17E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -510,7 +606,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		6CD7F17E032B4C5CAFF3574D /* Bundle Milkdrop Presets (.milk only) */ = {
+		211CCFF14AFAFEF7D67740C5 /* Bundle Milkdrop Presets (.milk only) */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -530,7 +626,7 @@
 			shellScript = "exec \"${SRCROOT}/Prism/Scripts/copy_bundled_presets.sh\"";
 			showEnvVarsInLog = 0;
 		};
-		211CCFF14AFAFEF7D67740C5 /* Bundle Milkdrop Presets (.milk only) */ = {
+		6CD7F17E032B4C5CAFF3574D /* Bundle Milkdrop Presets (.milk only) */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -594,6 +690,17 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FF2E57C2C5A7CA47EAACC29A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5E93D7BA0DE579E1D93C5719 /* PrismScreenSaverView.mm in Sources */,
+				130EF1A181DEA5F2D9B53FFF /* PrismVisualizerView.mm in Sources */,
+				50D8E41BDC4CE5A177CD4422 /* ProjectMEngine.mm in Sources */,
+				2C0D0C22A3AAF3AFCB619734 /* ProjectMEGLContext.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -616,6 +723,39 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		09E0029CAD21FF9576866B07 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
+				INFOPLIST_FILE = Prism/PrismScreenSaver/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.ScreenSaver;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				WRAPPER_EXTENSION = saver;
+			};
+			name = Debug;
+		};
 		88CF2825AED02DD5EA9EE2AD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -996,6 +1136,39 @@
 			};
 			name = Release;
 		};
+		C916EEBD383131C9C9599AEE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4X76DT8A23;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm/src/api/include",
+					"$(PROJECT_DIR)/Vendor/projectm-build/include",
+					"$(PROJECT_DIR)/Vendor/angle/include",
+				);
+				INFOPLIST_FILE = Prism/PrismScreenSaver/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
+					"$(PROJECT_DIR)/Vendor/angle/lib",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.ScreenSaver;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				WRAPPER_EXTENSION = saver;
+			};
+			name = Release;
+		};
 		E0F59D7CA621F0DCE6F8A59F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1071,6 +1244,15 @@
 			buildConfigurations = (
 				AEAAFAEF5B42D6B342FF5BB9 /* Debug */,
 				F32D6E3636BE379C560D7912 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		415704F75083658E58633FB2 /* Build configuration list for PBXNativeTarget "PrismScreenSaver" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C916EEBD383131C9C9599AEE /* Release */,
+				09E0029CAD21FF9576866B07 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

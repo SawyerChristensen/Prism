@@ -1,21 +1,19 @@
 # Prism — To Do
 ---
-### Screen Saver Plugin
-- [ ] Add a screen saver target in settings
-- [ ] Have the starting screen be the only option (for now)
-  - [ ] Remove the headphones and glyph from the animation and replace with an apple logo (set this as the default glyph (without headphones) in the apple music plugin too?)
-
 ### Misc
+- [ ] Deprecate the performance scanner "MilkdropPresetComplexityAnalyzer.swift"
+  - [ ] Write a script that goes through all presets, runs them for 5 seconds and records their performance so that we can include/exclude presets over/under a certain fps
 - [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton. Comment out log statements
 - [ ] The transition "presets" should never be viewed just by themselves. This results in a black screen. This should only be used as transitions. Make sure they are out of consideratino of the search function
-- [ ] remove the transition names in the upper left and strip all profanity from being displayed in the titles
-  - [ ] review questionable names
+- [ ] Remove the transition names in the upper left and strip all profanity from being displayed in the titles
+  - [ ] Review questionable names
 
 ## Post Launch
 ---
-- [x] Make the Apple Music plugin default to the built in starting animation "Geiss & Sperl - Feedback (projectM idle HDR mix).milk" if nothing is playing. Else, if something is playing, match a preset to it and display it
-  - [ ] Add the preset matching algorithm to the apple music plugin
-  - [ ] Add a moving album cover to the apple music plugin?
+- [ ] Enable the apple music visualizer
+- [ ] Enable the screen saver
+- [ ] Add the preset matching algorithm to the apple music plugin
+- [ ] Add a moving album cover to the apple music plugin?
 - [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
 - [ ] Better background removal
   - [ ] Allow for background color to be shown for certain albums defined in a new v2 "Artwork Preferences"
@@ -35,3 +33,4 @@
   - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Some small issues with the wave transition, but they are small
+- [ ] Add a thumbnail for the prism screen saver in macOS setting
