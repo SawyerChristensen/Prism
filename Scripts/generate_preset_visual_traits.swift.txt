@@ -38,7 +38,7 @@
 import Foundation
 
 let presetPackDir = ProcessInfo.processInfo.environment["PRISM_PRESET_PACK_DIR"].map { URL(fileURLWithPath: $0) }
-    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/PrismCollection/BestMilkdropPresetsPack/Presets")
+    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/PrismCollection/PerformantMilkdropPresetsPack/Presets")
 
 guard FileManager.default.fileExists(atPath: presetPackDir.path) else {
     FileHandle.standardError.write("error: preset pack not found at \(presetPackDir.path) — set PRISM_PRESET_PACK_DIR to override\n".data(using: .utf8)!)

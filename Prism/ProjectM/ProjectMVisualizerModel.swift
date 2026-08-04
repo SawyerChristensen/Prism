@@ -22,11 +22,11 @@ final class ProjectMVisualizerModel {
     var displayFPS: Double = 60
 
     /// Set once by ProjectMCoordinator's runtime watchdog (see updateSlowPresetWatchdog) when
-    /// displayFPS has stayed unwatchably low for several seconds straight — the empirical backstop
-    /// for MilkdropPresetComplexityAnalyzer's static text guard, which only ever runs before a
-    /// load and only on paths that consult it (sequential stepping/auto-cycle/song-matching, not
-    /// explicit ⌘O/drag-and-drop/history/launch-restore). ContentView reacts by stepping to the
-    /// next preset and clearing this back to nil, same as presetLoadError.
+    /// displayFPS has stayed unwatchably low for several seconds straight — a live safety net in
+    /// case a preset renders slower in practice than its offline benchmark measured (different
+    /// hardware, a resolution change, a specific song's audio triggering an unusually expensive
+    /// code path). ContentView reacts by stepping to the next preset and clearing this back to nil,
+    /// same as presetLoadError.
     var slowPresetDetected: URL?
 
     /// Multiplier on top of each preset's own `fWarpAnimSpeed`, adjusted via ContentView's

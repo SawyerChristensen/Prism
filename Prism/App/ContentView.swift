@@ -378,8 +378,8 @@ struct ContentView: View {
         }
         // ProjectMCoordinator's runtime watchdog (updateSlowPresetWatchdog) - fires when measured
         // fps has stayed unwatchably low for several seconds straight, regardless of how the
-        // preset was loaded (unlike MilkdropPresetComplexityAnalyzer's static pre-load scan, this
-        // also catches explicit ⌘O/drag-and-drop/history/launch-restore loads). Steps forward the
+        // preset was loaded (including explicit ⌘O/drag-and-drop/history/launch-restore loads, which
+        // bypass the curated-corpus guarantee that ships in Resources/Presets). Steps forward the
         // same way auto-cycle would, then clears the flag so it can fire again for the next preset.
         .onChange(of: visualizerModel.slowPresetDetected) { _, newValue in
             guard let newValue else { return }
@@ -576,30 +576,8 @@ struct ContentView: View {
             activeFilePicker = .libraryFolder
             return
         }
-        guard let url = nextNonExpensiveSequentialPresetURL(after: visualizerModel.presetURL) else { return }
+        guard let url = presetLibrary.nextSequentialPresetURL(after: visualizerModel.presetURL) else { return }
         loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
-    }
-
-    /// Walks `presetLibrary.nextSequentialPresetURL(after:)` forward, skipping any preset
-    /// `MilkdropPresetComplexityAnalyzer` flags as expensive (TO DO.md: some presets measured as
-    /// low as 3fps due to genuinely heavy per-pixel warp/comp shaders) — expensive presets default
-    /// to being skipped during sequential stepping/auto-cycle for now, rather than ever landing on
-    /// screen at a few fps. Bounded to one full pass over the library so a library that's *all*
-    /// flagged expensive still terminates instead of spinning forever — falls back to the first
-    /// candidate found in that case rather than showing nothing at all. Explicit loads (Cmd-I,
-    /// drag-and-drop, history Left/Right, launch-time restore) intentionally bypass this — the user
-    /// picked that exact file, so it should still load.
-    private func nextNonExpensiveSequentialPresetURL(after currentURL: URL?) -> URL? {
-        var candidate = currentURL
-        var firstCandidate: URL?
-        let maxAttempts = max(presetLibrary.presetURLs.count, 1)
-        for _ in 0..<maxAttempts {
-            guard let next = presetLibrary.nextSequentialPresetURL(after: candidate) else { return nil }
-            if firstCandidate == nil { firstCandidate = next }
-            if !MilkdropPresetComplexityAnalyzer.isExpensive(next) { return next }
-            candidate = next
-        }
-        return firstCandidate
     }
 
     /// Song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching"
@@ -608,16 +586,11 @@ struct ContentView: View {
     /// and jumps to a random pick among the top matches, rather than always the single highest-
     /// scoring one — a deterministic argmax would show the exact same preset on every replay of the
     /// same song, which isn't the point (variety was already how the Apple Music plugin's own
-    /// "new random preset every track" behavior worked before any of this). Only checks
-    /// MilkdropPresetComplexityAnalyzer.isExpensive against the small top-K window, not the whole
-    /// ranked corpus - that's a real file read per candidate, cheap enough for ~30 files but not for
-    /// thousands. Falls back to scanning the rest of the ranking for the first non-expensive
-    /// candidate in the rare case every one of the top K is flagged expensive - same bounded-
-    /// fallback shape as nextNonExpensiveSequentialPresetURL. Runs the ranking/file-read work
-    /// off the main actor (Task.detached, not a plain Task - this project's default actor
-    /// isolation is MainActor, so a plain Task here would still run the file reads on the main
-    /// thread) since scoring ~9,780 presets plus up to ~30 file reads, while fast, is still real
-    /// work that has no business blocking SwiftUI's main thread even briefly.
+    /// "new random preset every track" behavior worked before any of this). Runs the ranking work
+    /// off the main actor (Task.detached, not a plain Task - this project's default actor isolation
+    /// is MainActor, so a plain Task here would still run on the main thread) since scoring
+    /// thousands of presets, while fast, is still real work that has no business blocking SwiftUI's
+    /// main thread even briefly.
     private func loadBestMatchedPreset(for songTraits: SongAudioTraits) {
         let pairs = presetVisualTraitsStore.pairs(for: presetLibrary.presetURLs)
         guard !pairs.isEmpty else {
@@ -628,11 +601,8 @@ struct ContentView: View {
         Task.detached(priority: .userInitiated) {
             let ranked = SongPresetMatcher.rank(song: songTraits, presets: pairs)
             let topCandidateWindow = 30
-            let nonExpensive = ranked.prefix(topCandidateWindow).filter { !MilkdropPresetComplexityAnalyzer.isExpensive($0.url) }
-            let winner = nonExpensive.randomElement()
-                ?? ranked.first(where: { !MilkdropPresetComplexityAnalyzer.isExpensive($0.url) })
-            guard let winner else {
-                PrismDebug.trace("preset: matching found no non-expensive candidate in \(ranked.count) ranked presets")
+            guard let winner = ranked.prefix(topCandidateWindow).randomElement() else {
+                PrismDebug.trace("preset: matching found no candidates among \(ranked.count) ranked presets")
                 return
             }
             // 1-based rank purely for the trace line below (readable as "3rd best out of 9780"),

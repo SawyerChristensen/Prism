@@ -4,9 +4,8 @@
 //
 //  The visual-side counterpart to ReccoBeatsClient's SongAudioTraits — see TO DO.md's
 //  "Song-Preset Matching" section. Extracts a fixed set of numeric/categorical traits from a
-//  .milk file's raw text, the same way MilkdropPresetComplexityAnalyzer already does (libprojectM
-//  exposes no shader-source/parameter introspection API, so this reads the plain INI-like text
-//  itself, before the preset is ever handed to the engine).
+//  .milk file's raw text (libprojectM exposes no shader-source/parameter introspection API, so
+//  this reads the plain INI-like text itself, before the preset is ever handed to the engine).
 //
 //  ================================================================================================
 //  THE PLAN — 7 visual traits, one per song trait they're meant to pair against (see
@@ -61,8 +60,8 @@
 //     SongPresetMatcher's own doc comment for why reusing one song trait against two visual traits
 //     is fine here). Shader-driven presets (84.3% of the pack: 8,251/9,795) read as organic/liquid/
 //     psychedelic; pure per-vertex-mesh presets (the other 1,544) read as more geometric/crisp.
-//     A plain boolean, not the expense-weighted check MilkdropPresetComplexityAnalyzer does — that
-//     one's answering "is this too slow to render," this one's answering "what does it look like."
+//     A plain boolean answering "what does it look like," unrelated to whether the preset is
+//     expensive to render.
 //
 //  6. waveformProminence (fWaveAlpha=) → pairs with vocal presence (speechiness, inverse of
 //     instrumentalness).
@@ -123,8 +122,7 @@ struct MilkdropPresetVisualTraits: Codable {
     let colorWarmth: Double?
 
     /// True if the preset has at least one non-empty warp_N=/comp_N= line (a real per-pixel
-    /// fragment shader body, regardless of how expensive it is to run — see
-    /// MilkdropPresetComplexityAnalyzer for the separate "is it too slow" question).
+    /// fragment shader body, regardless of how expensive it is to run).
     let usesShaderTexture: Bool
 
     /// Normalized `min(1, fWaveAlpha / 2)`. 0 when fWaveAlpha is missing or non-positive.

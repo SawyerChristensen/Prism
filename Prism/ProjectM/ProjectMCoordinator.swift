@@ -784,13 +784,13 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         updateSlowPresetWatchdog(dt: dt)
     }
 
-    /// Empirical backstop for MilkdropPresetComplexityAnalyzer's static text-based guard - any
-    /// such heuristic will always miss patterns it doesn't already know to look for (the
-    /// 1024-instance shapecode that made "amandio c - the climbing ..." unwatchable isn't visible
-    /// to a warp_N=/comp_N= pixel-shader scan at all, and the guard is also only consulted on
-    /// sequential-stepping/auto-cycle/song-matching loads to begin with - explicit ⌘O/drag-and-
-    /// drop/history/launch-restore bypass it entirely by design). This instead reacts to what's
-    /// actually being measured every frame: if smoothedFPS stays under slowFPSThreshold for
+    /// Empirical backstop for the curated-corpus guarantee that ships in Resources/Presets (see
+    /// dev-notes/preset-fps-benchmark-2026-08-04): every bundled preset already measured 60fps+ in
+    /// an offline headless benchmark, but that measurement is specific to one machine/resolution/
+    /// synthetic-audio-signal, and explicit ⌘O/drag-and-drop/history/launch-restore loads can reach
+    /// presets outside the curated corpus entirely. This reacts to what's actually being measured
+    /// every frame, live, regardless of why a preset turned out slow: if smoothedFPS stays under
+    /// slowFPSThreshold for
     /// slowPresetGracePeriodSeconds straight, the current preset is unwatchable regardless of why
     /// or how it was loaded, and gets reported once via model.slowPresetDetected so ContentView
     /// can step past it. The grace period absorbs the transient dip every fresh preset load causes
