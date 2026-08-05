@@ -96,35 +96,34 @@ private enum PresetTransitionEffect {
     static let zoomBlur: Float = 5
 }
 
-/// ContentView's four-style manual preview cycle ("M") — four independent layers, permanently
-/// stacked in this fixed order, top to bottom: subject, text, backgroundDetail, backgroundColor
-/// (see ProjectMCompositeShader.metal's compositing, and NowPlayingManager.subjectOnlyArtwork/
-/// textOnlyArtwork/backgroundDetailArtwork/backgroundColorArtwork for what each one actually
-/// shows — all four are fully separated, non-overlapping pieces of the cover, not the whole photo
-/// repeated across layers). backgroundColor always carries the same fixed beat-zoom "movement"
-/// strength (backgroundColorBeatZoomStrength); the other three (subject/text/backgroundDetail)
-/// share a per-track *resampled* strength instead of each having its own fixed one - see
-/// resampleBeatZoomStrengths's own doc comment. A cover missing one of those three (no Vision
-/// subject, no OCR text) doesn't leave a gap: whichever of the three actually exist for this cover
-/// are re-ranked top-to-bottom starting from 1, and share out the same top-to-bottom strength
-/// falloff (primaryBeatZoomStrength -> secondaryBeatZoomStrength -> tertiaryBeatZoomStrength)
-/// as if the stack only ever had that many layers - so a cover with only backgroundDetail (no
-/// subject or text) has it moving at the full primaryBeatZoomStrength, not the small
-/// tertiaryBeatZoomStrength it'd get if all three existed. This is independent of "M"'s
-/// own reveal count below - resampling is about how hard each layer *punches when visible*, not
-/// whether it's currently revealed. Separately, backgroundDetail specifically also carries two
-/// further fixed effects on top of its movement (ProjectMCoordinator's
+/// ContentView's four-style manual preview cycle (View > "Cycle Album Layers", Cmd-C) — four
+/// independent layers, permanently stacked in this fixed order, top to bottom: subject, text,
+/// backgroundDetail, backgroundColor (see ProjectMCompositeShader.metal's compositing, and
+/// NowPlayingManager.subjectOnlyArtwork/textOnlyArtwork/backgroundDetailArtwork/
+/// backgroundColorArtwork for what each one actually shows — all four are fully separated, non-
+/// overlapping pieces of the cover, not the whole photo repeated across layers). backgroundColor
+/// always carries the same fixed beat-zoom "movement" strength (backgroundColorBeatZoomStrength);
+/// the other three (subject/text/backgroundDetail) share a per-track *resampled* strength instead
+/// of each having its own fixed one - see resampleBeatZoomStrengths's own doc comment. A cover
+/// missing one of those three (no Vision subject, no OCR text) doesn't leave a gap: whichever of
+/// the three actually exist for this cover are re-ranked top-to-bottom starting from 1, and share
+/// out the same top-to-bottom strength falloff (primaryBeatZoomStrength ->
+/// secondaryBeatZoomStrength -> tertiaryBeatZoomStrength) as if the stack only ever had that many
+/// layers - so a cover with only backgroundDetail (no subject or text) has it moving at the full
+/// primaryBeatZoomStrength, not the small tertiaryBeatZoomStrength it'd get if all three existed.
+/// This is independent of the cycle's own reveal count below - resampling is about how hard each
+/// layer *punches when visible*, not whether it's currently revealed. Separately, backgroundDetail
+/// specifically also carries two further fixed effects on top of its movement (ProjectMCoordinator's
 /// backgroundColorChromaticAberrationStrength/backgroundDetailDistortionStrength - both named for
 /// historical reasons; backgroundColor is a flat fill with nothing for either to visibly act on).
-/// "M" doesn't pick a named style or swap any layer's
-/// content/effect - it just reveals or hides layers starting from the *bottom* of the stack: press
-/// it and the bottom-most currently-visible layer drops out (4 visible -> 3 -> 2 -> 1 -> 0 -> back
-/// to all 4), so pressing through the whole cycle peels the flat background color away first, then
-/// the color-keyed background detail under the subject, then the static text, leaving just the
-/// beat-zooming subject alone, then nothing, then wraps back to everything. `displayVisibleLayerCount`
-/// (below) is that count, 0...4; a layer's on/off state is just "is my position in the stack
-/// (backgroundColor=1, backgroundDetail=2, text=3, subject=4, counting from the bottom) at or below
-/// the current count."
+/// Cycling doesn't pick a named style or swap any layer's content/effect - it just reveals or hides
+/// layers starting from the *bottom* of the stack: press it and the bottom-most currently-visible
+/// layer drops out (4 visible -> 3 -> 2 -> 1 -> 0 -> back to all 4), so pressing through the whole
+/// cycle peels the flat background color away first, then the color-keyed background detail under
+/// the subject, then the static text, leaving just the beat-zooming subject alone, then nothing,
+/// then wraps back to everything. `displayVisibleLayerCount` (below) is that count, 0...4; a
+/// layer's on/off state is just "is my position in the stack (backgroundColor=1, backgroundDetail=2,
+/// text=3, subject=4, counting from the bottom) at or below the current count."
 enum AlbumArtLayerCount {
     static let all = 4
 }

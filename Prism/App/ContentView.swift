@@ -59,17 +59,17 @@ struct ContentView: View {
     // a stale forward branch. There's still no *saved* playlist concept — this is session-only.
     @State private var presetHistory: [URL] = []
     @State private var presetHistoryIndex = -1
-    // Album art layer reveal — "M" peels the four stacked layers (subject on top, then text, then
-    // background-color-removed, then the full cover at the bottom - see
-    // ProjectMCoordinator.AlbumArtLayerCount) off from the bottom one press at a time: 4 visible ->
-    // 3 -> 2 -> 1 (just the subject) -> 0 -> wraps back to 4, skipping any step whose layer this
-    // cover doesn't actually have (see nextAlbumArtVisibleLayerCount below) - most covers have no
-    // OCR text and plenty have no clean dominant background color, so a blind 4-step cycle made
-    // the user peel off "layers" that changed nothing on screen. Session-scoped, like
-    // isAlbumArtHidden/isTextHidden below, rather than a per-album saved preference: it's a manual
-    // preview toggle, not something "S" persists.
+    // Album art layer reveal — View > "Cycle Album Layers" (Cmd-C, PrismApp.swift's .commands)
+    // peels the four stacked layers (subject on top, then text, then background-color-removed,
+    // then the full cover at the bottom - see ProjectMCoordinator.AlbumArtLayerCount) off from the
+    // bottom one press at a time: 4 visible -> 3 -> 2 -> 1 (just the subject) -> 0 -> wraps back to
+    // 4, skipping any step whose layer this cover doesn't actually have (see
+    // nextAlbumArtVisibleLayerCount below) - most covers have no OCR text and plenty have no clean
+    // dominant background color, so a blind 4-step cycle made the user peel off "layers" that
+    // changed nothing on screen. Session-scoped, like isAlbumArtHidden/isTextHidden below, rather
+    // than a per-album saved preference: it's a manual preview toggle, not something "S" persists.
     @State private var albumArtVisibleLayerCount = AlbumArtLayerCount.all
-    // Transient confirmation after "S" saves the current M/T settings for this album (see
+    // Transient confirmation after "S" saves the current Cmd-C/T settings for this album (see
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
     @State private var showSavedConfirmation = false
@@ -86,6 +86,12 @@ struct ContentView: View {
     // shortcuts share the same source of truth.
     @Binding var isAlbumArtHidden: Bool
     @Binding var isTextHidden: Bool
+    // View > "Cycle Album Layers" (PrismApp.swift's .commands, Cmd-C) — a one-shot trigger, same
+    // shape as isPresetImporterPresented below: the App scene flips this true, this view's onChange
+    // (below) does the actual albumArtVisibleLayerCount cycling and flips it back to false, since
+    // the layer-cycling logic (nextAlbumArtVisibleLayerCount/meaningfulAlbumArtLayerCounts) reads
+    // this view's own state (nowPlaying, presetVisualTraitsStore) and has nowhere else to live.
+    @Binding var cycleAlbumLayersFromMenu: Bool
     // File > "Import Milk Preset…" (PrismApp.swift's .commands) — same `.fileImporter` this view used
     // to trigger itself via the (now-disabled) "O" hotkey, just driven from the menu command's
     // Bool instead of a local one, for the same share-the-source-of-truth reason as the two
@@ -318,6 +324,15 @@ struct ContentView: View {
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
             loadPresetAndTrack(from: url)
         }
+        // View > "Cycle Album Layers" (PrismApp.swift's .commands, Cmd-C) — same one-shot trigger
+        // shape as isPresetImporterPresented's onChange above. Peels one *actually visible* layer
+        // off the bottom of the stack per press, wrapping back to the full stack once nothing's
+        // left - see nextAlbumArtVisibleLayerCount.
+        .onChange(of: cycleAlbumLayersFromMenu) { _, isTriggered in
+            guard isTriggered else { return }
+            cycleAlbumLayersFromMenu = false
+            albumArtVisibleLayerCount = nextAlbumArtVisibleLayerCount(from: albumArtVisibleLayerCount, in: meaningfulAlbumArtLayerCounts())
+        }
         // A song ending and a new one beginning should feel like a beat, not a silent swap: advance
         // to a new preset — real projectM cross-fades old/new preset internally
         // (ProjectMCoordinator.updateModelIfNeeded's smoothTransition), and that same preset load
@@ -382,19 +397,21 @@ struct ContentView: View {
         // rate baked in by the author (see Vendor/projectm-VERSION.md's warp-anim-speed-multiplier
         // local patch), so this is a manual damper for ones that read too fast, independent of the
         // automatic projectm_set_fps correction ProjectMCoordinator already applies. Cmd-A/Cmd-T (hide album
-        // art / hide text) are handled by the View menu's commands (PrismApp.swift), not here,
-        // since a menu key equivalent always intercepts a press before it would reach this view's
-        // onKeyPress — unaffected by the `keys:` narrowing below.
+        // art / hide text) and Cmd-C (cycle album layers) are handled by the View menu's commands
+        // (PrismApp.swift), not here, since a menu key equivalent always intercepts a press before
+        // it would reach this view's onKeyPress — unaffected by the `keys:` narrowing below.
         //
-        // Every other hotkey this view used to handle (N/F/O/L/C/M/P/S/W/J/X/U, 1-5) is
-        // temporarily disabled by leaving it out of `keys:` below rather than deleting its case —
-        // none of those characters reach this closure anymore, so the switch's other cases are
-        // dead code for now, kept in place so re-enabling any of them later is just adding the
-        // key back to the array.
+        // Every other hotkey this view used to handle (N/F/O/L/C/P/S/W/J/X/U, 1-5) is temporarily
+        // disabled by leaving it out of `keys:` below rather than deleting its case — none of those
+        // characters reach this closure anymore, so the switch's other cases are dead code for
+        // now, kept in place so re-enabling any of them later is just adding the key back to the
+        // array. "M" itself was fully removed (not just disabled) once its cycling moved to Cmd-C
+        // above — see the onChange(of: cycleAlbumLayersFromMenu) handler below for the case this
+        // used to be.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, .upArrow, .downArrow, "m", "M"]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -446,12 +463,6 @@ struct ContentView: View {
                 return .handled
             case "c", "C":
                 toggleAutoCycle()
-                return .handled
-            case "m", "M":
-                // Peels one *actually visible* layer off the bottom of the stack per press,
-                // wrapping back to the full stack once nothing's left - see
-                // nextAlbumArtVisibleLayerCount.
-                albumArtVisibleLayerCount = nextAlbumArtVisibleLayerCount(from: albumArtVisibleLayerCount, in: meaningfulAlbumArtLayerCounts())
                 return .handled
             case "p", "P":
                 nowPlaying.processingEnabled.toggle()
@@ -608,7 +619,7 @@ struct ContentView: View {
         return counts
     }
 
-    /// "M"'s next stop: the closest value below `current` in `counts` (see
+    /// Cycle Album Layers' next stop: the closest value below `current` in `counts` (see
     /// `meaningfulAlbumArtLayerCounts()`), wrapping back to the full stack (list's first entry,
     /// always `AlbumArtLayerCount.all`) past the bottom — same 4 -> 3 -> 2 -> 1 -> 0 -> 4 shape as
     /// before when every layer exists, but skipping straight past any step that wouldn't change

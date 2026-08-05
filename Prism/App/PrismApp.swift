@@ -16,6 +16,10 @@ struct PrismApp: App {
     // Toggle items and the keyboard shortcuts share one source of truth via the same Binding.
     @State private var isAlbumArtHidden = false
     @State private var isTextHidden = false
+    // View > "Cycle Album Layers" (Cmd-C) — a one-shot trigger, not a persistent Bool like the two
+    // above: ContentView's onChange(of: cycleAlbumLayersFromMenu) flips it back to false right
+    // after acting on it, same shape as isPresetImporterPresented below.
+    @State private var cycleAlbumLayersFromMenu = false
     // File > "Import Preset…" — owned here (rather than ContentView @State) for the same reason
     // as the two Bools above: the menu command and ContentView's `.fileImporter` need to share
     // one source of truth via a Binding.
@@ -53,6 +57,7 @@ struct PrismApp: App {
         WindowGroup {
             ContentView(
                 isAlbumArtHidden: $isAlbumArtHidden, isTextHidden: $isTextHidden,
+                cycleAlbumLayersFromMenu: $cycleAlbumLayersFromMenu,
                 isPresetImporterPresented: $isPresetImporterPresented,
                 sessionHistoryStore: sessionHistoryStore, sessionPresetLog: $sessionPresetLog,
                 presetToLoadFromMenu: $presetToLoadFromMenu
@@ -79,6 +84,15 @@ struct PrismApp: App {
                     Label(isTextHidden ? "Show Text" : "Hide Text", systemImage: "textformat")
                 }
                 .keyboardShortcut("t", modifiers: .command)
+                // Was the bare "M" hotkey; moved to Cmd-C (ContentView's onKeyPress no longer
+                // handles "M" at all — see its keyboard-control-surface doc comment) so it shows up
+                // in the View menu alongside Hide Album Art/Hide Text rather than being invisible.
+                Button {
+                    cycleAlbumLayersFromMenu = true
+                } label: {
+                    Label("Cycle Album Layers", systemImage: "square.3.layers.3d")
+                }
+                .keyboardShortcut("c", modifiers: .command)
             }
             // No Edit menu — this app has no text editing/undo/paste surface, so the three
             // command groups that together make up the default Edit menu (Undo/Redo, Cut/Copy/

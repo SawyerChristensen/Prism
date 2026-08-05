@@ -866,9 +866,9 @@ final class NowPlayingManager {
         //
         // Disabled - always nil for now, which the rest of the pipeline already treats as "this
         // layer doesn't exist for this cover" (see ContentView.meaningfulAlbumArtLayerCounts's own
-        // doc comment): ProjectMCoordinator falls back to its transparent empty texture, and "M"'s
-        // reveal cycle skips straight from the full stack to backgroundDetail without a dead step.
-        // Uncomment to bring the flat-fill layer back.
+        // doc comment): ProjectMCoordinator falls back to its transparent empty texture, and Cycle
+        // Album Layers' reveal cycle skips straight from the full stack to backgroundDetail without
+        // a dead step. Uncomment to bring the flat-fill layer back.
         // if let background = cachedColors?.background {
         //     cachedBackgroundColorArtwork = .filled(with: background, size: cachedRawArtwork.size)
         // } else {
