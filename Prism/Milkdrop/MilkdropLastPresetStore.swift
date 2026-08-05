@@ -29,13 +29,30 @@ final class MilkdropLastPresetStore {
     /// (manual pick or random library draw), so whichever preset was on screen last is what
     /// reopens next launch.
     func rememberLoaded(_ url: URL) {
-        guard let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else {
+        guard let bookmark = Self.makeBookmark(for: url) else {
             // Bookmark creation failing leaves this session's preset unaffected — it just won't
             // be restored next launch, same degraded-but-functional fallback MilkdropPresetLibrary
             // uses for its own bookmark.
             return
         }
         defaults.set(bookmark, forKey: Self.bookmarkDefaultsKey)
+    }
+
+    /// `.withSecurityScope` bookmark creation throws for any URL the sandbox never granted a
+    /// scoped extension for — which includes every preset loaded from the app's own bundled
+    /// preset pack (see MilkdropPresetLibrary.useBundledPresetsIfAvailable's own doc comment: "no
+    /// security scope needed — it's inside the app's own container"). That bundled pack is the
+    /// only source on most installs (no external library folder ever picked), so requiring
+    /// `.withSecurityScope` unconditionally here silently failed on *every* preset load — this
+    /// store's defaults key never got written at all, and "restore last preset" quietly never
+    /// fired. Falling back to a plain (unscoped) bookmark for exactly that case still round-trips
+    /// fine: a plain bookmark resolves correctly for a bundle-relative resource, which needs no
+    /// sandbox extension to read in the first place.
+    private static func makeBookmark(for url: URL) -> Data? {
+        if let scoped = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            return scoped
+        }
+        return try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
     /// Resolves the last-remembered preset, if any, granting security-scoped access for the
@@ -49,8 +66,17 @@ final class MilkdropLastPresetStore {
     func withLastPreset<T>(_ body: (URL) -> T) -> T? {
         guard let bookmark = defaults.data(forKey: Self.bookmarkDefaultsKey) else { return nil }
 
+        // Mirrors makeBookmark's create-side fallback: a bundled preset's bookmark was never
+        // security-scoped to begin with, so resolving it with .withSecurityScope needlessly risks
+        // the option itself rejecting a plain bookmark - try scoped first (the common case for a
+        // user-picked file), then plain.
         var isStale = false
-        guard let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) else {
+        let url: URL
+        if let scoped = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            url = scoped
+        } else if let plain = try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            url = plain
+        } else {
             return nil
         }
 
@@ -59,7 +85,7 @@ final class MilkdropLastPresetStore {
 
         let result = body(url)
 
-        if isStale, let refreshed = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+        if isStale, let refreshed = Self.makeBookmark(for: url) {
             defaults.set(refreshed, forKey: Self.bookmarkDefaultsKey)
         }
 

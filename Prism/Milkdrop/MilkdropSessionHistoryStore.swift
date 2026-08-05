@@ -50,7 +50,7 @@ final class MilkdropSessionHistoryStore {
     /// of a preset already in the log, so the persisted record matches the in-memory log
     /// ContentView shows under the History menu's top-level (non-"Last Session") section.
     func appendToCurrentSession(_ url: URL) {
-        guard let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) else {
+        guard let bookmark = Self.makeBookmark(for: url) else {
             // Same degraded-but-functional fallback as MilkdropLastPresetStore: the in-memory
             // menu still reflects this play, it just won't survive into next session's rotation.
             return
@@ -60,12 +60,34 @@ final class MilkdropSessionHistoryStore {
         defaults.set(current, forKey: Self.currentSessionDefaultsKey)
     }
 
+    /// `.withSecurityScope` bookmark creation throws for any URL the sandbox never granted a
+    /// scoped extension for — which includes every preset loaded from the app's own bundled
+    /// preset pack (see MilkdropPresetLibrary.useBundledPresetsIfAvailable's own doc comment: "no
+    /// security scope needed — it's inside the app's own container"). That bundled pack is the
+    /// only source on most installs (no external library folder ever picked), so requiring
+    /// `.withSecurityScope` unconditionally here silently failed on *every* preset load — this
+    /// store's "current session" key never got written at all, so the next launch's "Last
+    /// Session" menu always rotated in an empty log. Falling back to a plain (unscoped) bookmark
+    /// for exactly that case still round-trips fine: a plain bookmark resolves correctly for a
+    /// bundle-relative resource, which needs no sandbox extension to read in the first place.
+    private static func makeBookmark(for url: URL) -> Data? {
+        if let scoped = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+            return scoped
+        }
+        return try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
     private func bookmarks(forKey key: String) -> [Data] {
         defaults.array(forKey: key) as? [Data] ?? []
     }
 
     private func resolve(_ bookmark: Data) -> URL? {
+        // Mirrors makeBookmark's create-side fallback - try scoped first (the common case for a
+        // user-picked file), then plain (the bundled-preset case).
         var isStale = false
-        return try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+        if let scoped = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+            return scoped
+        }
+        return try? URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &isStale)
     }
 }

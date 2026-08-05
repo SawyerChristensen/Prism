@@ -286,6 +286,22 @@ final class NowPlayingManager {
     // art hostage indefinitely.
     private var readyGateTimeoutTask: Task<Void, Never>?
     private static let readyGateTimeoutInterval: TimeInterval = 3.5
+    /// This process's very first ready gate pays a one-time cold-start tax readyGateTimeoutInterval
+    /// was never budgeted for: ReccoBeatsClient.fetchTraits is two *serial* HTTPS round-trips
+    /// (searchTrack, then audioFeatures), and the very first request to a host this process has
+    /// never talked to also eats DNS resolution and a fresh TLS handshake, both of which every
+    /// later lookup this run reuses (URLSession's connection cache) and so skips entirely. That
+    /// combination routinely blew past 3.5s on launch alone, silently force-committing the first
+    /// track with `stagedSongTraits` still nil before ReccoBeats had actually responded -
+    /// ContentView's launch-time preset pick then had no traits to match against and fell back to
+    /// the library's first alphabetical preset (`MilkdropPresetLibrary.nextSequentialPresetURL`),
+    /// which looks exactly like "matching doesn't work", but only ever for that one track - every
+    /// later song change reliably finishes well under 3.5s. Gated on `hasStartedAReadyGate` (not
+    /// persisted - just this process's own in-memory history) rather than applied unconditionally,
+    /// so a real mid-session hang still gets cut off at the tighter, steady-state budget instead of
+    /// silently growing to match this one-time allowance.
+    private static let firstReadyGateTimeoutInterval: TimeInterval = 10
+    private var hasStartedAReadyGate = false
 
     /// Bumped once per track, but only once *both* the album art and the ReccoBeats song-traits
     /// lookup for it have settled - success, cache hit/miss, or outright failure all count as
@@ -362,8 +378,11 @@ final class NowPlayingManager {
                             self.stagedArtwork = nil
                             self.stagedSongTraits = nil
                             self.readyGateTimeoutTask?.cancel()
+                            let timeoutInterval = self.hasStartedAReadyGate
+                                ? Self.readyGateTimeoutInterval : Self.firstReadyGateTimeoutInterval
+                            self.hasStartedAReadyGate = true
                             self.readyGateTimeoutTask = Task { [weak self] in
-                                try? await Task.sleep(for: .seconds(Self.readyGateTimeoutInterval))
+                                try? await Task.sleep(for: .seconds(timeoutInterval))
                                 guard !Task.isCancelled else { return }
                                 self?.forceCommitIfStillPending(generation: generation)
                             }
@@ -491,30 +510,40 @@ final class NowPlayingManager {
         }
 
         Task { [weak self] in
-            let traits = await ReccoBeatsClient.fetchTraits(artist: artist, title: title)
-            self?.songAudioTraitsCache.store(traits, artist: artist, title: title)
+            let result = await ReccoBeatsClient.fetchTraits(artist: artist, title: title)
 
-            guard let traits else {
+            switch result {
+            case .requestFailed:
+                // Deliberately *not* cached (unlike .genuineMiss below) - a network/decode hiccup
+                // here is a real risk on literally the first HTTPS request of a fresh launch,
+                // before DNS/TLS have anything warm to reuse yet (see
+                // NowPlayingManager.firstReadyGateTimeoutInterval's own doc comment on that same
+                // cold-start cost). Caching it as a miss would have permanently and silently
+                // remembered "this song has no ReccoBeats match" for a song a retry moments later,
+                // or on the next play, would have found fine.
+                logger.debug("ReccoBeats: request failed for \"\(title, privacy: .public)\" — \(artist, privacy: .public) — not caching, will retry next play")
+            case .genuineMiss:
+                self?.songAudioTraitsCache.store(nil, artist: artist, title: title)
                 logger.debug("ReccoBeats: no match for \"\(title, privacy: .public)\" — \(artist, privacy: .public)")
-                await MainActor.run {
-                    self?.markTraitsPhaseSettled(nil, generation: generation)
-                }
-                return
+            case .hit(let traits):
+                self?.songAudioTraitsCache.store(traits, artist: artist, title: title)
+                logger.debug("""
+                    ReccoBeats traits for \"\(title, privacy: .public)\" — \(artist, privacy: .public): \
+                    valence=\(traits.valence, format: .fixed(precision: 3)) \
+                    energy=\(traits.energy, format: .fixed(precision: 3)) \
+                    danceability=\(traits.danceability, format: .fixed(precision: 3)) \
+                    acousticness=\(traits.acousticness, format: .fixed(precision: 3)) \
+                    instrumentalness=\(traits.instrumentalness, format: .fixed(precision: 3)) \
+                    liveness=\(traits.liveness, format: .fixed(precision: 3)) \
+                    speechiness=\(traits.speechiness, format: .fixed(precision: 3)) \
+                    tempo=\(traits.tempo, format: .fixed(precision: 1)) \
+                    key=\(traits.key) mode=\(traits.mode) loudness=\(traits.loudness, format: .fixed(precision: 1))
+                    """)
             }
-            logger.debug("""
-                ReccoBeats traits for \"\(title, privacy: .public)\" — \(artist, privacy: .public): \
-                valence=\(traits.valence, format: .fixed(precision: 3)) \
-                energy=\(traits.energy, format: .fixed(precision: 3)) \
-                danceability=\(traits.danceability, format: .fixed(precision: 3)) \
-                acousticness=\(traits.acousticness, format: .fixed(precision: 3)) \
-                instrumentalness=\(traits.instrumentalness, format: .fixed(precision: 3)) \
-                liveness=\(traits.liveness, format: .fixed(precision: 3)) \
-                speechiness=\(traits.speechiness, format: .fixed(precision: 3)) \
-                tempo=\(traits.tempo, format: .fixed(precision: 1)) \
-                key=\(traits.key) mode=\(traits.mode) loudness=\(traits.loudness, format: .fixed(precision: 1))
-                """)
+
+            let settledTraits: SongAudioTraits? = if case .hit(let traits) = result { traits } else { nil }
             await MainActor.run {
-                self?.markTraitsPhaseSettled(traits, generation: generation)
+                self?.markTraitsPhaseSettled(settledTraits, generation: generation)
             }
         }
     }

@@ -758,8 +758,11 @@ struct ContentView: View {
     /// by the time `waitForMusicSignal` returns, so this is usually near-instant; the timeout is
     /// only there for when nothing supported (Music/Spotify) is actually playing at all - e.g.
     /// audio from a browser or another app - so this can't hang the launch pick forever waiting
-    /// for a track NowPlayingManager will never see.
-    private func waitForNowPlayingTrack(timeoutSeconds: Double = 5) async -> Bool {
+    /// for a track NowPlayingManager will never see. 12s (not NowPlayingManager's own steady-state
+    /// readyGateTimeoutInterval) to comfortably clear NowPlayingManager.firstReadyGateTimeoutInterval
+    /// (10s) - the launch-time ready gate this call is specifically waiting on runs on that longer,
+    /// cold-start budget, not the normal 3.5s one every later track change gets.
+    private func waitForNowPlayingTrack(timeoutSeconds: Double = 12) async -> Bool {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while nowPlaying.trackReadySettledToken == 0 {
             if Date() >= deadline { return false }

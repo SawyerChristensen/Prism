@@ -64,47 +64,72 @@ enum ReccoBeatsClient {
         let content: [Track]
     }
 
+    /// `fetchTraits`'s outcome - deliberately distinct from a plain `SongAudioTraits?` because its
+    /// caller (NowPlayingManager.loadSongTraits) permanently caches a `.genuineMiss` (see
+    /// SongAudioTraitsCache's own doc comment on why that matters for replay latency) but must
+    /// *not* cache a `.requestFailed` the same way - collapsing both into a bare `nil` used to mean
+    /// a transient network hiccup (a real risk on literally the first HTTPS request of a fresh
+    /// launch, before DNS/TLS have anything warm to reuse yet) got baked in as a permanent false
+    /// "this song has no ReccoBeats match", silently and indefinitely, for a song a retry moments
+    /// later would have found fine.
+    enum FetchResult {
+        case hit(SongAudioTraits)
+        case genuineMiss
+        case requestFailed
+    }
+
+    private enum SearchOutcome {
+        case found(String)
+        case genuineMiss
+        case requestFailed
+    }
+
     /// Looks `title` up against ReccoBeats' catalog (searchText is a title-only lookup — appending
     /// the artist into the same query string, tried first, made every single search come back
     /// empty even for extremely well-known songs like Metallica's "Enter Sandman"; confirmed via
     /// direct curl testing that dropping the artist from the query is what actually returns
     /// results) and disambiguates among the results by matching `artist` against each candidate's
-    /// artist list. Returns nil - a genuine miss, not a guess - if the title search itself comes up
-    /// empty, or if it returns results but none of them credit this artist (common titles like
-    /// "Sentimental" return dozens of unrelated tracks by that name; blindly taking the top result
-    /// in that case would hand the matcher a completely different song's traits).
+    /// artist list. `.genuineMiss` - not a guess - if the title search itself comes up empty, or if
+    /// it returns results but none of them credit this artist (common titles like "Sentimental"
+    /// return dozens of unrelated tracks by that name; blindly taking the top result in that case
+    /// would hand the matcher a completely different song's traits).
     ///
     /// Retries once with `title`'s version annotation stripped (see `strippingVersionAnnotation`)
-    /// if the first attempt finds nothing - Apple Music in particular reports track titles like
-    /// "Enter Sandman (Remastered)" where ReccoBeats' catalog just has "Enter Sandman" (confirmed:
-    /// this was the very first real-world lookup this code failed on).
-    static func searchTrack(artist: String, title: String) async -> String? {
-        if let id = await searchTrack(artist: artist, exactTitle: title) {
-            return id
-        }
+    /// if the first attempt comes back a clean `.genuineMiss` - Apple Music in particular reports
+    /// track titles like "Enter Sandman (Remastered)" where ReccoBeats' catalog just has "Enter
+    /// Sandman" (confirmed: this was the very first real-world lookup this code failed on). A
+    /// `.requestFailed` on the first attempt skips the retry and propagates straight through - a
+    /// network/decode failure isn't going to be fixed by changing the search string, and the whole
+    /// point of a separate `.requestFailed` case is to *not* paper over it as a confident miss.
+    private static func searchTrack(artist: String, title: String) async -> SearchOutcome {
+        let first = await searchTrack(artist: artist, exactTitle: title)
+        guard case .genuineMiss = first else { return first }
         let stripped = strippingVersionAnnotation(title)
-        guard stripped != title else { return nil }
+        guard stripped != title else { return first }
         return await searchTrack(artist: artist, exactTitle: stripped)
     }
 
-    private static func searchTrack(artist: String, exactTitle title: String) async -> String? {
+    private static func searchTrack(artist: String, exactTitle title: String) async -> SearchOutcome {
         var components = URLComponents(url: baseURL.appendingPathComponent("v1/track/search"), resolvingAgainstBaseURL: false)
         components?.queryItems = [URLQueryItem(name: "searchText", value: title)]
-        guard let url = components?.url else { return nil }
+        guard let url = components?.url else { return .requestFailed }
 
         guard let (data, _) = try? await URLSession.shared.data(from: url) else {
             logger.error("track search request failed for \(title, privacy: .public) — \(artist, privacy: .public)")
-            return nil
+            return .requestFailed
         }
         guard let response = try? JSONDecoder().decode(SearchResponse.self, from: data) else {
             logger.error("track search decode failed for \(title, privacy: .public) — \(artist, privacy: .public)")
-            return nil
+            return .requestFailed
         }
 
         let normalizedTarget = normalize(artist)
-        return response.content.first { track in
+        guard let id = response.content.first(where: { track in
             track.artists.contains { normalize($0.name) == normalizedTarget }
-        }?.id
+        })?.id else {
+            return .genuineMiss
+        }
+        return .found(id)
     }
 
     /// Strips a trailing parenthesized/bracketed version annotation - "(Remastered)", "(Live)",
@@ -132,24 +157,28 @@ enum ReccoBeatsClient {
     }
 
     /// Fetches the numeric traits for a ReccoBeats track id — see `searchTrack(artist:title:)` to
-    /// resolve one from plain artist/title first.
-    static func audioFeatures(trackID: String) async -> SongAudioTraits? {
+    /// resolve one from plain artist/title first. Always `.requestFailed` on a network/decode
+    /// error - a track id found by `searchTrack` unambiguously exists in ReccoBeats' catalog, so
+    /// this step never has a "genuine miss" outcome of its own to report.
+    private static func audioFeatures(trackID: String) async -> FetchResult {
         let url = baseURL.appendingPathComponent("v1/track/\(trackID)/audio-features")
         guard let (data, _) = try? await URLSession.shared.data(from: url) else {
             logger.error("audio-features request failed for track id \(trackID, privacy: .public)")
-            return nil
+            return .requestFailed
         }
         guard let traits = try? JSONDecoder().decode(SongAudioTraits.self, from: data) else {
             logger.error("audio-features decode failed for track id \(trackID, privacy: .public)")
-            return nil
+            return .requestFailed
         }
-        return traits
+        return .hit(traits)
     }
 
-    /// Convenience: search + fetch in one call. nil if the search comes up empty or the
-    /// audio-features call fails.
-    static func fetchTraits(artist: String, title: String) async -> SongAudioTraits? {
-        guard let trackID = await searchTrack(artist: artist, title: title) else { return nil }
-        return await audioFeatures(trackID: trackID)
+    /// Convenience: search + fetch in one call.
+    static func fetchTraits(artist: String, title: String) async -> FetchResult {
+        switch await searchTrack(artist: artist, title: title) {
+        case .found(let trackID): return await audioFeatures(trackID: trackID)
+        case .genuineMiss: return .genuineMiss
+        case .requestFailed: return .requestFailed
+        }
     }
 }
