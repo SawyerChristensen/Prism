@@ -5,7 +5,7 @@
   - [ ] Add a moving album cover to the apple music plugin?
 - [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
 - [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
-  - [ ] Find image tiling presets if an album tiles (rare) (low priority)
+  - [ ] Find image tiling presets if an album tiles (rare) (low priority) (Pool of Swim, Teenage Dirtbag)
 - [ ] Separate audio tracks into vocals, bass, drums, etc. feed each into different sections of the visualizer. vocals into the waveform, bass/drums into the zoom/scaling
 - [ ] Sell album-specific presets
   - [ ] All Star Wars albums - a modified "fishbrain radiate supernova 3" with rays color coded for each album

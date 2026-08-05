@@ -21,16 +21,19 @@
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.quicklook.thumbnail-provider</string>
+		<string>com.apple.quicklook.thumbnail</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>MilkThumbnailProvider</string>
-		<key>QLThumbnailMinimumDimension</key>
-		<integer>32</integer>
-		<key>QLSupportedContentTypes</key>
-		<array>
-			<string>com.nullsoft.milkdrop.preset</string>
-			<string>com.vidvox.projectmilksyphon.preset</string>
-		</array>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>QLThumbnailMinimumDimension</key>
+			<integer>32</integer>
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>com.nullsoft.milkdrop.preset</string>
+				<string>com.vidvox.projectmilksyphon.preset</string>
+			</array>
+		</dict>
 	</dict>
 </dict>
 </plist>

@@ -17,6 +17,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "730C7A56EA5C52EAA85CF01A"
                BuildableName = "PrismVisualizerPlugin.bundle"
+               BlueprintName = "PrismVisualizerPlugin"
                ReferencedContainer = "container:Prism.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -52,6 +53,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "730C7A56EA5C52EAA85CF01A"
             BuildableName = "PrismVisualizerPlugin.bundle"
+            BlueprintName = "PrismVisualizerPlugin"
             ReferencedContainer = "container:Prism.xcodeproj">
          </BuildableReference>
       </MacroExpansion>

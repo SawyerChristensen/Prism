@@ -39,7 +39,6 @@
 		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 		BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
-		BE0D51E03013C06900F41558 /* TO DO.md in Resources */ = {isa = PBXBuildFile; fileRef = BE0D51DF3013C06900F41558 /* TO DO.md */; };
 		C11A6D2720BC2714F7BCDF40 /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
 		D5B56F4458CFDA8730720D8A /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		D7B97A958DF952647C0F710F /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
@@ -134,7 +133,7 @@
 		16138E62CBECE155E2886C7B /* Presets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Presets; sourceTree = "<group>"; };
 		16EE0B28541A385507882EDB /* MilkQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MilkQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEngine.h; path = Prism/ProjectM/Bridge/ProjectMEngine.h; sourceTree = SOURCE_ROOT; };
-		25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */ = {isa = PBXFileReference; explicitFileType = "wrapper.plug-in"; includeInIndex = 0; name = PrismScreenSaver.bundle; path = PrismScreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
+		25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismScreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
 		26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerPlugin.mm; sourceTree = "<group>"; };
 		3454D9F9C1E7A67D6E72B2C8 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = iTunesAPI.cpp; sourceTree = "<group>"; };
@@ -171,6 +170,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				MilkQuickLook/Info.plist,
+				MilkQuickLook/MilkDocumentIcon.icns,
+				MilkQuickLook/MilkThumbnailProvider.swift,
 				PrismScreenSaver/Info.plist,
 				PrismScreenSaver/PrismScreenSaverView.mm,
 				PrismVisualizerPlugin/Info.plist,
@@ -194,15 +196,11 @@
 		};
 		BEAB8FEF3012B50C005F68B6 /* PrismTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismTests;
 			sourceTree = "<group>";
 		};
 		BEAB8FF93012B50C005F68B6 /* PrismUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = PrismUITests;
 			sourceTree = "<group>";
 		};
@@ -368,7 +366,7 @@
 				BEAB8FF63012B50C005F68B6 /* PrismUITests.xctest */,
 				16EE0B28541A385507882EDB /* MilkQuickLook.appex */,
 				D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */,
-				25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */,
+				25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -402,7 +400,7 @@
 			);
 			name = PrismScreenSaver;
 			productName = PrismScreenSaver;
-			productReference = 25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.bundle */;
+			productReference = 25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */;
 			productType = "com.apple.product-type.bundle";
 		};
 		730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */ = {
@@ -577,7 +575,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BE0D51E03013C06900F41558 /* TO DO.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -737,6 +734,7 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/PrismScreenSaver/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/../Frameworks",
@@ -746,7 +744,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.ScreenSaver;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -766,12 +764,13 @@
 				DEVELOPMENT_TEAM = 4X76DT8A23;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Prism/MilkQuickLook/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.MilkQuickLook;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -795,6 +794,7 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/PrismVisualizerPlugin/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/../Frameworks",
@@ -804,7 +804,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.VisualizerPlugin;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -884,6 +884,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
@@ -941,7 +942,7 @@
 		BEAB90013012B50C005F68B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = LGPrismIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Prism/Prism.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -971,6 +972,8 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Prism needs permission to see what track is currently playing.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -982,6 +985,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -998,7 +1002,7 @@
 		BEAB90023012B50C005F68B6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = LGPrismIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Prism/Prism.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -1028,6 +1032,8 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Prism needs permission to see what track is currently playing.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1039,6 +1045,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1150,6 +1157,7 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/PrismScreenSaver/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/../Frameworks",
@@ -1159,7 +1167,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.ScreenSaver;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1179,12 +1187,13 @@
 				DEVELOPMENT_TEAM = 4X76DT8A23;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Prism/MilkQuickLook/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.MilkQuickLook;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1208,6 +1217,7 @@
 					"$(PROJECT_DIR)/Vendor/angle/include",
 				);
 				INFOPLIST_FILE = Prism/PrismVisualizerPlugin/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Prism;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@loader_path/../Frameworks",
@@ -1217,7 +1227,7 @@
 					"$(PROJECT_DIR)/Vendor/projectm-build/lib",
 					"$(PROJECT_DIR)/Vendor/angle/lib",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Sawyer.Prism.VisualizerPlugin;
 				PRODUCT_NAME = "$(TARGET_NAME)";

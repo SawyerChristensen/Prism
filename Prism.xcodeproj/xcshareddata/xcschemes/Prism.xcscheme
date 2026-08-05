@@ -37,6 +37,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "BEAB8FEB3012B50C005F68B6"
                BuildableName = "PrismTests.xctest"
+               BlueprintName = "PrismTests"
                ReferencedContainer = "container:Prism.xcodeproj">
             </BuildableReference>
          </TestableReference>
@@ -47,6 +48,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "BEAB8FF53012B50C005F68B6"
                BuildableName = "PrismUITests.xctest"
+               BlueprintName = "PrismUITests"
                ReferencedContainer = "container:Prism.xcodeproj">
             </BuildableReference>
          </TestableReference>
