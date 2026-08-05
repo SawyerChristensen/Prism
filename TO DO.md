@@ -1,16 +1,15 @@
 # Prism — To Do
 ---
 ### Misc
-- [ ] Same unfiltered-filename problem still exists in the History/Last Session menu bar items (PrismApp.swift) in all builds, Release included — strip profanity/questionable names there too.
 - [ ] Fix all project warnings
 
 ## Post Launch
 ---
-- [ ] Enable the apple music visualizer
-- [ ] Enable the screen saver
+- [ ] Add a settings window that enables apple music visualizer, the screen saver, and the original unstandardized preset names
 - [ ] Add the preset matching algorithm to the apple music plugin
 - [ ] Add a moving album cover to the apple music plugin?
 - [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
+- [ ] 13 presets fail to parse in Scripts/generate_preset_visual_traits.sh ("couldn't read ... — skipping") and so have no PresetVisualTraits.json entry / never participate in song-preset matching. Pre-existing in the raw NestDrop pack, not caused by the ProductionMilkdropCorpus rename (confirmed absent from the old traits.json too, under their original filenames). All 13 are LuxXx/The NG+Flexi+BDRV/Hexcollie.../A Milk Art Detail/drugsincombat presets — see dev-notes/preset-ratings-backup-2026-08-05 conversation notes for the full old→new filename list. Worth investigating why these specific files don't parse (corrupt/unusual encoding?).
 - [ ] Better background removal
   - [ ] Allow for background color to be shown for certain albums defined in a new v2 "Artwork Preferences"
       - [ ] Allow for disabling of text detection in this new artwork preferences. the text should just be picked up by background detail. (see Once Twice Melody)

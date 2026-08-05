@@ -14,9 +14,15 @@
 # measured performant on real hardware, so there's no need for MilkdropPresetComplexityAnalyzer's
 # old static text-heuristic guard at preset-selection time (removed) or for a preset that stalls
 # playback at a few fps to ever reach the screen at all.
+#
+# Pulls from ProductionMilkdropCorpus, not PerformantMilkdropPresetsPack directly — the former is
+# a renamed copy of the latter with community preset filenames standardized to
+# "Author - Subcategory MainCategory[ N]" (author omitted where none could be identified) so the
+# UI never surfaces the raw NestDrop filenames, some of which carried profanity/offensive text.
+# ProductionMilkdropCorpus never had a "! Transition" folder copied into it, so no exclude needed here.
 set -euo pipefail
 
-SRC="${PRISM_PRESET_PACK_DIR:-$HOME/Documents/PrismCollection/PerformantMilkdropPresetsPack/Presets}"
+SRC="${PRISM_PRESET_PACK_DIR:-$HOME/Documents/PrismCollection/ProductionMilkdropCorpus}"
 DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Presets"
 
 if [ ! -d "$SRC" ]; then
@@ -27,7 +33,6 @@ fi
 mkdir -p "$DEST"
 rsync -a --delete \
     --exclude='*.jpg' --exclude='*.jpeg' --exclude='.DS_Store' \
-    --exclude='! Transition/' \
     "$SRC/" "$DEST/"
 
 count=$(find "$DEST" -name '*.milk' | wc -l | tr -d ' ')
