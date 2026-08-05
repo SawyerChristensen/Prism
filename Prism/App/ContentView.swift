@@ -153,8 +153,6 @@ struct ContentView: View {
                 onDropPreset: { url in handlePresetDrop(url) },
                 onDropTargetChanged: { isDropTargeted = $0 }
             )
-                .contentShape(Rectangle())
-                .onTapGesture { loadNextSequentialPreset() }
 
             if !isTextHidden, let track = nowPlaying.trackName, let artist = nowPlaying.artistName {
                 VStack {
@@ -411,7 +409,7 @@ struct ContentView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -420,6 +418,9 @@ struct ContentView: View {
                 loadNextPreset()
                 return .handled
             }
+            // Up/Down (adjustWarpAnimSpeed) are temporarily disabled by leaving them out of
+            // `keys:` above, same as the other hotkeys below — see the comment above this
+            // modifier.
             if press.key == .upArrow {
                 adjustWarpAnimSpeed(by: 0.1)
                 return .handled

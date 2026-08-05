@@ -1,9 +1,6 @@
 # Prism — To Do
 ---
 ### Misc
-- [x] Change the m keybind to command C for "Cycle Album Layers"
-- [ ] Clicking on the window should no longer skip the current preset. only arrow right should do that
-- [ ] Disable arrow up/down. zoom strength should stay at default
 - [ ] Same unfiltered-filename problem still exists in the History/Last Session menu bar items (PrismApp.swift) in all builds, Release included — strip profanity/questionable names there too.
 - [ ] Fix all project warnings
 
