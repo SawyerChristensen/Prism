@@ -947,7 +947,14 @@ static void PrismHandlePossibleTrackChange(PrismPluginData *data, const ITTrackI
 
 #pragma mark - Visual lifecycle
 
+// VISUAL_PLATFORM_VIEW (iTunesAPI.h) expands to NSOpenGLView* - Music.app's VisualizerService
+// genuinely hands the plugin one of those as destView (it's the actual host ABI, not a rendering
+// choice Prism makes), so the deprecation can't be designed around; this plugin only ever uses it
+// as a plain NSView to add its own Metal-backed subview into (see PrismVisualizerView below).
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW destView, OptionBits options) {
+#pragma clang diagnostic pop
     (void)options;
 
     PrismLog("Activate: destView=%{public}@ bounds=%{public}@ window=%{public}@",

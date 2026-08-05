@@ -22,7 +22,11 @@
 
 import Foundation
 
-enum SongPresetMatcher {
+/// `nonisolated`: this is a pure value-type computation (no shared mutable state), and
+/// `loadBestMatchedPreset` in ContentView.swift calls `rank` from a `Task.detached` specifically
+/// to keep the ranking work off the main thread — the project's default `MainActor` isolation
+/// would otherwise force every call site through an `await` hop back onto it, defeating that.
+nonisolated enum SongPresetMatcher {
     /// Starting weights — relative importance, not calibrated against real listening sessions yet.
     /// Energy/danceability weighted highest since screen presence and responsiveness are the most
     /// visually obvious mismatches when wrong; loudness/glow weighted lowest since it's the

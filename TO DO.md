@@ -1,31 +1,22 @@
 # Prism — To Do
 ---
-### Misc
-- [ ] Fix all project warnings
-
-## Post Launch
----
 - [ ] Add a settings window that enables apple music visualizer, the screen saver, and the original unstandardized preset names
 - [ ] Add the preset matching algorithm to the apple music plugin
-- [ ] Add a moving album cover to the apple music plugin?
+  - [ ] Add a moving album cover to the apple music plugin?
 - [ ] Spotify plugin similar to Apple Music plugin? Research is it is possible to add an option under Spotify's View Menu
+- [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
+  - [ ] Find image tiling presets if an album tiles (rare) (low priority)
+- [ ] Separate audio tracks into vocals, bass, drums, etc. feed each into different sections of the visualizer. vocals into the waveform, bass/drums into the zoom/scaling
+- [ ] Sell album-specific presets
+  - [ ] All Star Wars albums - a modified "fishbrain radiate supernova 3" with rays color coded for each album
+  - [ ] Beach House specific ones
+- [ ] Make own presets?
+  - [ ] TonyMilkdrop - Vroom!!! [MashUp]   - that takes an input color and changes its colors to that color and nearby colors
 - [ ] 13 presets fail to parse in Scripts/generate_preset_visual_traits.sh ("couldn't read ... — skipping") and so have no PresetVisualTraits.json entry / never participate in song-preset matching. Pre-existing in the raw NestDrop pack, not caused by the ProductionMilkdropCorpus rename (confirmed absent from the old traits.json too, under their original filenames). All 13 are LuxXx/The NG+Flexi+BDRV/Hexcollie.../A Milk Art Detail/drugsincombat presets — see dev-notes/preset-ratings-backup-2026-08-05 conversation notes for the full old→new filename list. Worth investigating why these specific files don't parse (corrupt/unusual encoding?).
 - [ ] Better background removal
   - [ ] Allow for background color to be shown for certain albums defined in a new v2 "Artwork Preferences"
       - [ ] Allow for disabling of text detection in this new artwork preferences. the text should just be picked up by background detail. (see Once Twice Melody)
   - [ ] If an album art is noisy, expand the breadth of the color bucket that should be taken out. See Beach House's "Depression Cherry" (not all reds removed) and Djo's "Chateau" (blue is not taken out). This requires defining what "noisy" is...
-- [ ] Look for presets that make use of inputted album art, see if we can detect if a preset can input a picture and use our album art with these presets
-  - [ ] Find image tiling presets if an album tiles (rare) (low priority)
 - [ ] Make album art base reactivity react less to mids and more to bass hits?
-- [ ] Separate audio tracks into vocals, bass, drums, etc. feed each into different sections of the visualizer. vocals into the waveform, bass/drums into the zoom/scaling
-- [ ] Make own presets?
-  - [ ] TonyMilkdrop - Vroom!!! [MashUp]   - that takes an input color and changes its colors to that color and nearby colors
-- [ ] The old runtime complexity heuristic (MilkdropPresetComplexityAnalyzer, static tex3D/GetPixel/GetBlur/num_inst text-scan) is gone — the bundled library is now pre-curated by an offline FPS benchmark instead (see dev-notes/preset-fps-benchmark-2026-08-04, Prism/Scripts/copy_bundled_presets.sh), so nothing in it needs a runtime skip. But presets loaded outside that curated set (⌘O, drag-and-drop, history, an external library folder) have no performance guarantee, and ProjectMCoordinator's runtime watchdog (updateSlowPresetWatchdog) that would catch those is currently disabled/commented out. Decide: re-enable the watchdog as-is (auto-advances past a preset stuck under 15fps for 2.5s), or have it render at reduced internal resolution and upscale instead of skipping.
-- [ ] Verify the apple music plugin works in production
-- [ ] Slow down all visuals
-  - [ ] Most presets take the previous frame and do some math to it so a higher frame rate (such as 120) actually speeds up all animations buy 2x. Going to 60fps does not reduce the reactivity of the audio, but it DOES decrease the speed at which the preset animates.
-  - [ ] Set preferred fps to whatever the device's max refresh rate is
-  - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
-- [ ] Some small issues with the wave transition, but they are small
-- [ ] Add a thumbnail for the prism screen saver in macOS setting
+- [ ] Add a thumbnail for the prism screen saver in macOS settings

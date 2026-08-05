@@ -510,12 +510,15 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let subjectTex = currentSubjectOnlyTexture ?? emptyAlbumArtTexture
         let textTex = currentTextOnlyTexture ?? emptyAlbumArtTexture
         // "Old" side of the preset-transition blend - see transitionOldBackgroundDetailTexture's
-        // own doc comment. Falls back to the *live* current texture (not emptyAlbumArtTexture) when
-        // there's no snapshot yet, so a transition starting before any track has ever loaded blends
-        // from itself (a no-op) rather than from nothing.
-        let oldBackgroundDetailTex = transitionOldBackgroundDetailTexture ?? backgroundDetailTex
-        let oldSubjectTex = transitionOldSubjectTexture ?? subjectTex
-        let oldTextTex = transitionOldTextTexture ?? textTex
+        // own doc comment. Falls back to emptyAlbumArtTexture (not the live current texture) when
+        // there's no snapshot yet - that only happens for this coordinator's very first-ever
+        // transition, before anything has been promoted, so "old" genuinely is nothing. Falling
+        // back to the live current texture here would instead blend the just-promoted new art
+        // against itself (a no-op), which is exactly what made the launch-time reveal pop in
+        // instead of playing the transition like every later track change does.
+        let oldBackgroundDetailTex = transitionOldBackgroundDetailTexture ?? emptyAlbumArtTexture
+        let oldSubjectTex = transitionOldSubjectTexture ?? emptyAlbumArtTexture
+        let oldTextTex = transitionOldTextTexture ?? emptyAlbumArtTexture
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setFragmentTexture(texture, index: 0)
@@ -554,10 +557,20 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         }
 
         if latestRawImage !== currentRawImage {
-            // currentRawImage == nil - nothing on screen yet (this launch's very first track) -
-            // there's nothing to crossfade away from, so promote immediately rather than waiting on
-            // a transition that this app-launch preset restore never necessarily triggers.
-            if currentRawImage == nil || engine?.presetTransitionActive == true {
+            // Previously also promoted immediately whenever currentRawImage == nil (nothing on
+            // screen yet - this launch's very first track), on the reasoning that there's nothing
+            // to crossfade away from anyway. But projectM's own launch-time preset restore *does*
+            // start a real smooth transition into that first matched preset, and promoting ahead of
+            // it meant this function's own snapshot below (and updatePresetTransitionSnapshotIfNeeded's,
+            // which runs first each frame) had already been overwritten with the new art by the time
+            // the transition's "old" side got captured - old and new ended up identical, so the
+            // transition's blend was a no-op and the cover just popped in instead of playing the same
+            // wipe/warp/blur every later track change gets. Waiting for a real transition here (with
+            // albumArtPromotionFallbackDelay below as the safety net if one never actually starts)
+            // instead lets the "old" snapshot capture genuinely nothing, so the shader's fallback to
+            // emptyAlbumArtTexture (see draw(in:)'s oldBackgroundDetailTex) carries the first cover in
+            // properly.
+            if engine?.presetTransitionActive == true {
                 promoteToCurrentTrack(
                     device: device, rawImage: latestRawImage, colorKeyedImage: latestColorKeyedImage,
                     subjectImage: latestSubjectImage, subjectOnlyImage: latestSubjectOnlyImage,

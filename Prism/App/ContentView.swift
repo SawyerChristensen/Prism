@@ -497,24 +497,43 @@ struct ContentView: View {
             permissions.checkAndRequestPermissions()
             nowPlaying.startPolling()
             isFocused = true
-            // Restore whichever preset was on screen last launch (TO DO.md Phase 4). Guarded on
+            // Picks the very first preset (TO DO.md Phase 4/Song-Preset Matching). Guarded on
             // presetURL == nil so a second onAppear (SwiftUI can re-fire this) never clobbers a
-            // preset the user has since picked. Falls back to PRISM_PROJECTM_DEV_PRESETS (a
-            // debug-only hardcoded preset path, since the App Sandbox blocks reading arbitrary
-            // paths that weren't user-selected/dropped) only when there's no real remembered
-            // preset to restore - useful for quick manual testing without a security-scoped
-            // bookmark on hand.
+            // preset the user has since picked. Backgrounded (not awaited inline) so it doesn't
+            // hold up the rest of onAppear (permissions, polling, the library-folder prompt below).
             if visualizerModel.presetURL == nil {
-                // Wait for real audio before leaving projectM's built-in starting animation — see
-                // waitForMusicSignal. Backgrounded (not awaited inline) so it doesn't hold up the
-                // rest of onAppear (permissions, polling, the library-folder prompt below).
                 Task {
+                    // Wait for real audio before leaving projectM's built-in starting animation —
+                    // see waitForMusicSignal.
                     await waitForMusicSignal()
                     // A manual import/drop (handlePresetDrop or the fileImporter) while we were
                     // waiting already set presetURL directly and is the one thing meant to jump
                     // straight to the preset view without music — don't stomp it with whatever
-                    // was on screen last launch.
+                    // else this pick would choose.
                     guard visualizerModel.presetURL == nil else { return }
+                    // NowPlayingManager.startPolling() (called earlier in onAppear, well before
+                    // this point) usually already knows the currently-playing track by now - wait
+                    // a little longer for its ready gate (trackReadySettledToken) so the very first
+                    // preset gets the same real song-preset match a track *change* would get,
+                    // instead of blindly restoring whatever was on screen last launch or grabbing
+                    // the sequentially-first preset in the corpus.
+                    if await waitForNowPlayingTrack() {
+                        guard visualizerModel.presetURL == nil else { return }
+                        if let songTraits = nowPlaying.songTraits {
+                            PrismDebug.trace("launch: matching \"\(nowPlaying.trackName ?? "?")\" against its ReccoBeats traits")
+                            loadBestMatchedPreset(for: songTraits)
+                        } else {
+                            PrismDebug.trace("launch: sequential pick for \"\(nowPlaying.trackName ?? "?")\" - no ReccoBeats match")
+                            loadNextSequentialPreset()
+                        }
+                        return
+                    }
+                    // No track detected at all (e.g. audio playing from something other than
+                    // Music/Spotify) - fall back to whichever preset was on screen last launch.
+                    // Falls back further to PRISM_PROJECTM_DEV_PRESETS (a debug-only hardcoded
+                    // preset path, since the App Sandbox blocks reading arbitrary paths that
+                    // weren't user-selected/dropped) only when there's no real remembered preset -
+                    // useful for quick manual testing without a security-scoped bookmark on hand.
                     var restoredFromLastLaunch = false
                     lastPresetStore.withLastPreset { url in
                         restoredFromLastLaunch = true
@@ -524,6 +543,19 @@ struct ContentView: View {
                        let devPresetsRoot = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESETS"] {
                         let devPresetName = ProcessInfo.processInfo.environment["PRISM_PROJECTM_DEV_PRESET_NAME"] ?? "100-square.milk"
                         visualizerModel.requestPreset(at: URL(fileURLWithPath: devPresetsRoot).appendingPathComponent(devPresetName))
+                        restoredFromLastLaunch = true
+                    }
+                    // withLastPreset returns nil (leaving restoredFromLastLaunch false) whenever the
+                    // remembered bookmark can no longer be resolved - e.g. the file was moved/renamed
+                    // since it was last remembered (see its own doc comment), which is exactly what
+                    // happened to whichever preset was on screen when the Milkdrop corpus got renamed
+                    // (TO DO.md). Without this last-resort fallback, presetURL would stay nil forever -
+                    // stranding the app on projectM's built-in starting animation indefinitely, since
+                    // nothing else ever retries the restore and a stale bookmark never becomes valid
+                    // on its own. Picking the first sequential preset here is the same fallback
+                    // Space/tap already performs manually (loadNextSequentialPreset).
+                    if !restoredFromLastLaunch, presetLibrary.isConfigured {
+                        loadNextSequentialPreset()
                     }
                 }
             }
@@ -714,6 +746,26 @@ struct ContentView: View {
             }
             try? await Task.sleep(for: .milliseconds(150))
         }
+    }
+
+    /// Waits for `nowPlaying.trackReadySettledToken` to fire at least once - i.e. for
+    /// NowPlayingManager to have both detected a currently-playing track *and* settled its ready
+    /// gate (real artwork/traits, or its own `readyGateTimeoutInterval` backstop, whichever's
+    /// first - see that token's own doc comment) - so onAppear's launch-time preset pick can use
+    /// the exact same real song-preset match a track *change* gets, rather than treating "a song
+    /// is already playing" as unworthy of the search a mere skip/new-track gets.
+    /// `nowPlaying.startPolling()` (called earlier in onAppear) already has a head start on this
+    /// by the time `waitForMusicSignal` returns, so this is usually near-instant; the timeout is
+    /// only there for when nothing supported (Music/Spotify) is actually playing at all - e.g.
+    /// audio from a browser or another app - so this can't hang the launch pick forever waiting
+    /// for a track NowPlayingManager will never see.
+    private func waitForNowPlayingTrack(timeoutSeconds: Double = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while nowPlaying.trackReadySettledToken == 0 {
+            if Date() >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        return true
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL

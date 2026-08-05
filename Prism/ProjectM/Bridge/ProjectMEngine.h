@@ -17,7 +17,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// Creates the engine (EGL/ANGLE context + projectm_handle). Returns nil if the
 /// underlying GL context or projectM instance couldn't be created - check the
 /// system log for the specific reason (both ANGLE and projectM log via NSLog/stderr).
+/// The pragma silences a macOS 26 SDK NSObject.h quirk: it treats any nullability
+/// annotation on plain `-init` as conflicting with its own (correctly) nonnull one,
+/// even though a failable designated `-init` is valid, ordinary Objective-C.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnullability"
 - (nullable instancetype)init NS_DESIGNATED_INITIALIZER;
+#pragma clang diagnostic pop
 
 /// Loads a preset from a local file URL. Fire-and-forget: if loading fails, the
 /// currently displayed preset keeps rendering (this matches projectm_load_preset_file's

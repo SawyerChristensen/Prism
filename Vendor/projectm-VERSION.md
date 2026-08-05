@@ -88,6 +88,17 @@ ShaderIndex()`/`StaticRandomValues()` (new — the index and per-transition rand
 IsPresetTransitionActive()`/`PresetTransitionProgress()`/`PresetTransitionShaderIndex()`/
 `PresetTransitionRandomValues()` getters.
 
+## Local patch: removed stale `@param instance` from `projectm_set_log_level` doc comment
+
+The patch is checked in at
+`Prism/Vendor/projectm-local-patches/0006-fix-log-level-doc-param.patch` (same not-part-of-
+the-submodule's-tracked-commit caveat as above — re-applied by `Prism/Vendor/build-projectm.sh`).
+
+`projectm_set_log_level(projectm_log_level, bool, void*)` takes no instance handle (it's a
+global/per-thread setting, unlike most of the C API), but its Doxygen comment in `logging.h`
+still documented a nonexistent `@param instance` — a `-Wdocumentation` warning on every build.
+Upstream doc typo, not a functional change; just deletes the stray `@param` line.
+
 Motivation: Prism composites its own album-art overlay on top of projectM's rendered output in a
 separate Metal pass (`ProjectMCoordinator`/`ProjectMCompositeShader.metal`) rather than inside
 projectM's own render pass, and wanted that overlay to visibly transition using the *exact same*

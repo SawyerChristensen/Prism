@@ -1,0 +1,12 @@
+diff --git a/src/api/include/projectM-4/logging.h b/src/api/include/projectM-4/logging.h
+index 0630d8080..10fda4527 100644
+--- a/src/api/include/projectM-4/logging.h
++++ b/src/api/include/projectM-4/logging.h
+@@ -81,7 +81,6 @@ PROJECTM_EXPORT void projectm_set_log_callback(projectm_log_callback callback,
+ 
+ /**
+  * Sets the minimum log level for which the callback should be called.
+- * @param instance The projectM instance handle.
+  * @param log_level The new log level to set. If set to PROJECTM_LOG_LEVEL_NOTSET, the global or default setting will be used.
+  * @param current_thread_only If true, the log level is only set for the thread calling the function.
+  * @since 4.2.0
