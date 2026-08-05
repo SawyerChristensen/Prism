@@ -192,32 +192,12 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     private var transitionOldSubjectTexture: MTLTexture?
     private var transitionOldTextTexture: MTLTexture?
 
-    // "Current" track's puzzle pieces - NowPlayingManager.subjectArtwork (Vision's subject cutout
-    // with any OCR'd text drawn back on top - the "end graphic," same as NowPlayingManager's
-    // `.combined` masking mode produces before its own recentering step), and two versions of the
-    // color-keyed (or, absent a clean key, raw) cover:
-    //   currentFullBackgroundTexture - the cover completely untouched, no hole - used as the
-    //     background layer for the whole of scaleIn, so entrance always shows the genuinely full
-    //     album art regardless of how subject/background happen to line up frame to frame (no
-    //     reliance on two cutout layers reconstituting each other pixel-perfectly).
-    //   currentBackgroundTexture - the same cover with an end-graphic-shaped hole already punched
-    //     out of it (see backgroundWithSubjectHole) - swapped in starting at `separate`, once the
-    //     subject has locked in place and "everything else" is what pulls away; without the hole,
-    //     the background growing past the locked end graphic during separate would show a faint
-    //     enlarging "ghost" of it bleeding out from behind, since the background would otherwise
-    //     still be carrying those same pixels underneath. nil-mask-safe: backgroundWithSubjectHole
-    //     just returns its input untouched when there's no subject to cut, so this degrades to the
-    //     same single full-cover background as currentFullBackgroundTexture automatically.
-    private var currentFullBackgroundTexture: MTLTexture?
-    private var currentBackgroundTexture: MTLTexture?
-    private var currentSubjectTexture: MTLTexture?
     // The four-layer stack's own dedicated textures (see AlbumArtLayerCount) - uploaded
-    // unconditionally in promoteToCurrentTrack alongside the three above, straight from
-    // NowPlayingManager's backgroundColorArtwork/backgroundDetailArtwork/subjectOnlyArtwork/
-    // textOnlyArtwork - all four genuinely non-overlapping pieces of the cover, unlike
-    // currentBackgroundTexture/currentFullBackgroundTexture above (which still carry the whole
-    // photo). All four are always bound and sampled every frame regardless of the current reveal
-    // count - only each one's *Visible uniform flag changes (see draw(in:)).
+    // unconditionally in promoteToCurrentTrack, straight from NowPlayingManager's
+    // backgroundColorArtwork/backgroundDetailArtwork/subjectOnlyArtwork/textOnlyArtwork - four
+    // genuinely non-overlapping pieces of the cover. All four are always bound and sampled every
+    // frame regardless of the current reveal count - only each one's *Visible uniform flag changes
+    // (see draw(in:)).
     private var currentBackgroundColorTexture: MTLTexture?
     private var currentBackgroundDetailTexture: MTLTexture?
     private var currentSubjectOnlyTexture: MTLTexture?
@@ -356,18 +336,20 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         transitionOldBackgroundDetailTexture = currentBackgroundDetailTexture
         transitionOldSubjectTexture = currentSubjectOnlyTexture
         transitionOldTextTexture = currentTextOnlyTexture
-        // Logging only, to verify in practice (see ContentView's trackReadySettledToken-gated preset
-        // advance) whether album art is actually ready by the time a transition starts: if
-        // latestRawImage already differs from currentRawImage here, this frame's advanceAlbumArtAnimation
-        // (which runs right after this function returns) is about to promote *during* this transition
-        // rather than having already settled before it - i.e. a real old-vs-new wipe either way, but
-        // worth distinguishing "already current" from "changing right on the first frame" while
-        // confirming this fix actually closes the race.
-        let artAlreadyCurrent = latestRawImage === currentRawImage
-        let artStatus = artAlreadyCurrent
-            ? "already matches current track (no-op or already settled)"
-            : "about to promote new art THIS transition (racing)"
-        NSLog("ProjectMCoordinator: new preset transition (shader=\(identity.shaderIndex)) - album art \(artStatus)")
+        // Diagnostic only (see ContentView's trackReadySettledToken-gated preset advance): whether
+        // album art is actually ready by the time a transition starts. If latestRawImage already
+        // differs from currentRawImage here, this frame's advanceAlbumArtAnimation (which runs
+        // right after this function returns) is about to promote *during* this transition rather
+        // than having already settled before it - i.e. a real old-vs-new wipe either way, but worth
+        // distinguishing "already current" from "changing right on the first frame" when chasing a
+        // race between artwork readiness and preset transitions.
+        if PrismDebug.verboseLogging {
+            let artAlreadyCurrent = latestRawImage === currentRawImage
+            let artStatus = artAlreadyCurrent
+                ? "already matches current track (no-op or already settled)"
+                : "about to promote new art THIS transition (racing)"
+            NSLog("ProjectMCoordinator: new preset transition (shader=\(identity.shaderIndex)) - album art \(artStatus)")
+        }
     }
 
     /// Real projectM's own iRandStatic values are raw std::mt19937 output reinterpreted as signed
@@ -610,7 +592,8 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
         let dt = lastAlbumArtTimestamp.map { Float(now - $0) } ?? 0
         updateBeatPulse(dt: dt)
 
-        let hasContent = currentBackgroundTexture != nil || currentSubjectTexture != nil
+        let hasContent = currentBackgroundColorTexture != nil || currentBackgroundDetailTexture != nil
+            || currentSubjectOnlyTexture != nil || currentTextOnlyTexture != nil
         let target: Float = (hasContent && !albumArtHidden) ? 1 : 0
         globalAlpha += (target - globalAlpha) * min(1, max(0, dt) * Self.globalAlphaEaseSpeed)
     }
@@ -639,28 +622,6 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
     ) {
         currentRawImage = rawImage
 
-        // The background layer always shows the *full* cover - color-keyed wherever a clean solid
-        // background color was confidently detected (colorKeyedArtwork requires backgroundTone
-        // .black/.white - most covers, having some other color or a gradient, don't qualify), and
-        // the plain raw cover otherwise. Unlike compositeArtwork's `.combined` mode (which, with no
-        // clean key to apply, shows *only* the subject on transparent - fine for that mode's
-        // original single-flattened-image use, but here it meant most tracks never showed a
-        // background layer at all, just the bare subject cutout scaling in against nothing), this
-        // always has something to reconstitute the full cover with the subject/text hole punched
-        // out of it below, so "the full album art" is what's actually on screen at scaleIn, not
-        // just an isolated cutout.
-        let backgroundSource = colorKeyedImage ?? rawImage
-
-        currentFullBackgroundTexture = backgroundSource.flatMap {
-            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
-        }
-        let backgroundImage = backgroundSource.map { Self.backgroundWithSubjectHole(raw: $0, subjectMask: subjectImage) }
-        currentBackgroundTexture = backgroundImage.flatMap {
-            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
-        }
-        currentSubjectTexture = subjectImage.flatMap {
-            Self.uploadTexture(device: device, loader: &textureLoader, image: $0)
-        }
         // The four-layer stack's own textures - see AlbumArtLayerCount. backgroundColorImage/
         // backgroundDetailImage are genuinely separate ingredients from rawImage/colorKeyedImage
         // above (see NowPlayingManager.backgroundColorArtwork/backgroundDetailArtwork's own doc
@@ -720,41 +681,6 @@ final class ProjectMCoordinator: NSObject, MTKViewDelegate {
             let fraction = position - Float(lowerIndex)
             return base[lowerIndex] + (base[upperIndex] - base[lowerIndex]) * fraction
         }
-    }
-
-    /// Punches a subject-shaped hole out of `raw`, using `subjectMask`'s own alpha as the stencil
-    /// (`.destinationOut`: draw raw, then erase wherever the mask just drawn on top was opaque),
-    /// so the result and `subjectMask` fit together like two puzzle pieces that reconstitute the
-    /// original cover exactly, with nothing double-covered by both layers - see
-    /// currentBackgroundTexture's own doc comment for why that matters during `separate`. Returns
-    /// `raw` completely untouched when there's no mask to cut with (Vision found no subject),
-    /// which is exactly the existing "just show the whole cover" fallback.
-    private static func backgroundWithSubjectHole(raw: NSImage, subjectMask: NSImage?) -> NSImage {
-        guard let subjectMask,
-              let rawCGImage = raw.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let maskCGImage = subjectMask.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else {
-            return raw
-        }
-        let width = rawCGImage.width, height = rawCGImage.height
-        guard width > 0, height > 0 else { return raw }
-
-        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return raw }
-
-        // Matches NSImage.overlaying's own handling (SubjectMasking.swift) of the mask potentially
-        // having different pixel dimensions than raw - CGContext.draw scales each to fill this
-        // same destination rect regardless of its own source size.
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
-        context.draw(rawCGImage, in: rect)
-        context.setBlendMode(.destinationOut)
-        context.draw(maskCGImage, in: rect)
-
-        guard let outCGImage = context.makeImage() else { return raw }
-        return outCGImage.asPixelExactNSImage()
     }
 
     private static func uploadTexture(device: MTLDevice, loader: inout MTKTextureLoader?, image: NSImage) -> MTLTexture? {

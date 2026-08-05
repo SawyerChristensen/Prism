@@ -202,67 +202,27 @@ struct ContentView: View {
         .ignoresSafeArea()
         // Wave-only .milk preset loading (see ProjectMVisualizerModel):
         // File > "Import Milk Preset…" opens a file picker (drag-and-drop is the other way in — see
-        // handlePresetDrop), and the preset's name shows briefly so there's some feedback that a
-        // load actually happened, since nothing else in the UI names the active preset.
-        .overlay(alignment: .topLeading) {
-            let presetName = visualizerModel.presetURL?.deletingPathExtension().lastPathComponent
-            if let presetName {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(presetName)
-                    if let ratingFeedback {
-                        Text(ratingFeedback)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(fgColor.opacity(0.6))
-                .padding(8)
-                // Clears the traffic-light buttons, which now sit directly over this corner since
-                // the ZStack's .ignoresSafeArea() above lets content run under the (hidden) title
-                // bar. Standard traffic-light vertical center sits ~20pt down from the window's top
-                // edge, so this keeps the text's top clear of them.
-                .padding(.top, 20)
-            }
-        }
-        // Disabled for now (debug/status text in the top-right corner — FPS counter, auto-cycle/
-        // masking-mode/etc. state flags) — commented out rather than removed so it can come back
-        // for debugging later.
-        // .overlay(alignment: .topTrailing) {
-        //     // "M" (below) drives nowPlaying.maskingMode directly — a stand-in for a future
-        //     // Settings control; only shown off its default so this stays invisible day to day.
-        //     VStack(alignment: .trailing, spacing: 4) {
-        //         // Performance counter — smoothed (not raw per-frame 1/dt) FPS, pushed once per
-        //         // frame by ProjectMCoordinator.draw(in:) into visualizerModel.displayFPS.
-        //         Text("\(Int(visualizerModel.displayFPS.rounded())) FPS")
-        //             .monospacedDigit()
-        //         if showSavedConfirmation {
-        //             Text("Saved for this album")
-        //         }
-        //         if isAutoCycleEnabled {
-        //             Text("Auto-Cycle On")
-        //         }
-        //         if isAlbumArtHidden {
-        //             Text("Album Art Hidden")
-        //         }
-        //         if isTextHidden {
-        //             Text("Text Hidden")
-        //         }
-        //         if presetLibrary.isShowingFavoritesOnly {
-        //             Text("Reviewing Favorites List")
-        //         }
-        //         if !nowPlaying.processingEnabled {
-        //             Text("Processing Off")
-        //         } else {
-        //             if !nowPlaying.includesTextOverlay {
-        //                 Text("Text Overlay Off")
-        //             }
-        //             if nowPlaying.maskingMode != .combined {
-        //                 Text(nowPlaying.maskingMode.label)
+        // handlePresetDrop). Preset filenames come straight from community packs, unfiltered (can
+        // contain profanity/crude author jokes — see TO DO.md), so this on-screen name overlay is
+        // commented out rather than shown, for now.
+        // .overlay(alignment: .topLeading) {
+        //     let presetName = visualizerModel.presetURL?.deletingPathExtension().lastPathComponent
+        //     if let presetName {
+        //         VStack(alignment: .leading, spacing: 4) {
+        //             Text(presetName)
+        //             if let ratingFeedback {
+        //                 Text(ratingFeedback)
         //             }
         //         }
+        //         .font(.caption)
+        //         .foregroundStyle(fgColor.opacity(0.6))
+        //         .padding(8)
+        //         // Clears the traffic-light buttons, which now sit directly over this corner since
+        //         // the ZStack's .ignoresSafeArea() above lets content run under the (hidden) title
+        //         // bar. Standard traffic-light vertical center sits ~20pt down from the window's top
+        //         // edge, so this keeps the text's top clear of them.
+        //         .padding(.top, 20)
         //     }
-        //     .font(.caption)
-        //     .foregroundStyle(fgColor.opacity(0.6))
-        //     .padding(8)
         // }
         // Only visible feedback that a drag is actually hovering a valid drop target — driven by
         // `PresetDroppableMTKView.onDropTargetChanged`, not SwiftUI's own `.onDrop`/`isTargeted`
@@ -316,6 +276,17 @@ struct ContentView: View {
             // to nil as part of dismissing the panel, and if that happens before this completion
             // closure is invoked (observed in practice — the panel closes but nothing loads), a
             // live read here would always see nil and every case below would silently no-op.
+            //
+            // Also resets `activeFilePicker` here directly, unconditionally, rather than relying
+            // solely on the `isPresented` binding's `set` closure above to do it: this completion
+            // closure fires on every dismissal (success or cancel) regardless of *how* the panel
+            // went away, whereas the binding's `set` only fires through SwiftUI's own presentation
+            // machinery. If a panel is ever dismissed by some other path that machinery doesn't
+            // observe, `activeFilePicker` is left non-nil with nothing actually on screen — and
+            // since `.fileImporter` only presents on a false-to-true transition, every future
+            // import attempt (click or keyboard) silently no-ops until the app restarts. Redundant
+            // with the binding's own reset on the normal path; only matters on the abnormal one.
+            activeFilePicker = nil
             guard case .success(let url) = result else { return }
             switch capturedFilePicker {
             case .milkPreset:

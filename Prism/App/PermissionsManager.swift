@@ -1,5 +1,5 @@
 //
-//  PermissionManager.swift
+//  PermissionsManager.swift
 //  Prism
 //
 //  Created by Sawyer Christensen on 7/23/26.
@@ -10,8 +10,6 @@ import ApplicationServices
 
 @Observable
 class PermissionsManager {
-    var hasAutomationPermission = false
-
     /// The underlying call is synchronous and can block for a long time waiting on an Apple
     /// Events round-trip that may need to launch the target app first (automation probe). Not
     /// safe to run on the main thread — doing so freezes the whole UI, indistinguishable from a
@@ -19,11 +17,8 @@ class PermissionsManager {
     func checkAndRequestPermissions() {
         PrismDebug.trace("PermissionsManager.checkAndRequestPermissions() dispatched")
         Task.detached(priority: .userInitiated) {
-            let hasAutomation = Self.requestAutomationPermission(for: "Spotify")
+            _ = Self.requestAutomationPermission(for: "Spotify")
             // Self.requestAutomationPermission(for: "Music") // Apple Music
-            await MainActor.run {
-                self.hasAutomationPermission = hasAutomation
-            }
         }
     }
 

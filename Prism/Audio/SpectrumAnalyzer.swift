@@ -2,8 +2,7 @@
 //  SpectrumAnalyzer.swift
 //  Prism
 //
-//  Shared FFT/banding pipeline used by both audio capture engines (ScreenCaptureKit and
-//  Core Audio Taps), so comparing the two only varies the capture mechanism, not the analysis.
+//  Shared FFT/banding pipeline fed by CoreAudioTapEngine's captured audio.
 //
 
 import Accelerate
@@ -11,10 +10,6 @@ import CoreGraphics
 import os
 
 private let logger = Logger(subsystem: "com.prism.app", category: "SpectrumAnalyzer")
-
-import Accelerate
-import CoreGraphics
-import os
 
 final class SpectrumAnalyzer {
     let bandCount: Int

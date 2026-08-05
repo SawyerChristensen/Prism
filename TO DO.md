@@ -1,9 +1,10 @@
 # Prism — To Do
 ---
 ### Misc
-- [ ] Clean up file headers and documentation that refers to dead features or outdated informaiton. Comment out log statements
-- [ ] Remove the transition names in the upper left and strip all profanity from being displayed in the titles
-  - [ ] Review questionable names
+- [ ] Change the m keybind to command C for "Cycle Album Layers"
+- [ ] Clicking on the window should no longer skip the current preset. only arrow right should do that
+- [ ] Disable arrow up/down. zoom strength should stay at default
+- [ ] Same unfiltered-filename problem still exists in the History/Last Session menu bar items (PrismApp.swift) in all builds, Release included — strip profanity/questionable names there too.
 
 ## Post Launch
 ---
@@ -22,7 +23,7 @@
 - [ ] Separate audio tracks into vocals, bass, drums, etc. feed each into different sections of the visualizer. vocals into the waveform, bass/drums into the zoom/scaling
 - [ ] Make own presets?
   - [ ] TonyMilkdrop - Vroom!!! [MashUp]   - that takes an input color and changes its colors to that color and nearby colors
-- [ ] Expensive presets (flagged by MilkdropPresetComplexityAnalyzer — heavy tex3D/GetPixel/GetBlur1-2-3 warp/comp shaders, or high shapecode num_inst/wavecode samples × per-frame line count) are currently just skipped outright during sequential stepping/auto-cycle. Instead, render them at a reduced internal resolution and upscale to the display size, so they're still shown (just cheaper) rather than never appearing at all.
+- [ ] The old runtime complexity heuristic (MilkdropPresetComplexityAnalyzer, static tex3D/GetPixel/GetBlur/num_inst text-scan) is gone — the bundled library is now pre-curated by an offline FPS benchmark instead (see dev-notes/preset-fps-benchmark-2026-08-04, Prism/Scripts/copy_bundled_presets.sh), so nothing in it needs a runtime skip. But presets loaded outside that curated set (⌘O, drag-and-drop, history, an external library folder) have no performance guarantee, and ProjectMCoordinator's runtime watchdog (updateSlowPresetWatchdog) that would catch those is currently disabled/commented out. Decide: re-enable the watchdog as-is (auto-advances past a preset stuck under 15fps for 2.5s), or have it render at reduced internal resolution and upscale instead of skipping.
 - [ ] Verify the apple music plugin works in production
 - [ ] Slow down all visuals
   - [ ] Most presets take the previous frame and do some math to it so a higher frame rate (such as 120) actually speeds up all animations buy 2x. Going to 60fps does not reduce the reactivity of the audio, but it DOES decrease the speed at which the preset animates.

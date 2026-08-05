@@ -95,8 +95,9 @@ final class NowPlayingManager {
     /// processing ~120 times a second on the main thread for a cover that never changes between
     /// frames — measured tanking an otherwise-120fps preset down to ~14fps.
     var subjectArtwork: NSImage? { cachedSubjectArtwork }
-    /// Vision's subject cutout alone, with no OCR text drawn back on top — the "only the subject"
-    /// step of ContentView's four-style album-art cycle (see AlbumArtDisplayStyle), distinct from
+    /// Vision's subject cutout alone, with no OCR text drawn back on top — the `subject` layer of
+    /// ProjectMCoordinator's four-layer parallax stack (background/backgroundDetail/text/subject,
+    /// each independently beat-zoomed — see ProjectMCoordinator.updateAlbumArt), distinct from
     /// `subjectArtwork` above which always includes text when `includesTextOverlay` is on. A plain
     /// window onto `cachedSubjectMask`, cached per track exactly like `subjectArtwork` — same
     /// "don't recompute per access" reasoning applies (ProjectMMetalView reads this every frame).
@@ -104,7 +105,7 @@ final class NowPlayingManager {
     /// OCR-detected text alone, masked out the same way `subjectOnlyArtwork` masks out the subject
     /// — the "subject with text" style's text half, kept as its own layer (rather than pre-merged
     /// into `subjectArtwork`) so the Metal compositing can hold text static while the subject layer
-    /// beat-zooms independently on top of it (see ProjectMCoordinator.texturesForCurrentStyle) —
+    /// beat-zooms independently on top of it (see ProjectMCoordinator.updateAlbumArt/draw(in:)) —
     /// zooming the merged subject+text image together would drag the text along with the subject's
     /// pulse. A plain window onto `cachedTextOnlyArtwork`, cached per track/`includesTextOverlay`
     /// toggle exactly like `subjectArtwork`.
@@ -371,7 +372,7 @@ final class NowPlayingManager {
                             // record) — the art itself isn't changing, so leave cachedRawArtwork/
                             // cachedSubjectArtwork/etc. (and currentAlbumKey) completely alone rather
                             // than clearing and re-fetching them. Since ProjectMCoordinator's own
-                            // scaleIn/separate/outgoingExit choreography (see
+                            // parallax/beat-zoom reveal (see
                             // ProjectMCoordinator.advanceAlbumArtAnimation) only triggers when
                             // rawArtwork hands it a *new* NSImage instance, leaving these untouched
                             // means the art just stays put on screen instead of tearing itself apart
@@ -396,17 +397,10 @@ final class NowPlayingManager {
                     return
                 }
             }
-            /*await MainActor.run {
-                self.trackName = nil
-                self.artistName = nil
-                self.albumName = nil
-                self.sourceApp = nil
-                self.artwork = nil
-                self.genre = nil
-                self.albumBackgroundColor = nil
-                self.albumForegroundColor = nil
-                self.currentTrackKey = nil
-            }*/
+            // Trailing no-op branch: neither supported app reported now-playing info this poll.
+            // Deliberately leaves trackName/artwork/sourceApp/etc. untouched rather than clearing
+            // them — see togglePlayPause's doc comment, which relies on sourceApp staying set
+            // while paused so Space still knows which app to resume.
         }
     }
 
@@ -673,7 +667,7 @@ final class NowPlayingManager {
         Task { [weak self] in
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let response = try? JSONDecoder().decode(iTunesSearchResponse.self, from: data),
-                  let firstResult = response.results.first, // 👈 Grab the whole result first
+                  let firstResult = response.results.first, // Grab the whole result first
                   let thumbURL = firstResult.artworkUrl100 else {
                 // No artwork mutation happened on this path (regardless of updateArtwork) - staging
                 // nothing and settling the phase is safe here, unlike the success path below. See
@@ -684,7 +678,7 @@ final class NowPlayingManager {
                 return
             }
 
-            let fetchedGenre = firstResult.primaryGenreName // 👈 Extract the genre
+            let fetchedGenre = firstResult.primaryGenreName // Extract the genre
 
             guard updateArtwork else {
                 await MainActor.run {
@@ -702,7 +696,7 @@ final class NowPlayingManager {
                 return
             }
 
-            // 💡 Extract colors off the main thread
+            // Extract colors off the main thread
             let colors = image.extractColors()
             let subjectMasked = image.maskingOutBackgroundBySubject()
             let textLines = image.recognizedTextLines()

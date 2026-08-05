@@ -2,10 +2,10 @@
 //  ProjectMMetalView.swift
 //  Prism
 //
-//  Bridges MTKView into SwiftUI for the new projectM-backed path. Reuses PresetDroppableMTKView
-//  (MilkdropMetalView.swift) as-is for drag-and-drop rather than a second implementation - see
-//  that class's own header for why it's a raw AppKit NSDraggingDestination rather than SwiftUI's
-//  .onDrop. Only the render delegate differs between the two paths.
+//  Bridges MTKView into SwiftUI for the projectM-backed path. Reuses PresetDroppableMTKView
+//  as-is for drag-and-drop rather than a second implementation - see that class's own header for
+//  why it's a raw AppKit NSDraggingDestination rather than SwiftUI's .onDrop. Only the render
+//  delegate differs between the two paths.
 //
 
 import AppKit

@@ -120,9 +120,6 @@ final class CoreAudioTapEngine: NSObject {
         }
         isCapturing = success
         PrismDebug.trace("CoreAudioTapEngine.start() returned -> \(success)")
-        if success {
-            logger.debug("Core Audio tap capture started successfully")
-        }
     }
 
     func stop() async {
@@ -144,7 +141,6 @@ final class CoreAudioTapEngine: NSObject {
             return false
         }
         PrismDebug.trace("defaultOutputDeviceUID() -> \(outputUID)")
-        logger.debug("default output device UID: \(outputUID, privacy: .public)")
 
         let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         tapDescription.uuid = tapUUID
