@@ -30,6 +30,7 @@
 		76C8DF108D27DE361E91048B /* libEGL.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		76D4DBB2065AE54E6BDD58FA /* libGLESv2.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; };
 		80C21BC3A9BE5886F3D2D830 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
+		8366D8EC827A2D48B935711E /* PrismScreenSaver.saver in Embed Visualizer Plugin & Screen Saver */ = {isa = PBXBuildFile; fileRef = 25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeaderOnCopy, ); }; };
 		8869823D97EF537A43DF7581 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
 		962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */; };
 		96BD263678E83EA41F6023CE /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
@@ -37,6 +38,7 @@
 		A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */; };
 		A2A9D0B423B0A785B86CCAA6 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
 		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		B8793EF3C6BD83977F757305 /* PrismVisualizerPlugin.bundle in Embed Visualizer Plugin & Screen Saver */ = {isa = PBXBuildFile; fileRef = D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeaderOnCopy, ); }; };
 		BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };
 		C11A6D2720BC2714F7BCDF40 /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
@@ -59,6 +61,13 @@
 			remoteGlobalIDString = DC96B834FF4D53DE75CA32AC;
 			remoteInfo = MilkQuickLook;
 		};
+		84A5D1E8DA9700B8B9270316 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEAB8FD53012B50A005F68B6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 730C7A56EA5C52EAA85CF01A;
+			remoteInfo = PrismVisualizerPlugin;
+		};
 		BEAB8FED3012B50C005F68B6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = BEAB8FD53012B50A005F68B6 /* Project object */;
@@ -72,6 +81,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = BEAB8FDC3012B50A005F68B6;
 			remoteInfo = Prism;
+		};
+		DFE2F9289B19A4A029F1CE84 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BEAB8FD53012B50A005F68B6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3D78C2D736F06E3BF0674D4C;
+			remoteInfo = PrismScreenSaver;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -87,6 +103,18 @@
 				3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */,
 			);
 			name = "Embed Vendor Libraries";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1F6C9F9DE528A00D68E40DD4 /* Embed Visualizer Plugin & Screen Saver */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				B8793EF3C6BD83977F757305 /* PrismVisualizerPlugin.bundle in Embed Visualizer Plugin & Screen Saver */,
+				8366D8EC827A2D48B935711E /* PrismScreenSaver.saver in Embed Visualizer Plugin & Screen Saver */,
+			);
+			name = "Embed Visualizer Plugin & Screen Saver";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		71B11F482C7CC62FBEACC13C /* Embed Foundation Extensions */ = {
@@ -432,11 +460,14 @@
 				141407BA5A3D6307EECBC83A /* Embed Vendor Libraries */,
 				211CCFF14AFAFEF7D67740C5 /* Bundle Milkdrop Presets (.milk only) */,
 				71B11F482C7CC62FBEACC13C /* Embed Foundation Extensions */,
+				1F6C9F9DE528A00D68E40DD4 /* Embed Visualizer Plugin & Screen Saver */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				E8C7323349BB80543FF04B4E /* PBXTargetDependency */,
+				F52B1263573F70F5267B99A2 /* PBXTargetDependency */,
+				3C4C875C2CAD754CA84C6AB3 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				BEAB8FDF3012B50A005F68B6 /* Prism */,
@@ -701,6 +732,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		3C4C875C2CAD754CA84C6AB3 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = PrismScreenSaver;
+			target = 3D78C2D736F06E3BF0674D4C /* PrismScreenSaver */;
+			targetProxy = DFE2F9289B19A4A029F1CE84 /* PBXContainerItemProxy */;
+		};
 		BEAB8FEE3012B50C005F68B6 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = BEAB8FDC3012B50A005F68B6 /* Prism */;
@@ -716,6 +753,12 @@
 			name = MilkQuickLook;
 			target = DC96B834FF4D53DE75CA32AC /* MilkQuickLook */;
 			targetProxy = 333C798D0C77B427E12D7112 /* PBXContainerItemProxy */;
+		};
+		F52B1263573F70F5267B99A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = PrismVisualizerPlugin;
+			target = 730C7A56EA5C52EAA85CF01A /* PrismVisualizerPlugin */;
+			targetProxy = 84A5D1E8DA9700B8B9270316 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -942,8 +985,10 @@
 		BEAB90013012B50C005F68B6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = LGPrismTieDyeIcon;
 				ASSETCATALOG_COMPILER_APPICON_NAME = LGPrismIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Prism/Prism.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -1002,8 +1047,10 @@
 		BEAB90023012B50C005F68B6 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = LGPrismTieDyeIcon;
 				ASSETCATALOG_COMPILER_APPICON_NAME = LGPrismIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Prism/Prism.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;

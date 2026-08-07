@@ -38,6 +38,9 @@ struct PrismApp: App {
     // actual (security-scoped) load, then resets this to nil — same "menu sets a Bool/URL,
     // ContentView's the one that owns the resources to act on it" split as isPresetImporterPresented.
     @State private var presetToLoadFromMenu: URL?
+    // Opens the custom About window (see the `about` Window scene below) from the CommandGroup
+    // that replaces AppKit's default About panel.
+    @Environment(\.openWindow) private var openWindow
 
     init() {
         // A single window, never tabbed — without this, AppKit still adds "Show Tab Bar"/"Show
@@ -62,9 +65,22 @@ struct PrismApp: App {
                 sessionHistoryStore: sessionHistoryStore, sessionPresetLog: $sessionPresetLog,
                 presetToLoadFromMenu: $presetToLoadFromMenu
             )
+            .onAppear {
+                // Restores the user's alternate app icon choice - can't happen in init() above,
+                // since NSApp isn't set up that early in a SwiftUI App's lifecycle yet (see
+                // AppIconManager's doc comment).
+                AppIconManager.apply()
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            // Replaces AppKit's default About panel with the custom one in AboutView, opened via
+            // the `about` Window scene below.
+            CommandGroup(replacing: .appInfo) {
+                Button("About Prism") {
+                    openWindow(id: "about")
+                }
+            }
             // Replaces the default "New Window" item — this app only ever has the one window, so
             // Cmd-I for importing a preset is a more useful thing to put at that File-menu slot.
             CommandGroup(replacing: .newItem) {
@@ -137,5 +153,18 @@ struct PrismApp: App {
                 }
             }
         }
+
+        // `Prism > Settings…` (Cmd-,), added to the app menu automatically by this scene type.
+        Settings {
+            SettingsView()
+        }
+
+        // Single fixed-size About panel — `Window` (rather than `WindowGroup`) means macOS
+        // reuses the same instance instead of spawning duplicates if "About Prism" is chosen
+        // again while it's already open.
+        Window("About Prism", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
     }
 }

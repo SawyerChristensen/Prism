@@ -7,6 +7,8 @@
 #import "PrismVisualizerView.h"
 #import "ProjectMEngine.h"
 
+#import <unistd.h>
+
 #pragma mark - Apple logo glyph
 
 // The real Apple logo (512x512 RGBA, white glyph on transparent background, user-provided).
@@ -880,6 +882,7 @@ static NSImage *PrismScreenSaverLogoImage(void) {
 @implementation PrismScreenSaverView {
     ProjectMEngine *_engine;
     PrismVisualizerView *_visualizerView;
+    NSTimer *_orphanWatchdogTimer;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame isPreview:(BOOL)isPreview {
@@ -917,9 +920,25 @@ static NSImage *PrismScreenSaverLogoImage(void) {
     [_engine setTextureOverrideImage:PrismScreenSaverLogoImage() forName:@"prism_screensaver_logo"];
     [_engine loadPresetFromData:kPrismScreenSaverIdlePresetText smoothTransition:NO];
     [_visualizerView startRendering];
+
+    // legacyScreenSaver.appex has no self-teardown if its host (e.g. System Settings' live
+    // preview) dies without going through -stopAnimation first - the process just orphans,
+    // re-parented to launchd, and PrismVisualizerView's 60Hz render timer runs forever with
+    // nothing on screen to show for it. Poll for that specific condition (PPID becomes 1) and
+    // self-terminate rather than trusting the host to always clean up after itself.
+    [_orphanWatchdogTimer invalidate];
+    _orphanWatchdogTimer = [NSTimer scheduledTimerWithTimeInterval:5.0
+                                                             repeats:YES
+                                                               block:^(NSTimer * _Nonnull timer) {
+        if (getppid() == 1) {
+            exit(0);
+        }
+    }];
 }
 
 - (void)stopAnimation {
+    [_orphanWatchdogTimer invalidate];
+    _orphanWatchdogTimer = nil;
     [_visualizerView stopRendering];
     [super stopAnimation];
 }
