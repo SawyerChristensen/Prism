@@ -16,9 +16,16 @@ struct PrismApp: App {
     // Toggle items and the keyboard shortcuts share one source of truth via the same Binding.
     @State private var isAlbumArtHidden = false
     @State private var isTextHidden = false
-    // Owned here (rather than ContentView @State) so the menu bar companion's MenuBarWaveformView
-    // can read the same live tap instead of opening a second Core Audio process tap of its own.
+    @State private var isMenuBarWaveformHidden = false
+    // Owned here (rather than ContentView @State) so the menu bar companion's
+    // MenuBarWaveformController can read the same live tap instead of opening a second Core Audio
+    // process tap of its own.
     @State private var audioEngine = CoreAudioTapEngine()
+    // Purely decorative menu bar status item — see MenuBarWaveformController's doc comment for why
+    // it's plain AppKit rather than SwiftUI's `MenuBarExtra`. @State (not a plain `let`) so the
+    // same NSStatusItem-backed instance survives across body re-evaluations instead of a fresh one
+    // getting created — and a duplicate status item added — every time.
+    @State private var menuBarWaveformController = MenuBarWaveformController()
     // View > "Cycle Album Layers" (Cmd-C) — a one-shot trigger, not a persistent Bool like the two
     // above: ContentView's onChange(of: cycleAlbumLayersFromMenu) flips it back to false right
     // after acting on it, same shape as isPresetImporterPresented below.
@@ -74,6 +81,11 @@ struct PrismApp: App {
                 // since NSApp isn't set up that early in a SwiftUI App's lifecycle yet (see
                 // AppIconManager's doc comment).
                 AppIconManager.apply()
+                // Same NSApp-isn't-ready-in-init() reasoning applies to the status item.
+                menuBarWaveformController.setVisible(!isMenuBarWaveformHidden, audioEngine: audioEngine)
+            }
+            .onChange(of: isMenuBarWaveformHidden) { _, hidden in
+                menuBarWaveformController.setVisible(!hidden, audioEngine: audioEngine)
             }
         }
         .windowStyle(.hiddenTitleBar)
@@ -104,6 +116,13 @@ struct PrismApp: App {
                     Label(isTextHidden ? "Show Text" : "Hide Text", systemImage: "textformat")
                 }
                 .keyboardShortcut("t", modifiers: .command)
+                Toggle(isOn: $isMenuBarWaveformHidden) {
+                    Label(
+                        isMenuBarWaveformHidden ? "Show Menu Bar Waveform" : "Hide Menu Bar Waveform",
+                        systemImage: "waveform"
+                    )
+                }
+                .keyboardShortcut("b", modifiers: .command)
                 // Was the bare "M" hotkey; moved to Cmd-C (ContentView's onKeyPress no longer
                 // handles "M" at all — see its keyboard-control-surface doc comment) so it shows up
                 // in the View menu alongside Hide Album Art/Hide Text rather than being invisible.
@@ -170,19 +189,5 @@ struct PrismApp: App {
             AboutView()
         }
         .windowResizability(.contentSize)
-
-        // Menu bar companion — a raw oscilloscope trace of the same PCM ring buffer
-        // CoreAudioTapEngine feeds ProjectM's Milkdrop rendering (see ProjectMAudioBridge),
-        // drawn here as a plain 2D line instead of through the shader pipeline. The live trace is
-        // the `label` (MenuBarExtra always shows that in the strip itself, no click needed); a
-        // bigger version of the same trace is the `content` a click reveals. `.window` style
-        // (rather than the default `.menu`) is what allows that content to be a custom-sized
-        // Canvas instead of a cramped menu-item list.
-        MenuBarExtra {
-            MenuBarWaveformView(audioEngine: audioEngine)
-        } label: {
-            MenuBarWaveformIcon(audioEngine: audioEngine)
-        }
-        .menuBarExtraStyle(.window)
     }
 }

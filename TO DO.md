@@ -3,7 +3,7 @@
 
 ## **Update 1.1** *- Better System Integration*
 - [ ] Localize once all text is finalized
-- [ ] Add a menu bar view of the visualizer
+- [x] Add a menu bar view of the visualizer
 - [ ] Add a preset quality rating system available in debugging mode that makes better presets more likely to be shown in the match algorithm
 - [ ] Add the preset matching algorithm to the apple music plugin
   - [ ] Add a moving album cover to the apple music plugin? How would layers work?
