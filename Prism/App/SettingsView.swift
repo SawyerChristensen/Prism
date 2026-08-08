@@ -36,7 +36,7 @@ private struct AppIconSettingsTab: View {
     var body: some View {
         VStack(spacing: 12) {
             Spacer()
-            Text("Choose an app icon.")
+            Text("Choose an app icon:")
                 .foregroundStyle(.secondary)
             HStack(spacing: 24) {
                 ForEach(Self.options, id: \.assetName) { option in

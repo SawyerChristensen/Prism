@@ -123,7 +123,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;

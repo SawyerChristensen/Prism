@@ -2,15 +2,8 @@
 ---
 
 ## **Update 1.1** *- Better System Integration*
-- [x] Update App Icon
-  - [x] Make size variants for new basic version
-- [x] Add a settings window that enables the 
-  - [x] apple music visualizer plugin,
-  - [x] the screen saver,
-  - [ ] the original unstandardized preset names,
-  - [x] and an alternate app icon
-  - [ ] Localize once all text is finalized
-- [ ] Fix milk icons only being in the corner of a white square as the new milk file icon
+- [ ] Localize once all text is finalized
+- [x] Fix milk icons only being in the corner of a white square as the new milk file icon
 - [ ] Add a widget view of the visualizer
 - [ ] Add a preset quality rating system available in debugging mode that makes better presets more likely to be shown in the match algorithm
 - [ ] Add the preset matching algorithm to the apple music plugin
