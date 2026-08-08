@@ -16,6 +16,9 @@ struct PrismApp: App {
     // Toggle items and the keyboard shortcuts share one source of truth via the same Binding.
     @State private var isAlbumArtHidden = false
     @State private var isTextHidden = false
+    // Owned here (rather than ContentView @State) so the menu bar companion's MenuBarWaveformView
+    // can read the same live tap instead of opening a second Core Audio process tap of its own.
+    @State private var audioEngine = CoreAudioTapEngine()
     // View > "Cycle Album Layers" (Cmd-C) — a one-shot trigger, not a persistent Bool like the two
     // above: ContentView's onChange(of: cycleAlbumLayersFromMenu) flips it back to false right
     // after acting on it, same shape as isPresetImporterPresented below.
@@ -59,6 +62,7 @@ struct PrismApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(
+                audioEngine: audioEngine,
                 isAlbumArtHidden: $isAlbumArtHidden, isTextHidden: $isTextHidden,
                 cycleAlbumLayersFromMenu: $cycleAlbumLayersFromMenu,
                 isPresetImporterPresented: $isPresetImporterPresented,
@@ -166,5 +170,19 @@ struct PrismApp: App {
             AboutView()
         }
         .windowResizability(.contentSize)
+
+        // Menu bar companion — a raw oscilloscope trace of the same PCM ring buffer
+        // CoreAudioTapEngine feeds ProjectM's Milkdrop rendering (see ProjectMAudioBridge),
+        // drawn here as a plain 2D line instead of through the shader pipeline. The live trace is
+        // the `label` (MenuBarExtra always shows that in the strip itself, no click needed); a
+        // bigger version of the same trace is the `content` a click reveals. `.window` style
+        // (rather than the default `.menu`) is what allows that content to be a custom-sized
+        // Canvas instead of a cramped menu-item list.
+        MenuBarExtra {
+            MenuBarWaveformView(audioEngine: audioEngine)
+        } label: {
+            MenuBarWaveformIcon(audioEngine: audioEngine)
+        }
+        .menuBarExtraStyle(.window)
     }
 }

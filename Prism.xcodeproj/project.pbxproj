@@ -37,7 +37,6 @@
 		9A772EE971EE68F26A25766F /* iTunesAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */; };
 		A060826EFE9DF2A8371A0574 /* MilkDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7527EBC9E126FAE382A3B433 /* MilkDocumentIcon.icns */; };
 		A2A9D0B423B0A785B86CCAA6 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
-		B368264CFA9DE29E9E4007C0 /* MilkQuickLook.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 16EE0B28541A385507882EDB /* MilkQuickLook.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 		B8793EF3C6BD83977F757305 /* PrismVisualizerPlugin.bundle in Embed Visualizer Plugin & Screen Saver */ = {isa = PBXBuildFile; fileRef = D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeaderOnCopy, ); }; };
 		BB8B072C1DA7972CE7BFC316 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		BBE836B6ED6BBABC4C3F9E6A /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 88B6666289C463A73A719C34 /* Cocoa.framework */; };

@@ -22,7 +22,9 @@ private enum ActiveFilePicker {
 }
 
 struct ContentView: View {
-    @State private var audioEngine = CoreAudioTapEngine()
+    // Owned by PrismApp (not @State here) so the menu bar's MenuBarWaveformView can read the same
+    // running tap instead of each opening its own Core Audio process tap.
+    let audioEngine: CoreAudioTapEngine
     @State private var nowPlaying = NowPlayingManager()
     @State private var permissions = PermissionsManager()
     @State private var visualizerModel = ProjectMVisualizerModel()
