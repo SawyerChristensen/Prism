@@ -14,6 +14,7 @@
 		130EF1A181DEA5F2D9B53FFF /* PrismVisualizerView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */; };
 		21C6C9C832B3058E7062CFE0 /* libprojectM-4.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		2A5549CFA303D1A4092A2C57 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		2AB2D8478A1045D98A656F5E /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2175ECAB4D1B4B0B939B36C2 /* InfoPlist.xcstrings */; };
 		2C0D0C22A3AAF3AFCB619734 /* ProjectMEGLContext.mm in Sources */ = {isa = PBXBuildFile; fileRef = ABAEE979A39A09ED49F88F81 /* ProjectMEGLContext.mm */; };
 		3413915FBA71756516480846 /* libGLESv2.dylib in Embed Vendor Libraries */ = {isa = PBXBuildFile; fileRef = CB63489DA355B802D3656A96 /* libGLESv2.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		3825490B1DEE668ADCD42AE3 /* libprojectM-4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 7A20AD235FAA57B02F27F964 /* libprojectM-4.dylib */; };
@@ -32,6 +33,7 @@
 		80C21BC3A9BE5886F3D2D830 /* libEGL.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66DECD745A5A6D582CF50763 /* libEGL.dylib */; };
 		8366D8EC827A2D48B935711E /* PrismScreenSaver.saver in Embed Visualizer Plugin & Screen Saver */ = {isa = PBXBuildFile; fileRef = 25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeaderOnCopy, ); }; };
 		8869823D97EF537A43DF7581 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
+		91781D49F9AB4B80A734A84B /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E7973DB2B5234836A9F70D15 /* InfoPlist.xcstrings */; };
 		962279CAFF57BC3F1D2BC24A /* MilkThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51CF0372A85815BB74F05749 /* MilkThumbnailProvider.swift */; };
 		96BD263678E83EA41F6023CE /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AD4811541FD25BCDA0AD02D1 /* Metal.framework */; };
 		9A772EE971EE68F26A25766F /* iTunesAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 442627372DE0ACC8B601A7BC /* iTunesAPI.cpp */; };
@@ -158,6 +160,7 @@
 		022413514596D26960B14693 /* iTunesVisualAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iTunesVisualAPI.h; sourceTree = "<group>"; };
 		16138E62CBECE155E2886C7B /* Presets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Presets; sourceTree = "<group>"; };
 		16EE0B28541A385507882EDB /* MilkQuickLook.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MilkQuickLook.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		2175ECAB4D1B4B0B939B36C2 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEngine.h; path = Prism/ProjectM/Bridge/ProjectMEngine.h; sourceTree = SOURCE_ROOT; };
 		25458A4BCFBB98422AAE1D47 /* PrismScreenSaver.saver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismScreenSaver.saver; sourceTree = BUILT_PRODUCTS_DIR; };
 		26EAC53EA56A3113E5E3E00B /* PrismVisualizerPlugin.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PrismVisualizerPlugin.mm; sourceTree = "<group>"; };
@@ -189,6 +192,7 @@
 		D96831597B8D935BA3AD198B /* PrismVisualizerPlugin.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PrismVisualizerPlugin.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		E1593A710327DE5E8B021E3C /* ProjectMEGLContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ProjectMEGLContext.h; path = Prism/ProjectM/Bridge/ProjectMEGLContext.h; sourceTree = SOURCE_ROOT; };
 		E5EE441D5475D5312BAEA3D2 /* IOSurface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOSurface.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/IOSurface.framework; sourceTree = DEVELOPER_DIR; };
+		E7973DB2B5234836A9F70D15 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -200,8 +204,10 @@
 				MilkQuickLook/MilkDocumentIcon.icns,
 				MilkQuickLook/MilkThumbnailProvider.swift,
 				PrismScreenSaver/Info.plist,
+				PrismScreenSaver/InfoPlist.xcstrings,
 				PrismScreenSaver/PrismScreenSaverView.mm,
 				PrismVisualizerPlugin/Info.plist,
+				PrismVisualizerPlugin/InfoPlist.xcstrings,
 				PrismVisualizerPlugin/iTunesSDK/iTunesAPI.cpp,
 				PrismVisualizerPlugin/Presets/README.md,
 				PrismVisualizerPlugin/PrismVisualizerPlugin.mm,
@@ -305,6 +311,7 @@
 				D0EADEB2D32B6E8674831D5A /* PrismVisualizerView.h */,
 				70B78E2E49AE52CFBF6C3DA5 /* PrismVisualizerView.mm */,
 				65A6E945465D90D9D9D7B767 /* Info.plist */,
+				2175ECAB4D1B4B0B939B36C2 /* InfoPlist.xcstrings */,
 				16138E62CBECE155E2886C7B /* Presets */,
 				AD39990CF9DE091735A2B6DF /* iTunesSDK */,
 				2367CDFC8D8C4178DA39A56F /* ProjectMEngine.h */,
@@ -403,6 +410,7 @@
 				77133F83944300082AC1F72A /* PrismScreenSaverView.h */,
 				A82BF0ECEE9494FCC8A3BA67 /* PrismScreenSaverView.mm */,
 				742BFF4793B84DF6FB67EA3C /* Info.plist */,
+				E7973DB2B5234836A9F70D15 /* InfoPlist.xcstrings */,
 			);
 			name = PrismScreenSaver;
 			path = Prism/PrismScreenSaver;
@@ -566,6 +574,22 @@
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hans",
+				"zh-Hant",
+				ja,
+				de,
+				fr,
+				es,
+				ko,
+				"pt-BR",
+				it,
+				ru,
+				ar,
+				sv,
+				da,
+				nl,
+				nb,
+				hi,
 			);
 			mainGroup = BEAB8FD43012B50A005F68B6;
 			minimizedProjectReferenceProxies = 1;
@@ -589,6 +613,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				91781D49F9AB4B80A734A84B /* InfoPlist.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -626,6 +651,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E07F78A5C684AAC09A11EB73 /* Presets in Resources */,
+				2AB2D8478A1045D98A656F5E /* InfoPlist.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -917,6 +943,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -977,6 +1004,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
 		};

@@ -26,7 +26,7 @@ struct SettingsView: View {
 }
 
 private struct AppIconSettingsTab: View {
-    private static let options: [(assetName: String, displayName: String)] = [
+    private static let options: [(assetName: String, displayName: LocalizedStringKey)] = [
         (AppIconManager.defaultAssetName, "Dark Side"),
         (AppIconManager.tieDyeAssetName, "Tie-Dye"),
     ]

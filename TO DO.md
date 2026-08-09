@@ -2,7 +2,7 @@
 ---
 
 ## **Update 1.1** *- Better System Integration*
-- [ ] Localize once all text is finalized
+- [x] Localize once all text is finalized
 - [ ] Nullify quality from searches until all presets have a real rating
 - [ ] Add the preset matching algorithm to the apple music plugin
   - [ ] Add a moving album cover to the apple music plugin? How would layers work?

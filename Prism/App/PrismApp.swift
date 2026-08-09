@@ -103,7 +103,7 @@ struct PrismApp: App {
                 Button {
                     isPresetImporterPresented = true
                 } label: {
-                    Label("Import Milk Preset…", systemImage: "square.and.arrow.down")
+                    Label("Import .milk Preset…", systemImage: "square.and.arrow.down")
                 }
                 .keyboardShortcut("i", modifiers: .command)
             }

@@ -32,7 +32,7 @@ struct ContentView: View {
     @State private var lastPresetStore = MilkdropLastPresetStore()
     @State private var ratingStore = MilkdropPresetRatingStore()
     @State private var presetVisualTraitsStore = MilkdropPresetVisualTraitsStore()
-    // Drag-and-drop counterpart to File > "Import Milk Preset…"'s file picker — true only while a drag
+    // Drag-and-drop counterpart to File > "Import .milk Preset…"'s file picker — true only while a drag
     // carrying a `.milk` file is actually hovering the window, driven by
     // `PresetDroppableMTKView.onDropTargetChanged` via `handlePresetDrop`'s sibling wiring below,
     // for the brief highlight overlay that's the only feedback a valid drop target exists at all.
@@ -110,7 +110,7 @@ struct ContentView: View {
     // the layer-cycling logic (nextAlbumArtVisibleLayerCount/meaningfulAlbumArtLayerCounts) reads
     // this view's own state (nowPlaying, presetVisualTraitsStore) and has nowhere else to live.
     @Binding var cycleAlbumLayersFromMenu: Bool
-    // File > "Import Milk Preset…" (PrismApp.swift's .commands) — same `.fileImporter` this view used
+    // File > "Import .milk Preset…" (PrismApp.swift's .commands) — same `.fileImporter` this view used
     // to trigger itself via the (now-disabled) "O" hotkey, just driven from the menu command's
     // Bool instead of a local one, for the same share-the-source-of-truth reason as the two
     // bindings above. Ends up loading through `loadPresetAndTrack`, the exact same path drag-and-
@@ -223,7 +223,7 @@ struct ContentView: View {
         // part of this view hierarchy, so they stay on top regardless of what this ignores.
         .ignoresSafeArea()
         // Wave-only .milk preset loading (see ProjectMVisualizerModel):
-        // File > "Import Milk Preset…" opens a file picker (drag-and-drop is the other way in — see
+        // File > "Import .milk Preset…" opens a file picker (drag-and-drop is the other way in — see
         // handlePresetDrop). Preset filenames come straight from community packs, unfiltered (can
         // contain profanity/crude author jokes — see TO DO.md), so this on-screen name overlay is
         // commented out rather than shown, for now.
@@ -784,7 +784,7 @@ struct ContentView: View {
         }
     }
 
-    /// Drag-and-drop counterpart to File > "Import Milk Preset…"'s `.fileImporter`, called by `PresetDroppableMTKView`
+    /// Drag-and-drop counterpart to File > "Import .milk Preset…"'s `.fileImporter`, called by `PresetDroppableMTKView`
     /// once a `.milk` file's actually been dropped — the extension check already happened there
     /// (`milkURL(from:)`), so anything reaching here is already known-good.
     /// AppKit's dragging-destination callbacks always run on the main thread already (unlike this
@@ -811,7 +811,7 @@ struct ContentView: View {
     /// built-in starting animation instead of jumping straight to a preset.
     ///
     /// Also bails out the moment `presetURL` gets set out from under it — a manual drag-and-drop
-    /// or File > "Import Milk Preset…" is the one thing meant to jump straight to the preset view
+    /// or File > "Import .milk Preset…" is the one thing meant to jump straight to the preset view
     /// without waiting on music at all (see the onAppear call site's guard right after this).
     private func waitForMusicSignal() async {
         let signalThreshold: CGFloat = 0.08
