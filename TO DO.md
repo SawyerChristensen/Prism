@@ -3,8 +3,7 @@
 
 ## **Update 1.1** *- Better System Integration*
 - [ ] Localize once all text is finalized
-- [x] Add a menu bar view of the visualizer
-- [ ] Add a preset quality rating system available in debugging mode that makes better presets more likely to be shown in the match algorithm
+- [ ] Nullify quality from searches until all presets have a real rating
 - [ ] Add the preset matching algorithm to the apple music plugin
   - [ ] Add a moving album cover to the apple music plugin? How would layers work?
 - [ ] Spotify plugin similar to Apple Music plugin? Research if it is possible to add an option under Spotify's View Menu
@@ -39,3 +38,4 @@
   - [ ] Make album art base reactivity react less to mids and more to bass hits?
 - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add a thumbnail for the prism screen saver in macOS settings
+- [ ] Increase speed of preset matching by combining the rating and visual traits json

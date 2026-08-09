@@ -62,7 +62,10 @@ harness (see `Scripts/`, `dev-notes/`) to exercise logic directly instead.
 - **`MilkdropLastPresetStore.swift`** — persists a bookmark for the single most-recently-loaded
   preset file, so Prism reopens where it left off across launches.
 - **`MilkdropPresetRatingStore.swift`** — persists per-preset star ratings and debug issue flags,
-  recorded while sequentially reviewing a library.
+  recorded while sequentially reviewing a library, into local UserDefaults; also seeds itself at
+  launch from the bundled, pre-generated `Resources/PresetRatings.json` (see
+  `Scripts/generate_preset_ratings.sh`), with local UserDefaults ratings overriding the bundled seed
+  per-preset — this is what gets the dev's own ratings into production installs.
 - **`MilkdropSessionHistoryStore.swift`** — backs the History menu bar item: an append-only,
   order-preserving log of every preset actually played this session, plus an immutable snapshot of
   the previous session's log for the "Last Session" submenu.
@@ -188,6 +191,16 @@ Not actively used for this project's own verification — see the testing policy
 - **`Scripts/generate_preset_visual_traits.sh`** (+ `.swift.txt`) — an offline, dev-time-only tool:
   walks a preset pack directory, runs `MilkdropPresetVisualTraitsAnalyzer` over every `.milk` file,
   and regenerates the committed `Resources/PresetVisualTraits.json`. Never run at build or runtime.
+- **`Scripts/generate_preset_ratings.sh`** (+ `.swift.txt`) — an offline, dev-time-only tool: exports
+  the dev's own `MilkdropPresetRatings` UserDefaults entry (via `defaults export`/`plutil`), strips
+  everything but star ratings (debug issue flags are dropped — stale ad hoc notes that nothing in
+  the matching algorithm reads), drops any rating for a preset no longer in the current shipped
+  corpus (cross-referenced against `Resources/PresetVisualTraits.json` — ratings accumulate across
+  pack curations, e.g. the old BestMilkdropPresetsPack -> current PerformantMilkdropPresetsPack, and
+  a rating for a preset that's not shipped can never attach to anything), and regenerates the
+  committed `Resources/PresetRatings.json`, which `MilkdropPresetRatingStore` loads as a baseline
+  seed at launch (local UserDefaults ratings still override it per-preset). Re-run by hand after a
+  rating session; never run at build or runtime.
 - **`Prism/Scripts/copy_bundled_presets.sh`** — Run Script build phase: stages a curated,
   FPS-benchmarked preset pack into the built app's `Resources/Presets`, skipping NestDrop's
   per-preset thumbnails and "! Transition" folder. Defaults to a pre-measured 60fps+ subset (see

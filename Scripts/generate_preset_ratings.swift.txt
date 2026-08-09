@@ -1,0 +1,87 @@
+//
+//  generate_preset_ratings.swift
+//  Prism
+//
+//  Dev-time tool (run via generate_preset_ratings.sh — NOT an Xcode build phase): re-serializes
+//  whatever MilkdropPresetRatings blob the .sh wrapper piped in on stdin (the dev's own
+//  UserDefaults, extracted via `defaults export`) with sorted keys, and writes it out to
+//  Resources/PresetRatings.json.
+//
+//  Stars only — issue flags (allWhite/tooJittery/strobing) are dropped entirely, and any entry
+//  that's flagged but never actually starred is dropped too. Those flags were recorded ad hoc
+//  while reviewing a library and go stale fast (a preset's rendering can change across engine/
+//  shader revisions); nothing in SongPresetMatcher's presetQuality term reads them anyway, so
+//  shipping them would just bake stale debug notes into the app for no runtime benefit. Local
+//  UserDefaults still keeps flags exactly as recorded — this script only affects what gets
+//  exported into the bundled seed.
+//
+//  Also cross-references the committed Resources/PresetVisualTraits.json and drops any rating
+//  whose filename isn't in the current shipped corpus — ratings accumulate across corpus
+//  changes (e.g. the old BestMilkdropPresetsPack -> current PerformantMilkdropPresetsPack
+//  curation), and a rating for a preset that no longer ships can never attach to anything in
+//  SongPresetMatcher.rank's candidate list. Shipping it anyway would just be dead bytes.
+//
+//  MilkdropPresetRatingStore loads the committed output at launch as a baseline seed, merged under
+//  whatever the installing user has rated locally — this script is what gets the dev's own
+//  accumulated ratings to actually ship, instead of sitting forever in one machine's UserDefaults.
+//  Re-run it by hand (generate_preset_ratings.sh) after a rating session; the committed JSON is not
+//  regenerated automatically on every build.
+//
+//  Compiled and run standalone (see the .sh wrapper) rather than as an Xcode scheme/target — same
+//  reasoning as generate_preset_visual_traits.swift.txt.
+//
+//  Lives at Scripts/ (repo top level, sibling to Prism/) and is named .swift.txt, not .swift — same
+//  file-system-synchronized-group hazard generate_preset_visual_traits.swift.txt's doc comment
+//  explains in full. The .sh wrapper copies this to a real .swift file in a temp directory before
+//  invoking swiftc.
+//
+
+import Foundation
+
+let inputData = FileHandle.standardInput.readDataToEndOfFile()
+guard !inputData.isEmpty else {
+    FileHandle.standardError.write("error: no input on stdin — run via generate_preset_ratings.sh, not swiftc directly\n".data(using: .utf8)!)
+    exit(1)
+}
+
+let decoder = JSONDecoder()
+guard let allRatings = try? decoder.decode([String: MilkdropPresetRating].self, from: inputData) else {
+    FileHandle.standardError.write("error: couldn't decode stdin as [String: MilkdropPresetRating]\n".data(using: .utf8)!)
+    exit(1)
+}
+
+// Not derived from #filePath: the .sh wrapper copies this source into a scratch temp directory
+// before compiling, so #filePath would resolve to that scratch location instead of the real
+// checkout — the wrapper exports PRISM_PROJECT_DIR instead.
+guard let projectDir = ProcessInfo.processInfo.environment["PRISM_PROJECT_DIR"] else {
+    FileHandle.standardError.write("error: PRISM_PROJECT_DIR not set — run via generate_preset_ratings.sh, not swiftc directly\n".data(using: .utf8)!)
+    exit(1)
+}
+let resourcesDir = URL(fileURLWithPath: projectDir).appendingPathComponent("Resources")
+
+let visualTraitsURL = resourcesDir.appendingPathComponent("PresetVisualTraits.json")
+guard let visualTraitsData = try? Data(contentsOf: visualTraitsURL),
+      let currentCorpus = try? decoder.decode([String: MilkdropPresetVisualTraits].self, from: visualTraitsData) else {
+    FileHandle.standardError.write("error: couldn't read/decode \(visualTraitsURL.path) — run generate_preset_visual_traits.sh first\n".data(using: .utf8)!)
+    exit(1)
+}
+let currentCorpusFilenames = Set(currentCorpus.keys)
+
+// Stars only, issues stripped — see this file's own doc comment for why. Also dropped: any rating
+// for a filename not in the current shipped corpus (stale, from a prior pack curation).
+let ratings: [String: MilkdropPresetRating] = allRatings.compactMapValues { rating in
+    guard let stars = rating.stars else { return nil }
+    return MilkdropPresetRating(stars: stars, issues: [])
+}.filter { currentCorpusFilenames.contains($0.key) }
+
+let encoder = JSONEncoder()
+encoder.outputFormatting = [.sortedKeys] // not .prettyPrinted - this is a committed resource file, not something a person edits by hand
+let data = try! encoder.encode(ratings)
+
+let outputURL = resourcesDir.appendingPathComponent("PresetRatings.json")
+try! data.write(to: outputURL)
+
+let starredCount = allRatings.values.filter { $0.stars != nil }.count
+let droppedUnstarred = allRatings.count - starredCount
+let droppedStaleCorpus = starredCount - ratings.count
+print("Wrote \(ratings.count) preset ratings (\(droppedUnstarred) flagged-only/unrated dropped, \(droppedStaleCorpus) stale-corpus dropped, \(data.count / 1024) KB) to \(outputURL.path)")

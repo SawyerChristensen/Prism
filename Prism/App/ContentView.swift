@@ -81,6 +81,22 @@ struct ContentView: View {
     // dozens of presets in a row needs to trust each keypress actually recorded without checking
     // a log after the fact.
     @State private var ratingFeedback: String?
+    // "1"-"5" star rating overlay (see showPresetRatingAnimation) — `presetRatingAnimation` holds
+    // the star count to render and carries a fresh UUID every time so re-rating the same preset the
+    // same number of stars twice in a row still triggers a new animation (a plain Int wouldn't
+    // change, and SwiftUI has nothing to react to). `presetRatingMaskScale`/`presetRatingMaskAnchor`
+    // drive the reveal/wipe via a scaleEffect mask (see the overlay's own comment for why anchor
+    // flips instead of animating a width). `presetRatingAnimationTask` is cancelled and replaced on
+    // every new rating so a rapid string of keypresses only ever shows the latest one, rather than
+    // queuing up a backlog of reveal/hold/wipe sequences that'd fight each other.
+    private struct PresetRatingAnimation: Identifiable {
+        let id = UUID()
+        let stars: Int
+    }
+    @State private var presetRatingAnimation: PresetRatingAnimation?
+    @State private var presetRatingMaskScale: CGFloat = 0
+    @State private var presetRatingMaskAnchor: UnitPoint = .leading
+    @State private var presetRatingAnimationTask: Task<Void, Never>?
     // View menu "Hide Album Art"/"Hide Text" (PrismApp.swift's .commands, Cmd-A/Cmd-T shortcuts) —
     // independent of "P" (nowPlaying.processingEnabled, which stops the artwork *analysis*
     // pipeline entirely); these just hide whatever's already computed/rendered. Owned by the App
@@ -230,6 +246,30 @@ struct ContentView: View {
         //         .padding(.top, 20)
         //     }
         // }
+        // "1"-"5" star rating feedback (see showPresetRatingAnimation/rateCurrentPreset) — slides
+        // in left-to-right, holds, then wipes back out left-to-right, so a review pass gets a clear
+        // on-screen confirmation of what was just recorded without needing to check the log.
+        .overlay(alignment: .topLeading) {
+            if let presetRatingAnimation {
+                Text(String(repeating: "★", count: presetRatingAnimation.stars) + String(repeating: "☆", count: 5 - presetRatingAnimation.stars))
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .blendMode(.difference)
+                    .padding(8)
+                    // Clears the traffic-light buttons — same reasoning as the (currently disabled)
+                    // preset name overlay above.
+                    .padding(.top, 20)
+                    // The reveal grows this mask rectangle out from the left edge (anchor .leading,
+                    // scale 0 -> 1). The wipe-away then shrinks the *same* rectangle back toward the
+                    // right edge (anchor .trailing, scale 1 -> 0) rather than just running the reveal
+                    // in reverse — pinning the far edge to .trailing while it shrinks is what makes
+                    // the erase boundary itself travel left-to-right instead of right-to-left.
+                    .mask(
+                        Rectangle()
+                            .scaleEffect(x: presetRatingMaskScale, y: 1, anchor: presetRatingMaskAnchor)
+                    )
+            }
+        }
         // Only visible feedback that a drag is actually hovering a valid drop target — driven by
         // `PresetDroppableMTKView.onDropTargetChanged`, not SwiftUI's own `.onDrop`/`isTargeted`
         // (that modifier showed no drag recognition at all over this view — see
@@ -401,17 +441,21 @@ struct ContentView: View {
         // (PrismApp.swift), not here, since a menu key equivalent always intercepts a press before
         // it would reach this view's onKeyPress — unaffected by the `keys:` narrowing below.
         //
-        // Every other hotkey this view used to handle (N/F/O/L/C/P/S/W/J/X/U, 1-5) is temporarily
+        // Every other hotkey this view used to handle (N/F/O/L/C/P/S/W/J/X/U) is temporarily
         // disabled by leaving it out of `keys:` below rather than deleting its case — none of those
         // characters reach this closure anymore, so the switch's other cases are dead code for
         // now, kept in place so re-enabling any of them later is just adding the key back to the
         // array. "M" itself was fully removed (not just disabled) once its cycling moved to Cmd-C
         // above — see the onChange(of: cycleAlbumLayersFromMenu) handler below for the case this
         // used to be.
+        //
+        // 1-5 is re-enabled (rateCurrentPreset, feeding SongPresetMatcher's presetQuality term) —
+        // unlike the still-disabled group above, this one directly improves match quality, not just
+        // a debug/review convenience.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow]) { press in
+        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, "1", "2", "3", "4", "5"]) { press in
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -611,7 +655,11 @@ struct ContentView: View {
     /// thousands of presets, while fast, is still real work that has no business blocking SwiftUI's
     /// main thread even briefly.
     private func loadBestMatchedPreset(for songTraits: SongAudioTraits) {
+        // Star ratings looked up here, on the main actor, since MilkdropPresetRatingStore is
+        // @MainActor-bound state that the Task.detached ranking below can't touch directly - see
+        // SongPresetMatcher.rank's own doc comment.
         let pairs = presetVisualTraitsStore.pairs(for: presetLibrary.presetURLs)
+            .map { (url: $0.url, traits: $0.traits, ratingStars: ratingStore.rating(for: $0.url)?.stars) }
         guard !pairs.isEmpty else {
             PrismDebug.trace("preset: matching skipped - no precomputed traits for anything in the current library")
             return
@@ -665,16 +713,48 @@ struct ContentView: View {
 
     /// "1"-"5": records a star rating for whichever preset is on screen right now, then advances
     /// to the next sequential preset (same as Space) so a review pass is one keypress per preset.
-    /// A no-op (no advance either) if nothing's loaded yet.
+    /// A no-op (no advance either) if nothing's loaded yet. Logged via PrismDebug.trace (same
+    /// channel as the "preset: MATCHED" lines) so a review pass leaves a record of what got rated
+    /// what, independent of the on-screen animation.
     private func rateCurrentPreset(stars: Int) {
         guard let url = visualizerModel.presetURL else { return }
         ratingStore.setStars(stars, for: url)
-        showRatingFeedback(String(repeating: "★", count: stars) + String(repeating: "☆", count: 5 - stars))
+        PrismDebug.trace("rating: \(stars)★ for \(url.lastPathComponent)")
+        showPresetRatingAnimation(stars: stars)
         loadNextSequentialPreset()
     }
 
+    /// Drives the star overlay's slide-reveal -> hold -> wipe-away sequence (see the overlay's own
+    /// comment on the mask technique). Cancels any in-flight sequence first so a fast run of "1"-"5"
+    /// keypresses during a review pass only ever shows the latest rating, not a queued backlog.
+    private func showPresetRatingAnimation(stars: Int) {
+        presetRatingAnimationTask?.cancel()
+        presetRatingAnimation = PresetRatingAnimation(stars: stars)
+        // Instant, unanimated reset — any withAnimation left over from a cancelled sequence should
+        // not carry into this one.
+        presetRatingMaskAnchor = .leading
+        presetRatingMaskScale = 0
+        presetRatingAnimationTask = Task { @MainActor in
+            withAnimation(.easeOut(duration: 0.35)) {
+                presetRatingMaskScale = 1
+            }
+            try? await Task.sleep(for: .seconds(0.35))
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(for: .seconds(1.0))
+            guard !Task.isCancelled else { return }
+            // Unanimated: flips which edge the shrink is pinned to before the shrink itself starts.
+            presetRatingMaskAnchor = .trailing
+            withAnimation(.easeIn(duration: 0.35)) {
+                presetRatingMaskScale = 0
+            }
+            try? await Task.sleep(for: .seconds(0.35))
+            guard !Task.isCancelled else { return }
+            presetRatingAnimation = nil
+        }
+    }
+
     /// "w"/"j"/"x": flags whichever preset is on screen right now with a debug issue, for
-    /// revisiting later (MilkdropPresetRatingStore.urls(flaggedWith:)), then advances to the next
+    /// revisiting later (MilkdropPresetRatingStore.filenames(flaggedWith:)), then advances to the next
     /// sequential preset (same as Space). A no-op (no advance either) if nothing's loaded yet.
     private func flagCurrentPreset(_ issue: MilkdropPresetIssue, label: String) {
         guard let url = visualizerModel.presetURL else { return }

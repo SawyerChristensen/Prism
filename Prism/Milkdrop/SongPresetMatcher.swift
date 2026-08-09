@@ -40,6 +40,10 @@ nonisolated enum SongPresetMatcher {
         var waveformForVocalPresence = 0.6
         var textureForAcousticness = 0.5
         var glowForLoudness = 0.5
+        /// Explicit user judgment (the "1"-"5" keybind, MilkdropPresetRatingStore) outweighs every
+        /// inferred heuristic above — someone who's actually watched this preset and rated it knows
+        /// more than a static-text scan ever will.
+        var presetQuality = 1.5
 
         static let `default` = Weights()
     }
@@ -47,7 +51,10 @@ nonisolated enum SongPresetMatcher {
     /// Higher = better fit for `song`. Always in 0...1, except the degenerate case (no signal
     /// present at all — shouldn't happen in practice since motionAmplitude/reactivity/texture are
     /// never nil) where it falls back to a neutral 0.5.
-    static func score(song: SongAudioTraits, preset: MilkdropPresetVisualTraits, weights: Weights = .default) -> Double {
+    ///
+    /// `ratingStars` is the preset's own 1-5 star rating from MilkdropPresetRatingStore, looked up
+    /// by the caller before crossing onto the detached ranking task (see `rank`'s own doc comment).
+    static func score(song: SongAudioTraits, preset: MilkdropPresetVisualTraits, ratingStars: Int?, weights: Weights = .default) -> Double {
         var terms: [(weight: Double, subscore: Double)] = []
 
         // 1. valence -> colorWarmth: warm palette for positive valence, cool for negative.
@@ -97,15 +104,27 @@ nonisolated enum SongPresetMatcher {
         let glow = max(0, (preset.isAdditiveGlow ? 1.0 : 0.0) - (preset.darkensCenter ? 0.3 : 0.0))
         terms.append((weights.glowForLoudness, 1 - abs(normalizedLoudness - glow)))
 
+        // 9. presetQuality -> the preset's own 1-5 star rating (MilkdropPresetRatingStore),
+        // recorded by hand via the "1"-"5" keybind while it was on screen. Unlike every term above,
+        // a missing rating is NOT excluded from the average — a preset nobody's rated yet should
+        // read as exactly neutral (3 stars), not "no opinion, leave it out," so this term is always
+        // present. 1-2 stars pulls the score down (shown less often), 4-5 pulls it up (shown more
+        // often), 3/unrated sits at the midpoint.
+        let normalizedRating = Double((ratingStars ?? 3) - 1) / 4
+        terms.append((weights.presetQuality, normalizedRating))
+
         let totalWeight = terms.reduce(0) { $0 + $1.weight }
         guard totalWeight > 0 else { return 0.5 }
         return terms.reduce(0) { $0 + $1.weight * $1.subscore } / totalWeight
     }
 
-    /// Ranks every preset in `presets` against `song`, best fit first.
-    static func rank(song: SongAudioTraits, presets: [(url: URL, traits: MilkdropPresetVisualTraits)], weights: Weights = .default) -> [(url: URL, score: Double)] {
+    /// Ranks every preset in `presets` against `song`, best fit first. `ratingStars` travels
+    /// alongside each preset's visual traits rather than being looked up here, since this runs from
+    /// a detached background task (see this enum's own doc comment) and MilkdropPresetRatingStore
+    /// is `@MainActor`-bound state the caller must read before crossing that boundary.
+    static func rank(song: SongAudioTraits, presets: [(url: URL, traits: MilkdropPresetVisualTraits, ratingStars: Int?)], weights: Weights = .default) -> [(url: URL, score: Double)] {
         presets
-            .map { ($0.url, score(song: song, preset: $0.traits, weights: weights)) }
+            .map { ($0.url, score(song: song, preset: $0.traits, ratingStars: $0.ratingStars, weights: weights)) }
             .sorted { $0.1 > $1.1 }
     }
 
