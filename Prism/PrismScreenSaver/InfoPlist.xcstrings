@@ -4,12 +4,6 @@
     "CFBundleName" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prism"
-          }
-        },
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
@@ -28,7 +22,19 @@
             "value" : "Prisma"
           }
         },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prism"
+          }
+        },
         "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma"
+          }
+        },
+        "fi" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
@@ -38,6 +44,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisme"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה"
           }
         },
         "hi" : {
@@ -76,6 +88,12 @@
             "value" : "Prisma"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -92,6 +110,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính"
           }
         },
         "zh-Hans" : {

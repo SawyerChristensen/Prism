@@ -29,10 +29,22 @@
             "value" : "Un visualizador de audio nativo de macOS al estilo Milkdrop/projectM."
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natiivi macOS-äänivisualisoija Milkdrop/projectM-tyyliin."
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Un visualiseur audio natif macOS de style Milkdrop/projectM."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "כלי ויזואליזציית שמע מקורי ל-macOS בסגנון Milkdrop/projectM."
           }
         },
         "hi" : {
@@ -71,6 +83,12 @@
             "value" : "Een systeemeigen macOS-audiovisualizer in Milkdrop-/projectM-stijl."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Natywny wizualizator dźwięku dla macOS w stylu Milkdrop/projectM."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -87,6 +105,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "En inbyggd macOS-ljudvisualiserare i Milkdrop-/projectM-stil."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Milkdrop/projectM tarzında yerel bir macOS ses görselleştiricisi."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình hiển thị âm thanh gốc cho macOS theo phong cách Milkdrop/projectM."
           }
         },
         "zh-Hans" : {
@@ -131,10 +161,22 @@
             "value" : "Acerca de Prisma"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tietoja Prismasta"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "À propos de Prisme"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "אודות מנסרה"
           }
         },
         "hi" : {
@@ -173,6 +215,12 @@
             "value" : "Over Prisma"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Pryzmacie"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -189,6 +237,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Om Prisma"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma Hakkında"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Giới thiệu về Lăng Kính"
           }
         },
         "zh-Hans" : {
@@ -233,10 +293,22 @@
             "value" : "Icono de la app"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sovelluskuvake"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Icône de l'app"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "סמל האפליקציה"
           }
         },
         "hi" : {
@@ -275,6 +347,12 @@
             "value" : "App-symbool"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ikona aplikacji"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -291,6 +369,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Appikon"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Uygulama Simgesi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Biểu tượng ứng dụng"
           }
         },
         "zh-Hans" : {
@@ -335,10 +425,22 @@
             "value" : "Plug-in de Apple Music"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Music -laajennus"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Plug-in Apple Music"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "תוסף Apple Music"
           }
         },
         "hi" : {
@@ -377,6 +479,12 @@
             "value" : "Apple Music-invoegtoepassing"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wtyczka Apple Music"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -393,6 +501,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apple Music-tillägg"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Music Eklentisi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plug-in Apple Music"
           }
         },
         "zh-Hans" : {
@@ -437,10 +557,22 @@
             "value" : "Visualizador de Apple Music/iTunes"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Music/iTunes-visualisoija"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Visualiseur Apple Music/iTunes"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ויזואלייזר Apple Music/iTunes"
           }
         },
         "hi" : {
@@ -479,6 +611,12 @@
             "value" : "Apple Music/iTunes-visualizer"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wizualizator Apple Music/iTunes"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -495,6 +633,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apple Music/iTunes-visualiserare"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Music/iTunes Görselleştirici"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình hiển thị Apple Music/iTunes"
           }
         },
         "zh-Hans" : {
@@ -539,10 +689,22 @@
             "value" : "Elige un icono de app:"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valitse sovelluskuvake:"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choisir une icône d'app :"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "בחר סמל אפליקציה:"
           }
         },
         "hi" : {
@@ -581,6 +743,12 @@
             "value" : "Kies een app-symbool:"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wybierz ikonę aplikacji:"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -597,6 +765,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Välj en appikon:"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bir uygulama simgesi seçin:"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chọn biểu tượng ứng dụng:"
           }
         },
         "zh-Hans" : {
@@ -639,10 +819,22 @@
             "value" : "No se pudo cargar el preset"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esiasetusta ei voitu ladata"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Impossible de charger le preset"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "לא ניתן היה לטעון את הפריסט"
           }
         },
         "hi" : {
@@ -681,6 +873,12 @@
             "value" : "Kan preset niet laden"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nie można wczytać presetu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -697,6 +895,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Det gick inte att läsa in förinställningen"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ön Ayar Yüklenemedi"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Không thể tải preset"
           }
         },
         "zh-Hans" : {
@@ -739,10 +949,22 @@
             "value" : "Recorrer capas del álbum"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vaihda albumin tasoja"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Faire défiler les calques de l'album"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מעבר בין שכבות האלבום"
           }
         },
         "hi" : {
@@ -781,6 +1003,12 @@
             "value" : "Albumlagen doorlopen"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Przełącz warstwy albumu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -797,6 +1025,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Växla albumlager"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Albüm Katmanlarını Değiştir"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chuyển đổi lớp album"
           }
         },
         "zh-Hans" : {
@@ -840,7 +1080,19 @@
             "value" : "Dark Side"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark Side"
+          }
+        },
         "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark Side"
+          }
+        },
+        "he" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dark Side"
@@ -882,6 +1134,12 @@
             "value" : "Dark Side"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark Side"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -895,6 +1153,18 @@
           }
         },
         "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark Side"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dark Side"
+          }
+        },
+        "vi" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dark Side"
@@ -940,10 +1210,22 @@
             "value" : "Ocultar portada del álbum"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piilota albumin kansikuva"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Masquer la pochette de l'album"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הסתר עטיפת אלבום"
           }
         },
         "hi" : {
@@ -982,6 +1264,12 @@
             "value" : "Albumhoes verbergen"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ukryj okładkę albumu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -998,6 +1286,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dölj skivomslag"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Albüm Kapağını Gizle"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ẩn ảnh bìa album"
           }
         },
         "zh-Hans" : {
@@ -1040,10 +1340,22 @@
             "value" : "Ocultar forma de onda de la barra de menús"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piilota valikkorivin aaltomuoto"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Masquer la forme d'onde de la barre des menus"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הסתר צורת גל בשורת התפריטים"
           }
         },
         "hi" : {
@@ -1082,6 +1394,12 @@
             "value" : "Golfvorm in menubalk verbergen"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ukryj przebieg fali na pasku menu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1098,6 +1416,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dölj vågform i menyraden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Menü Çubuğu Dalga Formunu Gizle"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ẩn dạng sóng trên thanh menu"
           }
         },
         "zh-Hans" : {
@@ -1140,10 +1470,22 @@
             "value" : "Ocultar texto"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Piilota teksti"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Masquer le texte"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הסתר טקסט"
           }
         },
         "hi" : {
@@ -1182,6 +1524,12 @@
             "value" : "Tekst verbergen"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ukryj tekst"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1198,6 +1546,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dölj text"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metni Gizle"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ẩn văn bản"
           }
         },
         "zh-Hans" : {
@@ -1240,10 +1600,22 @@
             "value" : "Historial"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Historia"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Historique"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "היסטוריה"
           }
         },
         "hi" : {
@@ -1282,6 +1654,12 @@
             "value" : "Geschiedenis"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Historia"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1298,6 +1676,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Historik"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Geçmiş"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lịch sử"
           }
         },
         "zh-Hans" : {
@@ -1341,10 +1731,22 @@
             "value" : "Importar archivo .milk…"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tuo .milk-tiedosto…"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importer un fichier .milk…"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ייבוא קובץ ⁦.milk⁩…"
           }
         },
         "hi" : {
@@ -1383,6 +1785,12 @@
             "value" : ".milk-bestand importeren…"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importuj plik .milk…"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1399,6 +1807,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Importera .milk-fil…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : ".milk Dosyasını İçe Aktar…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nhập tệp .milk…"
           }
         },
         "zh-Hans" : {
@@ -1443,10 +1863,22 @@
             "value" : "En Música, elige Ventana > Ajustes del visualizador > Prisma para seleccionarlo y, después, Ventana > Visualizador (⌘T)."
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Valitse Musiikki-sovelluksessa Ikkuna > Visualisoijan asetukset > Prisma valitaksesi sen, ja sitten Ikkuna > Visualisoija (⌘T)."
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dans Musique, choisissez Fenêtre > Réglages du visualiseur > Prisme pour le sélectionner, puis Fenêtre > Visualiseur (⌘T)."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "באפליקציית מוזיקה, בחר בתפריט חלון > הגדרות הוויזואלייזר > מנסרה כדי לבחור בו, ולאחר מכן חלון > ויזואלייזר (⌘T)."
           }
         },
         "hi" : {
@@ -1485,6 +1917,12 @@
             "value" : "Kies in Muziek Venster > Visualizer-instellingen > Prisma om het te selecteren, kies vervolgens Venster > Visualizer (⌘T)."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "W aplikacji Muzyka wybierz Okno > Ustawienia wizualizatora > Pryzmat, aby go wybrać, a następnie Okno > Wizualizator (⌘T)."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1501,6 +1939,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "I Musik väljer du Fönster > Visualiserarinställningar > Prisma för att välja det, sedan Fönster > Visualiserare (⌘T)."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Müzik'te, seçmek için Pencere > Görselleştirici Ayarları > Prizma'yı seçin, ardından Pencere > Görselleştirici'yi (⌘T) seçin."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trong Nhạc, chọn Cửa sổ > Cài đặt trình hiển thị > Lăng Kính để chọn nó, sau đó chọn Cửa sổ > Trình hiển thị (⌘T)."
           }
         },
         "zh-Hans" : {
@@ -1545,10 +1995,22 @@
             "value" : "Instala Prisma como salvapantallas y actívalo desde Ajustes del Sistema > Fondo de pantalla > Salvapantallas... > Otro > Prisma."
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asenna Prisma näytönsäästäjäksi ja ota se sitten käyttöön kohdasta Järjestelmäasetukset > Taustakuva > Näytönsäästäjä... > Muut > Prisma."
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installez Prisme comme économiseur d'écran, puis activez-le via Réglages Système > Fond d'écran > Économiseur d'écran... > Autre > Prisme."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "התקן את מנסרה כשומר מסך, ולאחר מכן הפעל אותו דרך הגדרות המערכת > רקע > שומר מסך... > אחר > מנסרה."
           }
         },
         "hi" : {
@@ -1587,6 +2049,12 @@
             "value" : "Installeer Prisma als schermbeveiliging en schakel deze vervolgens in via Systeeminstellingen > Bureaubladachtergrond > Schermbeveiliging... > Overige > Prisma."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstaluj Pryzmat jako wygaszacz ekranu, a następnie włącz go w Ustawieniach systemowych > Tapeta > Wygaszacz ekranu... > Inne > Pryzmat."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1603,6 +2071,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installera Prisma som skärmsläckare och aktivera den sedan via Systeminställningar > Bakgrund > Skärmsläckare... > Övriga > Prisma."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma'yı ekran koruyucu olarak yükleyin, ardından Sistem Ayarları > Duvar Kağıdı > Ekran Koruyucu... > Diğer > Prizma üzerinden etkinleştirin."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cài đặt Lăng Kính làm trình bảo vệ màn hình, sau đó bật qua Cài đặt Hệ thống > Hình nền > Trình bảo vệ màn hình... > Khác > Lăng Kính."
           }
         },
         "zh-Hans" : {
@@ -1647,10 +2127,22 @@
             "value" : "Instalar salvapantallas…"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asenna näytönsäästäjä…"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installer l'économiseur d'écran…"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "התקן שומר מסך…"
           }
         },
         "hi" : {
@@ -1689,6 +2181,12 @@
             "value" : "Schermbeveiliging installeren…"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstaluj wygaszacz ekranu…"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1705,6 +2203,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installera skärmsläckare…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ekran Koruyucuyu Yükle…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cài đặt trình bảo vệ màn hình…"
           }
         },
         "zh-Hans" : {
@@ -1749,10 +2259,22 @@
             "value" : "Instalar plug-in de visualizador…"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asenna visualisoijan laajennus…"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installer le plug-in de visualisation…"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "התקן תוסף ויזואלייזר…"
           }
         },
         "hi" : {
@@ -1791,6 +2313,12 @@
             "value" : "Visualizer-invoegtoepassing installeren…"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstaluj wtyczkę wizualizatora…"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1807,6 +2335,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Installera visualiserartillägg…"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Görselleştirici Eklentisini Yükle…"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cài đặt plug-in trình hiển thị…"
           }
         },
         "zh-Hans" : {
@@ -1849,10 +2389,22 @@
             "value" : "Última sesión"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edellinen istunto"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Dernière session"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הפעלה אחרונה"
           }
         },
         "hi" : {
@@ -1891,6 +2443,12 @@
             "value" : "Vorige sessie"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ostatnia sesja"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -1907,6 +2465,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Senaste session"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Son Oturum"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phiên gần nhất"
           }
         },
         "zh-Hans" : {
@@ -1949,10 +2519,22 @@
             "value" : "Aún no se han reproducido presets"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yhtään esiasetusta ei ole vielä toistettu"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aucun preset joué pour l'instant"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "עדיין לא הופעל אף פריסט"
           }
         },
         "hi" : {
@@ -1991,6 +2573,12 @@
             "value" : "Nog geen presets afgespeeld"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nie odtworzono jeszcze żadnego presetu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2007,6 +2595,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Inga förinställningar uppspelade än"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Henüz Ön Ayar Oynatılmadı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chưa phát preset nào"
           }
         },
         "zh-Hans" : {
@@ -2049,10 +2649,22 @@
             "value" : "No hay sesión anterior"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ei edellistä istuntoa"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Aucune session précédente"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "אין הפעלה קודמת"
           }
         },
         "hi" : {
@@ -2091,6 +2703,12 @@
             "value" : "Geen vorige sessie"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Brak poprzedniej sesji"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2107,6 +2725,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ingen tidigare session"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Önceki Oturum Yok"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Không có phiên trước đó"
           }
         },
         "zh-Hans" : {
@@ -2149,10 +2779,22 @@
             "value" : "OK"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "אישור"
           }
         },
         "hi" : {
@@ -2191,6 +2833,12 @@
             "value" : "OK"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2204,6 +2852,18 @@
           }
         },
         "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tamam"
+          }
+        },
+        "vi" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
@@ -2251,10 +2911,22 @@
             "value" : "Prisma"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisme"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה"
           }
         },
         "hi" : {
@@ -2293,6 +2965,12 @@
             "value" : "Prisma"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2309,6 +2987,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính"
           }
         },
         "zh-Hans" : {
@@ -2353,10 +3043,22 @@
             "value" : "Salvapantallas"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Näytönsäästäjä"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Économiseur d'écran"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "שומר מסך"
           }
         },
         "hi" : {
@@ -2395,6 +3097,12 @@
             "value" : "Schermbeveiliging"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wygaszacz ekranu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2411,6 +3119,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Skärmsläckare"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ekran Koruyucu"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trình bảo vệ màn hình"
           }
         },
         "zh-Hans" : {
@@ -2453,10 +3173,22 @@
             "value" : "Mostrar portada del álbum"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Näytä albumin kansikuva"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Afficher la pochette de l'album"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הצג עטיפת אלבום"
           }
         },
         "hi" : {
@@ -2495,6 +3227,12 @@
             "value" : "Albumhoes weergeven"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pokaż okładkę albumu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2511,6 +3249,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Visa skivomslag"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Albüm Kapağını Göster"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hiện ảnh bìa album"
           }
         },
         "zh-Hans" : {
@@ -2553,10 +3303,22 @@
             "value" : "Mostrar forma de onda de la barra de menús"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Näytä valikkorivin aaltomuoto"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Afficher la forme d'onde de la barre des menus"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הצג צורת גל בשורת התפריטים"
           }
         },
         "hi" : {
@@ -2595,6 +3357,12 @@
             "value" : "Golfvorm in menubalk weergeven"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pokaż przebieg fali na pasku menu"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2611,6 +3379,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Visa vågform i menyraden"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Menü Çubuğu Dalga Formunu Göster"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hiện dạng sóng trên thanh menu"
           }
         },
         "zh-Hans" : {
@@ -2653,10 +3433,22 @@
             "value" : "Mostrar texto"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Näytä teksti"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Afficher le texte"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הצג טקסט"
           }
         },
         "hi" : {
@@ -2695,6 +3487,12 @@
             "value" : "Tekst weergeven"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pokaż tekst"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2711,6 +3509,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Visa text"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metni Göster"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hiện văn bản"
           }
         },
         "zh-Hans" : {
@@ -2755,10 +3565,22 @@
             "value" : "Teñido anudado"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solmuvärjäys"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tie and Dye"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "טאי-דאי"
           }
         },
         "hi" : {
@@ -2797,6 +3619,12 @@
             "value" : "Tie-dye"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tie-Dye"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2813,6 +3641,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Knytfärgning"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Batik"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tie-Dye"
           }
         },
         "zh-Hans" : {
@@ -2863,10 +3703,22 @@
             "value" : "Versión %1$@ (%2$@)"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versio %1$@ (%2$@)"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Version %1$@ (%2$@)"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "גרסה %1$@ (%2$@)"
           }
         },
         "hi" : {
@@ -2905,6 +3757,12 @@
             "value" : "Versie %1$@ (%2$@)"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wersja %1$@ (%2$@)"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -2921,6 +3779,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Version %1$@ (%2$@)"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sürüm %1$@ (%2$@)"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Phiên bản %1$@ (%2$@)"
           }
         },
         "zh-Hans" : {

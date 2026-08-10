@@ -1,6 +1,7 @@
 # Prism — To Do
 ---
 ## **Update 1.2** *- More/Better Presets*
+- [ ] 3rd App Icon: Dynamically changes to the album currently being played
 - [ ] Better background removal
   - [ ] Allow for disabling of text detection in a new artwork preferences file. the text should instead be picked up by background detail. (see Once Twice Melody)
   - [ ] If an album art is noisy, expand the breadth of the color bucket that should be taken out. See Beach House's "Depression Cherry" (not all reds removed) and Djo's "Chateau" (blue is not taken out). This requires defining what "noisy" is.

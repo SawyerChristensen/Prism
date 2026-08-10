@@ -4,12 +4,6 @@
     "CFBundleDisplayName" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prism"
-          }
-        },
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
@@ -28,7 +22,19 @@
             "value" : "Prisma"
           }
         },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prism"
+          }
+        },
         "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma"
+          }
+        },
+        "fi" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
@@ -38,6 +44,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisme"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה"
           }
         },
         "hi" : {
@@ -76,6 +88,12 @@
             "value" : "Prisma"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -92,6 +110,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính"
           }
         },
         "zh-Hans" : {
@@ -111,12 +141,6 @@
     "CFBundleName" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prism"
-          }
-        },
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
@@ -135,7 +159,19 @@
             "value" : "Prisma"
           }
         },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prism"
+          }
+        },
         "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma"
+          }
+        },
+        "fi" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
@@ -145,6 +181,12 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisme"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה"
           }
         },
         "hi" : {
@@ -183,6 +225,12 @@
             "value" : "Prisma"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -199,6 +247,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính"
           }
         },
         "zh-Hans" : {
@@ -218,12 +278,6 @@
     "Milkdrop Preset" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Milkdrop Preset"
-          }
-        },
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
@@ -242,16 +296,34 @@
             "value" : "Milkdrop-Voreinstellung"
           }
         },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Milkdrop Preset"
+          }
+        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preset de Milkdrop"
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Milkdrop-esiasetus"
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Préréglage Milkdrop"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "פריסט של Milkdrop"
           }
         },
         "hi" : {
@@ -290,6 +362,12 @@
             "value" : "Milkdrop-voorinstelling"
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preset Milkdrop"
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -306,6 +384,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Milkdrop-förinställning"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Milkdrop Ön Ayarı"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preset Milkdrop"
           }
         },
         "zh-Hans" : {
@@ -325,12 +415,6 @@
     "NSAppleEventsUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Prism needs permission to see what track is currently playing."
-          }
-        },
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
@@ -349,16 +433,34 @@
             "value" : "Prisma benötigt die Berechtigung, um zu sehen, welcher Titel gerade abgespielt wird."
           }
         },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prism needs permission to see what track is currently playing."
+          }
+        },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma necesita permiso para ver qué canción se está reproduciendo actualmente."
           }
         },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma tarvitsee luvan nähdäkseen, mikä kappale on tällä hetkellä toistossa."
+          }
+        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisme a besoin d'une autorisation pour voir quel morceau est en cours de lecture."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה זקוקה להרשאה כדי לראות אילו רצועה מתנגנת כעת."
           }
         },
         "hi" : {
@@ -397,6 +499,12 @@
             "value" : "Prisma heeft toestemming nodig om te zien welk nummer er momenteel wordt afgespeeld."
           }
         },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat potrzebuje uprawnień, aby zobaczyć, jaki utwór jest obecnie odtwarzany."
+          }
+        },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
@@ -413,6 +521,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Prisma behöver behörighet för att se vilket spår som spelas upp för närvarande."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma'nın şu anda hangi parçanın çalındığını görebilmesi için izne ihtiyacı var."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính cần quyền truy cập để xem bài hát nào đang phát."
           }
         },
         "zh-Hans" : {

@@ -213,8 +213,8 @@
 				PrismVisualizerPlugin/InfoPlist.xcstrings,
 				PrismVisualizerPlugin/iTunesSDK/iTunesAPI.cpp,
 				PrismVisualizerPlugin/Presets/README.md,
-				PrismVisualizerPlugin/PrismVisualizerPlugin.mm,
 				PrismVisualizerPlugin/PrismItunesVisualizer.mm,
+				PrismVisualizerPlugin/PrismVisualizerPlugin.mm,
 			);
 			target = BEAB8FDC3012B50A005F68B6 /* Prism */;
 		};
@@ -604,6 +604,11 @@
 				nl,
 				nb,
 				hi,
+				tr,
+				pl,
+				vi,
+				he,
+				fi,
 			);
 			mainGroup = BEAB8FD43012B50A005F68B6;
 			minimizedProjectReferenceProxies = 1;
