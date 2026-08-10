@@ -136,19 +136,20 @@ currently a manual step — see `TO DO.md`).
   and pushes it to the plugin directly, so this plugin needs no audio-capture permission of its
   own. Scans for `.milk` presets first in its own bundle's `Contents/Resources/Presets/`, then
   falls back to a preset pack on disk.
-- **`PrismVisualizerView.h`/`.mm`** — a `CAMetalLayer`-backed `NSView` added as a subview of
-  whatever view Music.app hands the plugin on activate. Blits `ProjectMEngine`'s `IOSurface`-backed
-  texture straight to the layer's drawable via `MTLBlitCommandEncoder`, and runs its own internal
-  60Hz render timer independent of Music.app's pulses (which only arrive during active playback).
+- **`PrismItunesVisualizer.h`/`.mm`** — an `MTKView` added as a subview of whatever view Music.app
+  hands the plugin on activate. Blits `ProjectMEngine`'s `IOSurface`-backed texture straight to the
+  view's current drawable via `MTLBlitCommandEncoder`, driven by MTKView's own display-link-backed
+  draw loop (matched to the real screen's refresh rate) independent of Music.app's pulses (which
+  only arrive during active playback). Also reused as-is by `PrismScreenSaver` (see below).
 - **`Presets/`** — drop `.milk` files here directly (see its own `README.md`) to give the plugin
   something to render; currently empty, so a fresh checkout falls back to the on-disk preset pack
   path or projectM's blank/default state.
 
 ### `Prism/PrismScreenSaver/` — macOS screen saver target
-A `ScreenSaverView` subclass reusing the same `ProjectMEngine`/`PrismVisualizerView` pair as the
-Music.app plugin, showing a fixed idle preset (with its own glyph texture swapped in) and nothing
-else — no audio capture, since a screen saver process has no business requesting capture
-permissions of its own.
+A `ScreenSaverView` subclass reusing the same `ProjectMEngine`/`PrismItunesVisualizer` pair as the
+Music.app plugin (see `PrismItunesVisualizer.h`/`.mm` above), showing a fixed idle preset (with its
+own glyph texture swapped in) and nothing else — no audio capture, since a screen saver process has
+no business requesting capture permissions of its own.
 
 ### `Prism/NowPlaying/` — album art and metadata
 - **`NowPlayingManager.swift`** — polls Spotify/Music via Apple Events, orchestrates the artwork

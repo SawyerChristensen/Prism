@@ -4,7 +4,7 @@
 //
 
 #import "PrismScreenSaverView.h"
-#import "PrismVisualizerView.h"
+#import "PrismItunesVisualizer.h"
 #import "ProjectMEngine.h"
 
 #import <unistd.h>
@@ -881,8 +881,9 @@ static NSImage *PrismScreenSaverLogoImage(void) {
 
 @implementation PrismScreenSaverView {
     ProjectMEngine *_engine;
-    PrismVisualizerView *_visualizerView;
+    PrismItunesVisualizer *_visualizerView;
     NSTimer *_orphanWatchdogTimer;
+    pid_t _initialParentPID;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame isPreview:(BOOL)isPreview {
@@ -892,11 +893,13 @@ static NSImage *PrismScreenSaverLogoImage(void) {
     }
 
     // ScreenSaverView's own animateOneFrame/animationTimeInterval mechanism is left unused -
-    // PrismVisualizerView drives its own 60Hz NSTimer internally (see -startRendering), exactly
-    // like PrismVisualizerPlugin does. That keeps this view's job to just sizing/lifecycle.
+    // PrismItunesVisualizer is an MTKView that drives its own display-link-backed draw loop,
+    // matched to the real screen's refresh rate (see -startRendering), exactly like
+    // ProjectMCoordinator/ProjectMMetalView drive the main app and like PrismVisualizerPlugin
+    // drives the Music.app visualizer. That keeps this view's job to just sizing/lifecycle.
     self.animationTimeInterval = -1;
 
-    _visualizerView = [[PrismVisualizerView alloc] initWithFrame:self.bounds];
+    _visualizerView = [[PrismItunesVisualizer alloc] initWithFrame:self.bounds];
     _visualizerView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [self addSubview:_visualizerView];
 
@@ -922,15 +925,26 @@ static NSImage *PrismScreenSaverLogoImage(void) {
     [_visualizerView startRendering];
 
     // legacyScreenSaver.appex has no self-teardown if its host (e.g. System Settings' live
-    // preview) dies without going through -stopAnimation first - the process just orphans,
-    // re-parented to launchd, and PrismVisualizerView's 60Hz render timer runs forever with
-    // nothing on screen to show for it. Poll for that specific condition (PPID becomes 1) and
-    // self-terminate rather than trusting the host to always clean up after itself.
+    // preview) dies without going through -stopAnimation first - the process just orphans and
+    // PrismItunesVisualizer's draw loop runs forever with nothing on screen to show for it. Poll
+    // for that specific condition and self-terminate rather than trusting the host to always
+    // clean up after itself.
+    //
+    // Can't just check "PPID == 1" - when engaged as the real full-screen screen saver (as
+    // opposed to a debug host), this process is launched via RunningBoard/XPC under
+    // com.apple.wallpaper.agent, which reports launchd (PID 1) as the parent from the moment it
+    // starts, not just once actually orphaned. Comparing against that as a fixed constant made
+    // this fire 5s into every single activation, killing the process outright - the OS then saw
+    // the screen saver had died and relaunched it, which looked like an infinite restart loop
+    // (visible animation for a couple seconds, black, repeat). Instead, capture whatever PPID
+    // looks like right now as the known-good baseline, and only treat a *change* away from that
+    // as evidence of a real re-parenting event.
+    _initialParentPID = getppid();
     [_orphanWatchdogTimer invalidate];
     _orphanWatchdogTimer = [NSTimer scheduledTimerWithTimeInterval:5.0
                                                              repeats:YES
                                                                block:^(NSTimer * _Nonnull timer) {
-        if (getppid() == 1) {
+        if (getppid() != self->_initialParentPID) {
             exit(0);
         }
     }];

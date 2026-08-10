@@ -1,14 +1,5 @@
 # Prism — To Do
 ---
-
-## **Update 1.1** *- Better System Integration*
-- [x] Localize once all text is finalized
-- [ ] Nullify quality from searches until all presets have a real rating
-- [ ] Add the preset matching algorithm to the apple music plugin
-  - [ ] Add a moving album cover to the apple music plugin? How would layers work?
-- [ ] Spotify plugin similar to Apple Music plugin? Research if it is possible to add an option under Spotify's View Menu
-- [ ] Make the screen saver more performant, check if reducing the apple logo size from 512 to 256 would increase performance. The screensaver should be maximally performant
-
 ## **Update 1.2** *- More/Better Presets*
 - [ ] Better background removal
   - [ ] Allow for disabling of text detection in a new artwork preferences file. the text should instead be picked up by background detail. (see Once Twice Melody)
@@ -39,3 +30,9 @@
 - [ ] Add an increase/decrease intensity toggle in the "View" menu bar settings?
 - [ ] Add a thumbnail for the prism screen saver in macOS settings
 - [ ] Increase speed of preset matching by combining the rating and visual traits json
+- [ ] Add the preset matching algorithm to the apple music plugin (later — real lift, not a quick wire-up)
+  - [ ] Add Swift compilation to the PrismVisualizerPlugin target (currently ObjC++ only, zero Swift files) or port SongPresetMatcher's scoring logic to C++/ObjC++
+  - [ ] Share PresetVisualTraits.json + PresetRatings.json with the plugin (e.g. App Group container) instead of the plugin having no access to them
+  - [ ] Fix the plugin's preset library path (currently its own bundle or hardcoded ~/Documents/PrismCollection fallback) to match the app's actual configured library so filenames line up with the traits JSON
+  - [ ] Add async ReccoBeats network lookup in the plugin without blocking Music.app's render callback thread
+  - [ ] Add a moving album cover to the apple music plugin? How would layers work?

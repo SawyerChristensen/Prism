@@ -4,7 +4,7 @@
 //
 //  The Music.app-facing half of the visualizer: implements the legacy iTunes/Music Visual
 //  Plug-in protocol (macOS/PrismVisualizerPlugin/iTunesSDK — Apple's own SDK headers, vendored
-//  verbatim, see their license header) and drives a ProjectMEngine + PrismVisualizerView with
+//  verbatim, see their license header) and drives a ProjectMEngine + PrismItunesVisualizer with
 //  it. Deliberately does NOT use AudioCaptureEngine/CoreAudioTapEngine or any of Prism.app's
 //  own capture machinery: Music.app pushes waveform/spectrum data to us directly via the
 //  kVisualPluginPulseMessage ('Vpls') message, so this plugin needs no Screen Recording or
@@ -19,7 +19,7 @@
 #import "iTunesSDK/iTunesAPI.h"
 #import "iTunesSDK/iTunesVisualAPI.h"
 
-#import "PrismVisualizerView.h"
+#import "PrismItunesVisualizer.h"
 #import "ProjectMEngine.h"
 
 #import <Cocoa/Cocoa.h>
@@ -783,7 +783,7 @@ typedef struct {
     ITAppProcPtr appProc;
 
     void *enginePtr; // CFBridgingRetain'd ProjectMEngine *
-    void *viewPtr;   // CFBridgingRetain'd PrismVisualizerView *
+    void *viewPtr;   // CFBridgingRetain'd PrismItunesVisualizer *
 
     __unsafe_unretained NSView *destView; // owned by Music.app; only valid while active
 
@@ -843,7 +843,7 @@ static NSArray<NSURL *> *PrismPresetCandidates(void) {
         return PrismCachedPresetCandidates;
     }
 
-    NSBundle *pluginBundle = [NSBundle bundleForClass:[PrismVisualizerView class]];
+    NSBundle *pluginBundle = [NSBundle bundleForClass:[PrismItunesVisualizer class]];
     NSString *bundledPresetsDir = [pluginBundle.resourcePath stringByAppendingPathComponent:@"Presets"];
 
     NSArray<NSURL *> *candidates = PrismScanForMilkPresets(bundledPresetsDir);
@@ -950,7 +950,7 @@ static void PrismHandlePossibleTrackChange(PrismPluginData *data, const ITTrackI
 // VISUAL_PLATFORM_VIEW (iTunesAPI.h) expands to NSOpenGLView* - Music.app's VisualizerService
 // genuinely hands the plugin one of those as destView (it's the actual host ABI, not a rendering
 // choice Prism makes), so the deprecation can't be designed around; this plugin only ever uses it
-// as a plain NSView to add its own Metal-backed subview into (see PrismVisualizerView below).
+// as a plain NSView to add its own Metal-backed subview into (see PrismItunesVisualizer below).
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW destView, OptionBits options) {
@@ -975,7 +975,7 @@ static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW 
         // (Activate fires just from opening the visualizer, with or without a track playing). If a
         // track *is* already playing, the Play message that follows (see kVisualPluginPlayMessage)
         // advances past this to a real match immediately; if nothing's playing, this is what stays
-        // on screen instead of a blank/grey view - see PrismVisualizerView.startRendering for the
+        // on screen instead of a blank/grey view - see PrismItunesVisualizer.startRendering for the
         // other half of that fix. This is a one-time fallback for a session that hasn't played
         // anything yet, not a general "nothing playing" state - once a real preset has loaded, an
         // ordinary pause/stop must leave it on screen rather than falling back to this again (see
@@ -984,25 +984,25 @@ static OSStatus PrismActivateVisual(PrismPluginData *data, VISUAL_PLATFORM_VIEW 
     }
 
     if (data->viewPtr == NULL) {
-        PrismVisualizerView *view = [[PrismVisualizerView alloc] initWithFrame:destView.bounds];
+        PrismItunesVisualizer *view = [[PrismItunesVisualizer alloc] initWithFrame:destView.bounds];
         view.autoresizingMask = (NSViewWidthSizable | NSViewHeightSizable);
         view.engine = (__bridge ProjectMEngine *)data->enginePtr;
         [destView addSubview:view];
         data->viewPtr = (void *)CFBridgingRetain(view);
-        PrismLog("Created PrismVisualizerView with frame=%{public}@, added to destView (subviews now %{public}lu)",
+        PrismLog("Created PrismItunesVisualizer with frame=%{public}@, added to destView (subviews now %{public}lu)",
                   NSStringFromRect(view.frame), (unsigned long)destView.subviews.count);
     }
 
-    // Own render driver - see PrismVisualizerView.startRendering's doc comment for why this can't
+    // Own render driver - see PrismItunesVisualizer.startRendering's doc comment for why this can't
     // just rely on Music.app's Vpls pulses (they stop, or never start, whenever nothing's playing).
-    [(__bridge PrismVisualizerView *)data->viewPtr startRendering];
+    [(__bridge PrismItunesVisualizer *)data->viewPtr startRendering];
 
     return noErr;
 }
 
 static OSStatus PrismDeactivateVisual(PrismPluginData *data) {
     if (data->viewPtr != NULL) {
-        PrismVisualizerView *view = (__bridge PrismVisualizerView *)data->viewPtr;
+        PrismItunesVisualizer *view = (__bridge PrismItunesVisualizer *)data->viewPtr;
         [view stopRendering];
         [view removeFromSuperview];
         CFBridgingRelease(data->viewPtr);
@@ -1029,7 +1029,7 @@ static OSStatus PrismDeactivateVisual(PrismPluginData *data) {
 
 static OSStatus PrismResizeVisual(PrismPluginData *data) {
     if (data->viewPtr != NULL && data->destView != nil) {
-        PrismVisualizerView *view = (__bridge PrismVisualizerView *)data->viewPtr;
+        PrismItunesVisualizer *view = (__bridge PrismItunesVisualizer *)data->viewPtr;
         view.frame = data->destView.bounds;
         PrismLog("Resize: destView.bounds=%{public}@", NSStringFromRect(data->destView.bounds));
     }
@@ -1192,16 +1192,15 @@ static OSStatus PrismVisualPluginHandler(OSType message, VisualPluginMessageInfo
         }
 
         case kVisualPluginPulseMessage: {
+            // Just feeds audio - PrismItunesVisualizer draws on its own MTKView display-link loop
+            // (see -startRendering), not in response to this pulse.
             PrismProcessRenderData(data, messageInfo->u.pulseMessage.renderData);
-            if (data->viewPtr != NULL) {
-                [(__bridge PrismVisualizerView *)data->viewPtr renderFrame];
-            }
             break;
         }
 
         case kVisualPluginDrawMessage: {
-            // Already drawing every pulse (matches the reference plugin's approach — pulse
-            // arrives at a steadier, more frequent rate than draw invalidation would).
+            // No-op: PrismItunesVisualizer draws on its own MTKView display-link loop, matched to
+            // the real screen refresh rate rather than either this message or Vpls's cadence.
             break;
         }
 

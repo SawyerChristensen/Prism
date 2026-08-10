@@ -3,7 +3,7 @@
 //  PrismScreenSaver
 //
 //  The macOS Screen Saver-facing half of the visualizer: a ScreenSaverView subclass that hosts
-//  a ProjectMEngine + PrismVisualizerView (both reused as-is from PrismVisualizerPlugin - see
+//  a ProjectMEngine + PrismItunesVisualizer (both reused as-is from PrismVisualizerPlugin - see
 //  those files' own doc comments) showing only Prism's built-in idle animation ("Geiss & Sperl -
 //  Feedback (projectM idle HDR mix).milk"), with the idle preset's shapecode_0 glyph swapped for
 //  an Apple logo instead of Prism's own headphones logo - same -setTextureOverrideImage:forName:

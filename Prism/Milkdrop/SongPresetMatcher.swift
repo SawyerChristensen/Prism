@@ -40,9 +40,9 @@ nonisolated enum SongPresetMatcher {
         var waveformForVocalPresence = 0.6
         var textureForAcousticness = 0.5
         var glowForLoudness = 0.5
-        /// Explicit user judgment (the "1"-"5" keybind, MilkdropPresetRatingStore) outweighs every
-        /// inferred heuristic above — someone who's actually watched this preset and rated it knows
-        /// more than a static-text scan ever will.
+        /// Currently drives rating COVERAGE, not quality: outweighs every inferred heuristic above so
+        /// unrated presets get surfaced and rated before star value is used for anything. Only
+        /// applied in DEBUG builds (see the term below for why) - this weight is unused otherwise.
         var presetQuality = 1.5
 
         static let `default` = Weights()
@@ -104,14 +104,25 @@ nonisolated enum SongPresetMatcher {
         let glow = max(0, (preset.isAdditiveGlow ? 1.0 : 0.0) - (preset.darkensCenter ? 0.3 : 0.0))
         terms.append((weights.glowForLoudness, 1 - abs(normalizedLoudness - glow)))
 
-        // 9. presetQuality -> the preset's own 1-5 star rating (MilkdropPresetRatingStore),
-        // recorded by hand via the "1"-"5" keybind while it was on screen. Unlike every term above,
-        // a missing rating is NOT excluded from the average — a preset nobody's rated yet should
-        // read as exactly neutral (3 stars), not "no opinion, leave it out," so this term is always
-        // present. 1-2 stars pulls the score down (shown less often), 4-5 pulls it up (shown more
-        // often), 3/unrated sits at the midpoint.
-        let normalizedRating = Double((ratingStars ?? 3) - 1) / 4
+        // 9. presetQuality -> RATING COVERAGE, not the star value itself, while the library is
+        // still being rated for the first time. Most presets have no rating yet; if stars were
+        // scored directly, unrated presets would sit at a neutral midpoint and rarely surface ahead
+        // of anything already rated 4-5, so they'd never get seen and rated. Instead: unrated
+        // presets are boosted to the front of the queue, and ANY rated preset is punished regardless
+        // of how many stars it got, so the whole library gets an initial pass before star quality is
+        // allowed to matter.
+        //
+        // DEBUG-only: rating happens by hand during development sessions via the "1"-"5" keybind,
+        // not in the field, so this coverage push has nothing to do in a production build - exclude
+        // the term entirely there (same "no signal, no effect" treatment this file gives every other
+        // missing trait above) rather than let an unrelated build ship with search results skewed
+        // toward whatever fraction of the library happened to be rated at build time. Once every
+        // preset has a rating, swap this back to reading ratingStars on its own 1-5 scale in both
+        // configurations (see git history for the previous version of this term).
+        #if DEBUG
+        let normalizedRating = ratingStars == nil ? 1.0 : 0.0
         terms.append((weights.presetQuality, normalizedRating))
+        #endif
 
         let totalWeight = terms.reduce(0) { $0 + $1.weight }
         guard totalWeight > 0 else { return 0.5 }
