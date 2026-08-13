@@ -34,6 +34,12 @@ struct PrismApp: App {
     // as the two Bools above: the menu command and ContentView's `.fileImporter` need to share
     // one source of truth via a Binding.
     @State private var isPresetImporterPresented = false
+    // File > "Find Preset…" (Cmd-S) — a persistent toggle (like isAlbumArtHidden above), not a
+    // one-shot trigger like isPresetImporterPresented: ContentView's search overlay stays open for
+    // as long as this is true, and ContentView itself flips it back to false on Escape/picking a
+    // result, same as any other Cmd-toggled panel. Owned here so the menu command and the overlay
+    // share one source of truth.
+    @State private var isPresetSearchPresented = false
     // History menu bar item — owned here (not ContentView @State) since SwiftUI's `.commands`
     // menus are only reachable from the App scene, same reason as the properties above. Persisted
     // history is a class (MilkdropSessionHistoryStore), so ContentView gets a plain reference to
@@ -73,6 +79,7 @@ struct PrismApp: App {
                 isAlbumArtHidden: $isAlbumArtHidden, isTextHidden: $isTextHidden,
                 cycleAlbumLayersFromMenu: $cycleAlbumLayersFromMenu,
                 isPresetImporterPresented: $isPresetImporterPresented,
+                isPresetSearchPresented: $isPresetSearchPresented,
                 sessionHistoryStore: sessionHistoryStore, sessionPresetLog: $sessionPresetLog,
                 presetToLoadFromMenu: $presetToLoadFromMenu
             )
@@ -106,6 +113,16 @@ struct PrismApp: App {
                     Label("Import .milk Preset…", systemImage: "square.and.arrow.down")
                 }
                 .keyboardShortcut("i", modifiers: .command)
+                // Search-by-name alternative to Cmd-I's file picker/drag-and-drop — jumps straight
+                // to any preset already in the current library by typing its name instead of
+                // hunting for it in Finder. Toggles the same way Cmd-A/Cmd-T do below (pressing it
+                // again while the search overlay is open closes it).
+                Button {
+                    isPresetSearchPresented.toggle()
+                } label: {
+                    Label("Find Preset…", systemImage: "magnifyingglass")
+                }
+                .keyboardShortcut("s", modifiers: .command)
             }
             CommandGroup(after: .toolbar) {
                 Toggle(isOn: $isAlbumArtHidden) {

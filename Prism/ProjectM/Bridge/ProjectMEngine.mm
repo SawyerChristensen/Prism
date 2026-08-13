@@ -6,6 +6,7 @@
 @interface ProjectMEngine ()
 - (void)handlePresetSwitchFailedWithFilename:(const char*)filename message:(const char*)message;
 - (void)provideTextureOverrideForName:(const char*)textureName intoData:(projectm_texture_load_data*)data;
+- (void)installBundledTextureSearchPath;
 @end
 
 namespace {
@@ -120,7 +121,30 @@ NSData* PrismBottomUpRGBADataFromImage(NSImage* image, unsigned int* outWidth, u
     projectm_set_preset_switch_failed_event_callback(_instance, &PresetSwitchFailedTrampoline,
                                                       (__bridge void*)self);
 
+    [self installBundledTextureSearchPath];
+
     return self;
+}
+
+/// Points projectM at the app's own bundled Textures/ (staged at build time by
+/// Scripts/copy_bundled_presets.sh, sourced from BestMilkdropPresetsPack/Textures — see that
+/// script's own comment) so presets referencing a named texture (e.g. `tex2D(sampler_heart, uv)`)
+/// resolve to the real image instead of silently falling back to projectM's placeholder texture
+/// (Vendor/projectm/.../TextureManager.cpp's TryLoadingTexture). A no-op if the bundle has no
+/// Textures folder (e.g. a dev build made on a machine without the source pack), same degraded-
+/// but-functional fallback MilkdropPresetLibrary.useBundledPresetsIfAvailable() uses for presets.
+- (void)installBundledTextureSearchPath
+{
+    NSString* texturesPath = [[NSBundle mainBundle].resourcePath stringByAppendingPathComponent:@"Textures"];
+    BOOL isDirectory = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:texturesPath isDirectory:&isDirectory] || !isDirectory)
+    {
+        return;
+    }
+
+    const char* path = texturesPath.fileSystemRepresentation;
+    const char* paths[] = {path};
+    projectm_set_texture_search_paths(_instance, paths, 1);
 }
 
 - (void)dealloc

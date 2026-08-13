@@ -40,9 +40,14 @@ nonisolated enum SongPresetMatcher {
         var waveformForVocalPresence = 0.6
         var textureForAcousticness = 0.5
         var glowForLoudness = 0.5
-        /// Currently drives rating COVERAGE, not quality: outweighs every inferred heuristic above so
-        /// unrated presets get surfaced and rated before star value is used for anything. Only
-        /// applied in DEBUG builds (see the term below for why) - this weight is unused otherwise.
+        /// Reserved for a future production-only term reading ratingStars on its own 1-5 scale,
+        /// once the whole library has an initial rating pass (see the note below) - currently
+        /// unused in every configuration, including DEBUG. Debug/testing builds must never let
+        /// rating influence which preset wins a match: that's what would make a review pass
+        /// untrustworthy, since a highly-rated preset could get pulled onto screen regardless of
+        /// how badly it actually fits the song being tested against. Rating during debugging is
+        /// purely an out-of-band annotation - recorded via the "1"-"5" keybind, surfaced via the
+        /// star overlay in ContentView - not a thing that's allowed to perturb the search itself.
         var presetQuality = 1.5
 
         static let `default` = Weights()
@@ -104,25 +109,16 @@ nonisolated enum SongPresetMatcher {
         let glow = max(0, (preset.isAdditiveGlow ? 1.0 : 0.0) - (preset.darkensCenter ? 0.3 : 0.0))
         terms.append((weights.glowForLoudness, 1 - abs(normalizedLoudness - glow)))
 
-        // 9. presetQuality -> RATING COVERAGE, not the star value itself, while the library is
-        // still being rated for the first time. Most presets have no rating yet; if stars were
-        // scored directly, unrated presets would sit at a neutral midpoint and rarely surface ahead
-        // of anything already rated 4-5, so they'd never get seen and rated. Instead: unrated
-        // presets are boosted to the front of the queue, and ANY rated preset is punished regardless
-        // of how many stars it got, so the whole library gets an initial pass before star quality is
-        // allowed to matter.
-        //
-        // DEBUG-only: rating happens by hand during development sessions via the "1"-"5" keybind,
-        // not in the field, so this coverage push has nothing to do in a production build - exclude
-        // the term entirely there (same "no signal, no effect" treatment this file gives every other
-        // missing trait above) rather than let an unrelated build ship with search results skewed
-        // toward whatever fraction of the library happened to be rated at build time. Once every
-        // preset has a rating, swap this back to reading ratingStars on its own 1-5 scale in both
-        // configurations (see git history for the previous version of this term).
-        #if DEBUG
-        let normalizedRating = ratingStars == nil ? 1.0 : 0.0
-        terms.append((weights.presetQuality, normalizedRating))
-        #endif
+        // 9. presetQuality -> deliberately not wired up yet in ANY configuration. `ratingStars`
+        // still travels all the way through (see `rank`'s doc comment) so it's ready the moment
+        // this term is turned on for production, reading ratingStars on its own 1-5 scale once the
+        // whole library has had an initial rating pass. Until then it stays inert here in both
+        // DEBUG and release builds - see weights.presetQuality's own doc comment for why debug
+        // ranking specifically must never let rating skew which preset wins a match (a review pass
+        // needs to trust it's seeing the genuine best/worst fit, not whatever's been rated so far).
+        // "Already rated?" surfaces during debugging a different way instead: ContentView's star
+        // overlay (topLeading, DEBUG-only) reads MilkdropPresetRatingStore directly and shows
+        // on-screen, without touching this score at all.
 
         let totalWeight = terms.reduce(0) { $0 + $1.weight }
         guard totalWeight > 0 else { return 0.5 }

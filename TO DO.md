@@ -1,6 +1,15 @@
 # Prism — To Do
 ---
-## **Update 1.2** *- More/Better Presets*
+## **Update 1.1** *- More/Better Presets*
+- [ ] Finish scoring the corpus
+  - [ ] Yeah about that... what if the "User favorites" xml file was overlapped with the production corpus to find the type presets of each category, so that we can infer a rating of each category?
+  - [ ] After we get a general idea of each category we look into the hugging face AI model that generates unique presets
+  - [ ] For every song, we run the input traits through a program that creates a cutom prompt. The only thing we ship is the shell and the LLM, no presets (maybe only the true crem de la crem)
+  - [ ] Figure out the exact science of what makes a truly good visual preset...
+- [ ] Double quality rating weight 1.5 -> 3
+  - [ ] Make future debug ratings average out the current rating with the new rating. If a 2 star preset gets rated 4 stars by the user, it's new rating should be 3 stars. If a 2 star preset gets rated 3 stars, it's new rating should be 2.5. Make sure this works well with the star rating animation
+  - [ ] Reimplement the rating weight affecting debugging and production
+  - [ ] Release the 1-5 keybinds for users. This should override the pre-written rating for their local version.
 - [ ] 3rd App Icon: Dynamically changes to the album currently being played
 - [ ] Better background removal
   - [ ] Allow for disabling of text detection in a new artwork preferences file. the text should instead be picked up by background detail. (see Once Twice Melody)
@@ -17,7 +26,7 @@
   - [ ] Preview Video
   - [ ] Full carousel of preview images
 
-## **Update 1.3** *- More Platforms*
+## **Update 1.2** *- More Platforms*
 - [ ] tvOS?
 - [ ] iOS?
 - [ ] iPadOS?

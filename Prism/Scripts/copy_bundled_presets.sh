@@ -20,10 +20,21 @@
 # "Author - Subcategory MainCategory[ N]" (author omitted where none could be identified) so the
 # UI never surfaces the raw NestDrop filenames, some of which carried profanity/offensive text.
 # ProductionMilkdropCorpus never had a "! Transition" folder copied into it, so no exclude needed here.
+#
+# Also stages the shared Textures/ folder (~4.2MB of .jpg images) that a subset of presets across
+# every category reference by name (e.g. warp_N=`... tex2D(sampler_heart, uv) needs heart.jpg).
+# ProductionMilkdropCorpus/PerformantMilkdropPresetsPack never carried this folder over from their
+# common source, BestMilkdropPresetsPack — it's pulled from there directly. Without it,
+# ProjectMEngine's texture search path (see -[ProjectMEngine init]) has nothing to find, and
+# projectM's TextureManager silently falls back to a placeholder texture for every preset that
+# needs one (Vendor/projectm/.../TextureManager.cpp's TryLoadingTexture). Copied *without* the
+# presets' blanket *.jpg exclude above — these are real render inputs, not NestDrop thumbnails.
 set -euo pipefail
 
 SRC="${PRISM_PRESET_PACK_DIR:-$HOME/Documents/PrismCollection/ProductionMilkdropCorpus}"
 DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Presets"
+TEXTURE_SRC="${PRISM_TEXTURE_PACK_DIR:-$HOME/Documents/PrismCollection/BestMilkdropPresetsPack/Textures}"
+TEXTURE_DEST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Textures"
 
 if [ ! -d "$SRC" ]; then
     echo "warning: preset pack not found at $SRC — skipping preset bundling (app will ship with no built-in presets)"
@@ -38,3 +49,17 @@ rsync -a --delete \
 count=$(find "$DEST" -name '*.milk' | wc -l | tr -d ' ')
 size=$(du -sh "$DEST" | cut -f1)
 echo "Bundled $count .milk presets ($size) into $DEST"
+
+if [ ! -d "$TEXTURE_SRC" ]; then
+    echo "warning: texture pack not found at $TEXTURE_SRC — skipping texture bundling (presets needing a named texture will render with projectM's placeholder)"
+    exit 0
+fi
+
+mkdir -p "$TEXTURE_DEST"
+rsync -a --delete \
+    --exclude='.DS_Store' \
+    "$TEXTURE_SRC/" "$TEXTURE_DEST/"
+
+texture_count=$(find "$TEXTURE_DEST" -type f | wc -l | tr -d ' ')
+texture_size=$(du -sh "$TEXTURE_DEST" | cut -f1)
+echo "Bundled $texture_count textures ($texture_size) into $TEXTURE_DEST"

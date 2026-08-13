@@ -549,6 +549,143 @@
         }
       }
     },
+    "NSAudioCaptureUsageDescription" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يستخدم موشور صوت النظام لتشغيل المؤثر البصري الموجي."
+          }
+        },
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisme bruger systemlydafspilning til at drive bølgevisualiseringen."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma nutzt die Systemaudiowiedergabe, um die Wellen-Visualisierung anzutreiben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prism uses system audio playback to drive the wave visualizer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma usa la reproducción de audio del sistema para generar el visualizador de ondas."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma käyttää järjestelmän äänentoistoa aaltovisualisoinnin ohjaamiseen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisme utilise la lecture audio du système pour animer le visualiseur d'ondes."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מנסרה משתמשת בהשמעת האודיו של המערכת כדי להניע את מדמה הגלים."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "प्रिज़्म वेव विज़ुअलाइज़र को चलाने के लिए सिस्टम ऑडियो प्लेबैक का उपयोग करता है।"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma utilizza la riproduzione audio di sistema per generare il visualizzatore d'onda."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "プリズムはシステムの音声再生を使用して、波形ビジュアライザーを駆動します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프리즘은 시스템 오디오 재생을 사용하여 파형 비주얼라이저를 구동합니다."
+          }
+        },
+        "nb" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisme bruker systemlydavspilling til å drive bølgevisualiseringen."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma gebruikt systeemaudioweergave om de golfvisualisatie aan te sturen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pryzmat wykorzystuje odtwarzanie dźwięku systemowego do sterowania wizualizacją fali."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Prisma usa a reprodução de áudio do sistema para controlar o visualizador de ondas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложение «Призма» использует системное воспроизведение звука для управления визуализатором волны."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prisma använder systemets ljuduppspelning för att driva vågvisualiseraren."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prizma, dalga görselleştiricisini çalıştırmak için sistem ses çalma özelliğini kullanır."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lăng Kính sử dụng âm thanh phát lại của hệ thống để điều khiển trình hiển thị sóng."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "棱镜使用系统音频播放来驱动波形可视化效果。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稜鏡使用系統音訊播放來驅動波形視覺化效果。"
+          }
+        }
+      }
+    },
     "NSHumanReadableCopyright" : {
       "comment" : "Copyright (human-readable)",
       "extractionState" : "extracted_with_value",

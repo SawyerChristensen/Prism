@@ -76,8 +76,7 @@
 //     4,384/9,795) blows out highlights/glows; a darkened center (6.9%: 675/9,795) pulls the other
 //     way. Combined into a single -ish glow score by SongPresetMatcher, not stored pre-combined here
 //     — keeping both raw booleans lets a future caller use them independently of loudness-matching
-//     too (e.g. "flag strobing candidates" already has bDarkenCenter-adjacent needs — see
-//     MilkdropPresetRatingStore's `.strobing` issue flag).
+//     too (e.g. a future "flag strobing candidates" pass would have bDarkenCenter-adjacent needs).
 //
 //  Deliberately NOT mapped to anything: `liveness` (SongAudioTraits' "live performance" probability)
 //  — nothing here reads as a defensible proxy for crowd/live-recording-ness, so it's left unused

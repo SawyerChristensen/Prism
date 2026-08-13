@@ -19,6 +19,15 @@ private enum ActiveFilePicker {
     case milkPreset
     case libraryFolder
     case favoritesBundle
+    #if DEBUG
+    // One-time grant for MilkdropPresetRatingStore's direct-to-repo writes (see that store's own
+    // top-of-file doc comment) — the dev picks the Prism repo's root folder once; a security-scoped
+    // bookmark persists write access to Prism/Resources/PresetRatings.json and repo-root
+    // FlaggedPresets.json across every future launch. Triggered lazily from
+    // promptForRepoFolderIfNeeded the first time a rating/flag keypress fires without access yet,
+    // not eagerly at launch — most dev sessions never touch the review-pass keybinds at all.
+    case ratingsRepoFolder
+    #endif
 }
 
 struct ContentView: View {
@@ -52,6 +61,20 @@ struct ContentView: View {
     @State private var isAutoCycleEnabled = false
     @State private var autoCycleTask: Task<Void, Never>?
     private static let autoCycleInterval: Duration = .seconds(20)
+    // Swift doesn't support #if branches inside an array literal (confirmed: it's a parse error,
+    // not just a style nit), so the DEBUG-only "1"-"5"/"j"-"x"-"d"-"b"-"f" keys are assembled here
+    // instead of inline in the `.onKeyPress(keys:)` call below. Both groups are review-pass data
+    // collection tools (rating/flagging presets, writing directly into Resources/PresetRatings.json
+    // and repo-root FlaggedPresets.json once repo access is granted — see
+    // MilkdropPresetRatingStore's own top-of-file doc comment) that only make sense on a dev's own
+    // machine, not something an end user should be able to trigger from a shipped build.
+    private static let keyPressKeys: Set<KeyEquivalent> = {
+        var keys: Set<KeyEquivalent> = [" ", .leftArrow, .rightArrow]
+        #if DEBUG
+        keys.formUnion(["1", "2", "3", "4", "5", "j", "x", "d", "b", "f"])
+        #endif
+        return keys
+    }()
     // Preset history (TO DO.md's "other" section) — every successful load (random draw, manual
     // Cmd-I pick, or the launch-time restore) appends here, so Left/Right can step back/forward
     // through what's actually been seen this session rather than each "skip" being a one-way,
@@ -75,11 +98,9 @@ struct ContentView: View {
     // NowPlayingManager.saveCurrentArtworkPreference) — there's no other visible signal that a
     // save happened, since M/T themselves are just a live preview now, not an auto-save.
     @State private var showSavedConfirmation = false
-    // Transient confirmation after a "1"-"5"/"w" rating keybind records a rating/flag for the
-    // preset just left behind (see rateCurrentPreset/flagCurrentPresetWhite) — same one-shot,
-    // auto-clearing Task.sleep idiom as showSavedConfirmation above, since a review pass through
-    // dozens of presets in a row needs to trust each keypress actually recorded without checking
-    // a log after the fact.
+    // Transient confirmation after Up/Down (adjustWarpAnimSpeed) shows the new multiplier, and
+    // after "j"/"x"/"d"/"b"/"f" (flagCurrentPreset) confirms what just got flagged — same one-shot,
+    // auto-clearing Task.sleep idiom as showSavedConfirmation above.
     @State private var ratingFeedback: String?
     // "1"-"5" star rating overlay (see showPresetRatingAnimation) — `presetRatingAnimation` holds
     // the star count to render and carries a fresh UUID every time so re-rating the same preset the
@@ -116,6 +137,19 @@ struct ContentView: View {
     // bindings above. Ends up loading through `loadPresetAndTrack`, the exact same path drag-and-
     // drop's `handlePresetDrop` uses, so both routes behave identically once a URL is in hand.
     @Binding var isPresetImporterPresented: Bool
+    // File > "Find Preset…" (PrismApp.swift's .commands, Cmd-S) — a persistent toggle (see its own
+    // doc comment there), not a one-shot trigger: stays true for as long as the search overlay
+    // (below) is on screen. `presetSearchQuery`/`presetSearchSelectedIndex` are reset whenever this
+    // flips true (see the onChange below) so reopening the search never shows a stale query from
+    // last time. `isPresetSearchFieldFocused` is a separate FocusState from `isFocused` (this
+    // view's own keyboard-control-surface focus) specifically so the two never fight over which
+    // one has focus at once — see the onChange below, which hands focus back and forth between them
+    // as the overlay opens/closes, keeping Space/1-5/arrow-key hotkeys from firing while typing a
+    // search query.
+    @Binding var isPresetSearchPresented: Bool
+    @State private var presetSearchQuery = ""
+    @State private var presetSearchSelectedIndex = 0
+    @FocusState private var isPresetSearchFieldFocused: Bool
     // History menu bar item (PrismApp.swift's .commands) — `sessionHistoryStore` is a plain
     // reference (not @Binding: it's a class, and PrismApp never reassigns it, just calls methods
     // on the same instance) that persists every load past this run for next launch's "Last
@@ -147,12 +181,31 @@ struct ContentView: View {
     }
     @State private var windowDelegate = ZoomDisablingWindowDelegate()
 
+    /// Cmd-S search results — case-insensitive substring match against the same display name the
+    /// History menu already uses (filename minus `.milk`), scanned from the current library's full
+    /// `presetURLs` (not narrowed by `filterToFavorites`, same set random/sequential draws come
+    /// from) rather than requiring an exact/prefix match, so a partial artist or effect name (e.g.
+    /// "geiss" or "fractal") still surfaces everything relevant. Capped at 8 — a broad query
+    /// against a corpus in the thousands could otherwise return hundreds of rows for one keystroke.
+    private var presetSearchResults: [URL] {
+        guard !presetSearchQuery.isEmpty else { return [] }
+        return presetLibrary.presetURLs
+            .filter { $0.deletingPathExtension().lastPathComponent.localizedCaseInsensitiveContains(presetSearchQuery) }
+            .prefix(8)
+            .map { $0 }
+    }
+
     var body: some View {
         let bgColor = (Self.useAlbumArtBackgroundColor ? nowPlaying.albumBackgroundColor : nil)
             .map { Color(nsColor: $0) } ?? Color(NSColor.windowBackgroundColor)
         let fgColor = nowPlaying.albumForegroundColor.map { Color(nsColor: $0) } ?? .accentColor
 
-        ZStack {
+        // `body` is split into a few intermediate `some View` bindings rather than one continuous
+        // modifier chain: the full stack of overlays/onChange/fileImporter/onKeyPress handlers is
+        // long enough that type-checking it as a single expression exceeds the compiler's budget
+        // ("unable to type-check this expression in reasonable time"). Each `let` below is type-
+        // checked independently, which keeps every sub-expression small.
+        let content = ZStack {
             // The wave
             ProjectMMetalView(
                 audioEngine: audioEngine, model: visualizerModel,
@@ -222,6 +275,8 @@ struct ContentView: View {
         // (bgColor) instead of the wave. The traffic-light buttons are AppKit window chrome, not
         // part of this view hierarchy, so they stay on top regardless of what this ignores.
         .ignoresSafeArea()
+
+        let decorated = content
         // Wave-only .milk preset loading (see ProjectMVisualizerModel):
         // File > "Import .milk Preset…" opens a file picker (drag-and-drop is the other way in — see
         // handlePresetDrop). Preset filenames come straight from community packs, unfiltered (can
@@ -251,7 +306,9 @@ struct ContentView: View {
         // on-screen confirmation of what was just recorded without needing to check the log.
         .overlay(alignment: .topLeading) {
             if let presetRatingAnimation {
-                Text(String(repeating: "★", count: presetRatingAnimation.stars) + String(repeating: "☆", count: 5 - presetRatingAnimation.stars))
+                let filled = String(repeating: "★", count: presetRatingAnimation.stars)
+                let empty = String(repeating: "☆", count: 5 - presetRatingAnimation.stars)
+                Text(filled + empty)
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(.white)
                     .blendMode(.difference)
@@ -270,6 +327,104 @@ struct ContentView: View {
                     )
             }
         }
+        #if DEBUG
+        // "Already rated?" at a glance during a review pass — DEBUG-only, and independent of
+        // SongPresetMatcher's score (see that file's presetQuality doc comment): a preset with an
+        // existing rating always shows its stars here, one already reviewed or not is otherwise
+        // indistinguishable on screen. Suppressed while presetRatingAnimation is playing so the two
+        // topLeading overlays don't draw on top of each other right after a fresh "1"-"5" keypress;
+        // the transient one already shows the same star count in that moment. Unrated (nil) shows
+        // nothing at all, not empty outline stars, so blank is the visible cue to go rate it.
+        .overlay(alignment: .topLeading) {
+            if presetRatingAnimation == nil,
+               let url = visualizerModel.presetURL,
+               let stars = ratingStore.rating(for: url)?.stars {
+                let filled = String(repeating: "★", count: stars)
+                let empty = String(repeating: "☆", count: 5 - stars)
+                Text(filled + empty)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .blendMode(.difference)
+                    .padding(8)
+                    .padding(.top, 20)
+            }
+        }
+        #endif
+        // Cmd-S "Find Preset…" — type-to-jump alternative to Cmd-I's file picker/drag-and-drop for
+        // a preset already somewhere in the current library (see MilkdropPresetLibrary.presetURLs).
+        // Matches against the same display name the History menu uses (filename minus extension),
+        // case-insensitive substring, capped to a handful of results so a broad query against a
+        // corpus in the thousands doesn't render an unbounded list. Up/Down move
+        // `presetSearchSelectedIndex` through `presetSearchResults`, Return loads the selected
+        // entry (`loadSelectedPresetSearchResult`), Escape or Cmd-S again closes it — the actual
+        // open/close bookkeeping (focus handoff, resetting the query) lives in the
+        // isPresetSearchPresented onChange below, not here.
+        .overlay(alignment: .top) {
+            if isPresetSearchPresented {
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("Search presets…", text: $presetSearchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 16))
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .focused($isPresetSearchFieldFocused)
+                        .onSubmit { loadSelectedPresetSearchResult() }
+                        // Requesting focus here, not from the isPresetSearchPresented onChange
+                        // below, because that onChange fires in the same update pass that inserts
+                        // this conditional TextField into the hierarchy in the first place -
+                        // setting `isPresetSearchFieldFocused = true` at that point races the
+                        // view's own insertion and silently loses (Cmd-S opened the overlay but
+                        // left it unfocused until a manual click). Even `.onAppear` alone isn't
+                        // late enough: it fires once SwiftUI's *view graph* has this TextField, but
+                        // AppKit hasn't necessarily finished installing the backing NSTextField into
+                        // the window's actual view/responder hierarchy yet - setting FocusState
+                        // synchronously inside onAppear silently lost the same race one level
+                        // later (Cmd-S opened the overlay but nothing was focused at all, so typed
+                        // keys hit no responder and just beeped). Bouncing through
+                        // `DispatchQueue.main.async` defers the request to the next runloop turn,
+                        // after that AppKit-side install has actually completed.
+                        .onAppear {
+                            DispatchQueue.main.async {
+                                isPresetSearchFieldFocused = true
+                            }
+                        }
+
+                    if !presetSearchResults.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(presetSearchResults.enumerated()), id: \.offset) { index, url in
+                                presetSearchResultRow(index: index, url: url)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    } else if !presetSearchQuery.isEmpty {
+                        Text("No matching presets")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .frame(maxWidth: 420)
+                .padding(.top, 20)
+                .shadow(radius: 12)
+                .onKeyPress(.escape) {
+                    isPresetSearchPresented = false
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    presetSearchSelectedIndex = max(0, presetSearchSelectedIndex - 1)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    presetSearchSelectedIndex = min(
+                        max(0, presetSearchResults.count - 1), presetSearchSelectedIndex + 1
+                    )
+                    return .handled
+                }
+            }
+        }
         // Only visible feedback that a drag is actually hovering a valid drop target — driven by
         // `PresetDroppableMTKView.onDropTargetChanged`, not SwiftUI's own `.onDrop`/`isTargeted`
         // (that modifier showed no drag recognition at all over this view — see
@@ -283,6 +438,8 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
         }
+
+        let interactive = decorated
         // Menu-driven trigger for the milk-preset import (@Binding, owned by the App scene — see
         // isPresetImporterPresented's doc comment) funnels into `activeFilePicker` just like the
         // other two pickers' direct assignments do, so there's a single `.fileImporter` below
@@ -293,6 +450,28 @@ struct ContentView: View {
             guard isPresented else { return }
             activeFilePicker = .milkPreset
             isPresetImporterPresented = false
+        }
+        // Cmd-S "Find Preset…" opening/closing (see isPresetSearchPresented's own doc comment) —
+        // hands focus back to this view's own keyboard-control-surface `.focused($isFocused)`
+        // (below) once the search closes (the *opposite* direction — focusing the search field on
+        // open — happens in the TextField's own `.onAppear` instead, see its doc comment for why).
+        // Also resets the query/selection on *every* open, not just the first, so reopening after a
+        // previous search never shows stale state left over from last time.
+        .onChange(of: isPresetSearchPresented) { _, isPresented in
+            if isPresented {
+                presetSearchQuery = ""
+                presetSearchSelectedIndex = 0
+                isFocused = false
+            } else {
+                isPresetSearchFieldFocused = false
+                isFocused = true
+            }
+        }
+        // Keeps the highlighted row pinned to the top match as the query changes keystroke by
+        // keystroke, rather than leaving a stale index from a longer result list pointing at
+        // nothing (or the wrong row) once the list shrinks.
+        .onChange(of: presetSearchQuery) { _, _ in
+            presetSearchSelectedIndex = 0
         }
         // Single `.fileImporter` for all three pickers — milk-preset import (File > "Import Milk
         // Preset…"), the preset-library folder (triggered explicitly by "L" or implicitly the
@@ -312,6 +491,9 @@ struct ContentView: View {
                 case .milkPreset: return [UTType(filenameExtension: "milk") ?? .plainText]
                 case .libraryFolder: return [.folder]
                 case .favoritesBundle: return [.xml]
+                #if DEBUG
+                case .ratingsRepoFolder: return [.folder]
+                #endif
                 case nil: return [.item]
                 }
             }()
@@ -347,6 +529,11 @@ struct ContentView: View {
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                 presetLibrary.filterToFavorites(from: url)
                 loadNextSequentialPreset()
+            #if DEBUG
+            case .ratingsRepoFolder:
+                ratingStore.setRepoRoot(url)
+                showRatingFeedback("Repo folder set — ratings/flags now write directly to disk")
+            #endif
             case nil:
                 break
             }
@@ -426,6 +613,8 @@ struct ContentView: View {
         } message: {
             Text(visualizerModel.presetLoadError ?? "")
         }
+
+        return interactive
         // Keyboard control surface, mirroring the spirit of MilkDrop pluginshell's hotkeys
         // (arrow keys / F / Esc) even though there's no preset deck to navigate here: Space
         // toggles play/pause on whichever supported player (Spotify or Music) is current — see
@@ -441,21 +630,41 @@ struct ContentView: View {
         // (PrismApp.swift), not here, since a menu key equivalent always intercepts a press before
         // it would reach this view's onKeyPress — unaffected by the `keys:` narrowing below.
         //
-        // Every other hotkey this view used to handle (N/F/O/L/C/P/S/W/J/X/U) is temporarily
+        // Every other hotkey this view used to handle (N/O/L/C/P/S/U) is temporarily
         // disabled by leaving it out of `keys:` below rather than deleting its case — none of those
         // characters reach this closure anymore, so the switch's other cases are dead code for
         // now, kept in place so re-enabling any of them later is just adding the key back to the
         // array. "M" itself was fully removed (not just disabled) once its cycling moved to Cmd-C
         // above — see the onChange(of: cycleAlbumLayersFromMenu) handler below for the case this
-        // used to be.
+        // used to be. "F" was fully removed too (not just disabled) once it was repurposed for the
+        // tooFast flag below — its old `NSApp.keyWindow?.toggleFullScreen(nil)` case is gone, not
+        // dead code, since a single key can only mean one thing here.
         //
-        // 1-5 is re-enabled (rateCurrentPreset, feeding SongPresetMatcher's presetQuality term) —
-        // unlike the still-disabled group above, this one directly improves match quality, not just
-        // a debug/review convenience.
+        // "1"-"5" (rateCurrentPreset) and "j"/"x"/"d"/"b"/"f" (flagCurrentPreset) are both
+        // DEBUG-only: review-pass data collection tools that write directly into
+        // Resources/PresetRatings.json and the repo-root FlaggedPresets.json once repo access is
+        // granted (see MilkdropPresetRatingStore's own top-of-file doc comment and
+        // promptForRepoFolderIfNeeded), not something an end user should trigger from a shipped
+        // build. Neither has any runtime effect in production either way: the bundled
+        // Resources/PresetRatings.json seed strips issue flags entirely (see
+        // MilkdropPresetRatingStore's own doc comment), so isFlagged(_:) — the check
+        // loadNextSequentialPreset/loadBestMatchedPreset use to skip a preset during rotation — can
+        // only ever be true from a flag recorded on-device, never from what shipped; and
+        // SongPresetMatcher's presetQuality term that would consume ratingStars isn't wired into its
+        // score at all yet (see that file's own doc comment). Both groups are left out of `keys:` in
+        // release the same way the still-disabled group above is — their switch cases stay in place
+        // either way, since they're a no-op when their key never reaches this closure.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(keys: [" ", .leftArrow, .rightArrow, "1", "2", "3", "4", "5"]) { press in
+        .onKeyPress(keys: Self.keyPressKeys) { press in
+            // Cmd-S "Find Preset…" being open does NOT stop this closure from firing on its own —
+            // `.onKeyPress` delivers to every ancestor along the focus path whose *descendant* has
+            // focus, not just the view whose own `.focused($isFocused)` binding is true, so the
+            // search field having focus (isPresetSearchFieldFocused) doesn't exclude this one.
+            // Without this guard, Space paused/resumed playback and 1-5 recorded a star rating on
+            // every keystroke typed into the search query instead of just inserting the character.
+            guard !isPresetSearchPresented else { return .ignored }
             if press.key == .leftArrow {
                 loadPreviousPreset()
                 return .handled
@@ -487,20 +696,23 @@ struct ContentView: View {
                     rateCurrentPreset(stars: stars)
                 }
                 return .handled
-            case "w", "W":
-                flagCurrentPreset(.allWhite, label: "Flagged: all white")
-                return .handled
             case "j", "J":
                 flagCurrentPreset(.tooJittery, label: "Flagged: too jittery")
                 return .handled
             case "x", "X":
                 flagCurrentPreset(.strobing, label: "Flagged: strobing/flashing")
                 return .handled
-            case "u", "U":
-                activeFilePicker = .favoritesBundle
+            case "d", "D":
+                flagCurrentPreset(.tooDark, label: "Flagged: too dark")
+                return .handled
+            case "b", "B":
+                flagCurrentPreset(.tooBright, label: "Flagged: too bright")
                 return .handled
             case "f", "F":
-                NSApp.keyWindow?.toggleFullScreen(nil)
+                flagCurrentPreset(.tooFast, label: "Flagged: too fast")
+                return .handled
+            case "u", "U":
+                activeFilePicker = .favoritesBundle
                 return .handled
             case "o", "O":
                 activeFilePicker = .milkPreset
@@ -625,22 +837,35 @@ struct ContentView: View {
     }
 
     /// Space/tap's action: step to the next preset in the configured library's sorted order —
-    /// deliberately sequential (not random) so a full review pass through a library, rating/
-    /// flagging as you go (see rateCurrentPreset/flagCurrentPresetWhite), eventually covers every
-    /// file exactly once instead of repeat draws with no completion guarantee. Prompts for a
+    /// deliberately sequential (not random) so a full review pass through a library, rating as you
+    /// go (see rateCurrentPreset), eventually covers every file exactly once instead of repeat
+    /// draws with no completion guarantee. Prompts for a
     /// library folder instead if none is configured yet — `onAppear`'s own auto-prompt (added
     /// 7/26) handles the real first-launch case, so this is now mainly a fallback for someone who
     /// dismissed that prompt without picking a folder.
     /// `resetAutoCycle` is false only when the auto-cycle loop itself calls this — its own
     /// while-loop cadence already provides the next interval, so restarting the countdown here too
     /// would just replace the in-flight sleeping Task with an equivalent new one for no reason.
+    ///
+    /// Walks forward past any preset MilkdropPresetRatingStore.isFlagged(_:) reports true for
+    /// (too jittery/strobing/too dark/too bright/too fast - see that store's own doc comment) rather than landing on
+    /// the very next one unconditionally, bounded to one full lap of the library so an (unlikely)
+    /// all-flagged library can't spin forever - silently gives up, leaving whatever's currently on
+    /// screen alone, if it ever exhausts a full lap without finding anything clean.
     private func loadNextSequentialPreset(resetAutoCycle: Bool = true) {
         guard presetLibrary.isConfigured else {
             activeFilePicker = .libraryFolder
             return
         }
-        guard let url = presetLibrary.nextSequentialPresetURL(after: visualizerModel.presetURL) else { return }
-        loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
+        var candidate = visualizerModel.presetURL
+        for _ in 0..<presetLibrary.presetURLs.count {
+            guard let url = presetLibrary.nextSequentialPresetURL(after: candidate) else { return }
+            guard ratingStore.isFlagged(url) else {
+                loadPresetAndTrack(from: url, resetAutoCycle: resetAutoCycle)
+                return
+            }
+            candidate = url
+        }
     }
 
     /// Song-preset matching (see SongPresetMatcher/TO DO.md's "Song-Preset Matching"
@@ -657,8 +882,11 @@ struct ContentView: View {
     private func loadBestMatchedPreset(for songTraits: SongAudioTraits) {
         // Star ratings looked up here, on the main actor, since MilkdropPresetRatingStore is
         // @MainActor-bound state that the Task.detached ranking below can't touch directly - see
-        // SongPresetMatcher.rank's own doc comment.
+        // SongPresetMatcher.rank's own doc comment. Flagged presets (isFlagged) are dropped from
+        // the candidate pool entirely, same main-actor-lookup reasoning - too jittery/strobing/too
+        // dark/too bright/too fast presets should never win a song match, not just score lower.
         let pairs = presetVisualTraitsStore.pairs(for: presetLibrary.presetURLs)
+            .filter { !ratingStore.isFlagged($0.url) }
             .map { (url: $0.url, traits: $0.traits, ratingStars: ratingStore.rating(for: $0.url)?.stars) }
         guard !pairs.isEmpty else {
             PrismDebug.trace("preset: matching skipped - no precomputed traits for anything in the current library")
@@ -722,7 +950,25 @@ struct ContentView: View {
         PrismDebug.trace("rating: \(stars)★ for \(url.lastPathComponent)")
         showPresetRatingAnimation(stars: stars)
         loadNextSequentialPreset()
+        #if DEBUG
+        promptForRepoFolderIfNeeded()
+        #endif
     }
+
+    #if DEBUG
+    /// Lazily triggers the one-time "select the Prism repo folder" grant (see
+    /// MilkdropPresetRatingStore.setRepoRoot) the first time a rating/flag keypress fires without
+    /// repo write access yet. Not blocking — setStars/flag above already recorded *this* keypress's
+    /// rating via the UserDefaults fallback regardless of whether repo access exists; this just
+    /// switches every *subsequent* keypress over to direct-to-repo writes once the dev picks the
+    /// folder. `activeFilePicker == nil` guards against clobbering some other picker that's already
+    /// up (shouldn't normally happen mid-review-session, but this is a fire-and-forget side effect,
+    /// not something worth fighting for the picker slot over).
+    private func promptForRepoFolderIfNeeded() {
+        guard !ratingStore.hasRepoWriteAccess, activeFilePicker == nil else { return }
+        activeFilePicker = .ratingsRepoFolder
+    }
+    #endif
 
     /// Drives the star overlay's slide-reveal -> hold -> wipe-away sequence (see the overlay's own
     /// comment on the mask technique). Cancels any in-flight sequence first so a fast run of "1"-"5"
@@ -753,14 +999,18 @@ struct ContentView: View {
         }
     }
 
-    /// "w"/"j"/"x": flags whichever preset is on screen right now with a debug issue, for
-    /// revisiting later (MilkdropPresetRatingStore.filenames(flaggedWith:)), then advances to the next
-    /// sequential preset (same as Space). A no-op (no advance either) if nothing's loaded yet.
+    /// "j"/"x"/"d"/"b"/"f": flags whichever preset is on screen right now with a playback/legibility issue
+    /// (MilkdropPresetRatingStore.flag), then advances to the next sequential preset (same as
+    /// Space). A no-op (no advance either) if nothing's loaded yet. Unlike a star rating, this has
+    /// an immediate effect on future rotation — see MilkdropPresetRatingStore's own doc comment.
     private func flagCurrentPreset(_ issue: MilkdropPresetIssue, label: String) {
         guard let url = visualizerModel.presetURL else { return }
         ratingStore.flag(issue, for: url)
         showRatingFeedback(label)
         loadNextSequentialPreset()
+        #if DEBUG
+        promptForRepoFolderIfNeeded()
+        #endif
     }
 
     /// Up/Down arrow: nudges warpAnimSpeedMultiplier (ProjectMVisualizerModel), clamped so Down
@@ -774,8 +1024,8 @@ struct ContentView: View {
         showRatingFeedback(String(format: "Warp Speed: %.1fx", visualizerModel.warpAnimSpeedMultiplier))
     }
 
-    /// Shared one-shot, auto-clearing confirmation for rateCurrentPreset/flagCurrentPresetWhite —
-    /// same Task.sleep idiom as showSavedConfirmation above.
+    /// Shared one-shot, auto-clearing confirmation for adjustWarpAnimSpeed/flagCurrentPreset — same
+    /// Task.sleep idiom as showSavedConfirmation above.
     private func showRatingFeedback(_ message: String) {
         ratingFeedback = message
         Task {
@@ -851,6 +1101,42 @@ struct ContentView: View {
             try? await Task.sleep(for: .milliseconds(150))
         }
         return true
+    }
+
+    /// Cmd-S "Find Preset…" Return/click handler — loads whichever `presetSearchResults` row is
+    /// currently highlighted and closes the search overlay. `presetSearchResults` URLs come
+    /// straight from `presetLibrary.presetURLs`, the same already-security-scoped set sequential/
+    /// random draws load from directly (see loadNextSequentialPreset) - no extra
+    /// startAccessingSecurityScopedResource dance needed here, unlike the `.fileImporter` closure's
+    /// milk-preset case, which is handed a URL from outside that scope entirely. A no-op if the
+    /// index is out of bounds - possible if Return is pressed the instant a query that had matches
+    /// changes to one that doesn't, before onSubmit and the query's own onChange are done racing.
+    private func loadSelectedPresetSearchResult() {
+        let results = presetSearchResults
+        guard results.indices.contains(presetSearchSelectedIndex) else { return }
+        loadPresetAndTrack(from: results[presetSearchSelectedIndex])
+        isPresetSearchPresented = false
+    }
+
+    /// One row of the Cmd-S preset search results. Extracted into its own `@ViewBuilder` so the
+    /// enclosing search overlay's modifier chain stays small enough for the compiler to type-check
+    /// in reasonable time.
+    @ViewBuilder
+    private func presetSearchResultRow(index: Int, url: URL) -> some View {
+        let rowBackground: Color = index == presetSearchSelectedIndex
+            ? Color.accentColor.opacity(0.35) : .clear
+        Text(url.deletingPathExtension().lastPathComponent)
+            .lineLimit(1)
+            .font(.system(size: 13))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(rowBackground)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                presetSearchSelectedIndex = index
+                loadSelectedPresetSearchResult()
+            }
     }
 
     /// Centralizes the bookkeeping every successful preset load needs, regardless of how the URL
