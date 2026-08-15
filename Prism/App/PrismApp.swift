@@ -54,6 +54,11 @@ struct PrismApp: App {
     // actual (security-scoped) load, then resets this to nil — same "menu sets a Bool/URL,
     // ContentView's the one that owns the resources to act on it" split as isPresetImporterPresented.
     @State private var presetToLoadFromMenu: URL?
+    // Tracks whether the main window is currently open, toggled by the WindowGroup content's
+    // onAppear/onDisappear below. Backs Window > Show Main Window (App Store Guideline 4 requires
+    // some way to reopen the main window once it's closed, since closing it otherwise leaves the
+    // app running with no visible UI and no way back in short of relaunching).
+    @State private var isMainWindowOpen = true
     // Opens the custom About window (see the `about` Window scene below) from the CommandGroup
     // that replaces AppKit's default About panel.
     @Environment(\.openWindow) private var openWindow
@@ -73,7 +78,7 @@ struct PrismApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView(
                 audioEngine: audioEngine,
                 isAlbumArtHidden: $isAlbumArtHidden, isTextHidden: $isTextHidden,
@@ -90,6 +95,10 @@ struct PrismApp: App {
                 AppIconManager.apply()
                 // Same NSApp-isn't-ready-in-init() reasoning applies to the status item.
                 menuBarWaveformController.setVisible(!isMenuBarWaveformHidden, audioEngine: audioEngine)
+                isMainWindowOpen = true
+            }
+            .onDisappear {
+                isMainWindowOpen = false
             }
             .onChange(of: isMenuBarWaveformHidden) { _, hidden in
                 menuBarWaveformController.setVisible(!hidden, audioEngine: audioEngine)
@@ -157,6 +166,16 @@ struct PrismApp: App {
             CommandGroup(replacing: .undoRedo) {}
             CommandGroup(replacing: .pasteboard) {}
             CommandGroup(replacing: .textEditing) {}
+            // App Store Guideline 4 (Design) requires a way to reopen the main window once it's
+            // closed — this app has no titlebar (`.hiddenTitleBar`) and no Dock-icon-click handler,
+            // so without this, closing the one window strands the user with no visible UI at all.
+            // Disabled while the window's already open since there'd be nothing for it to do.
+            CommandGroup(after: .windowArrangement) {
+                Button("Show Main Window") {
+                    openWindow(id: "main")
+                }
+                .disabled(isMainWindowOpen)
+            }
             // CommandMenu (not a CommandGroup insertion into an existing menu) puts a brand new
             // "History" item in the menu bar. Top section is this session's play log, duplicates
             // and all — every entry, including replays, comes from ContentView's

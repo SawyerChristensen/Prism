@@ -3286,6 +3286,9 @@
         }
       }
     },
+    "Show Main Window" : {
+
+    },
     "Show Menu Bar Waveform" : {
       "localizations" : {
         "ar" : {
